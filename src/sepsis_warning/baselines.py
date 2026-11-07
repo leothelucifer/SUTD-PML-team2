@@ -136,24 +136,92 @@ def average_precision(labels, scores):
     return float(np.sum(np.diff(np.r_[0, recall]) * precision))
 
 
-def hourly_classification_metrics(labels, decisions) -> dict:
-    """Hand-written hourly precision, recall and F1 (no library metrics).
+def sirs_threshold_sweep(table: pd.DataFrame, cooldown: int = 6) -> pd.DataFrame:
+    """Course L4 threshold trade-off for SIRS: alert at >= k criteria, k = 1..4.
 
-    Precision is undefined (None) when nothing is flagged, e.g. always-no.
+    Run this on the VALIDATION split only. It is descriptive: the official rule
+    stays at k = 2 and is not re-chosen from these numbers.
+    ``table`` is a ``baseline_table(..., "sirs")`` result (probability = count/4).
+    """
+    from .policy import apply_policy, summarize  # local import avoids a cycle
+
+    rows = []
+    for k in range(1, len(SIRS_CRITERIA) + 1):
+        scored = apply_policy(table, k / len(SIRS_CRITERIA), cooldown)
+        metrics = summarize(scored)
+        metrics.update(hourly_classification_metrics(scored["label"], scored["hourly_positive"]))
+        rows.append({"alert_at_criteria": k, **metrics})
+    return pd.DataFrame(rows)
+
+
+def plot_sirs_threshold_tradeoff(sweep: pd.DataFrame, positive_rate: float, budget: float, path, recreate: str):
+    """Left: precision-recall points for >= 1..4 criteria. Right: false alerts per day."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    fig, (left, right) = plt.subplots(1, 2, figsize=(9.5, 3.9))
+    left.plot(sweep["hourly_recall"], sweep["hourly_precision"], "-o", color="#2a6fdb")
+    for _, row in sweep.iterrows():
+        k = int(row["alert_at_criteria"])
+        left.annotate(f"≥{k}" + (" (rule)" if k == SIRS_ALERT_COUNT else ""),
+                      (row["hourly_recall"], row["hourly_precision"]), textcoords="offset points",
+                      xytext=(6, 4), fontsize=9, fontweight="bold" if k == SIRS_ALERT_COUNT else "normal")
+    left.axhline(positive_rate, color="grey", ls="--", lw=1)
+    left.text(0.02, positive_rate, f" random guessing = positive rate {positive_rate:.3f}", va="bottom",
+              fontsize=8, color="grey", transform=left.get_yaxis_transform())
+    left.set_xlim(0, 1.02)
+    left.set_ylim(0, max(sweep["hourly_precision"].max() * 1.6, positive_rate * 3))
+    left.set_xlabel("Recall (septic-labelled hours flagged)")
+    left.set_ylabel("Precision (flagged hours that are septic)")
+    left.set_title("Precision vs recall")
+    rate = sweep["false_alert_events_per_nonseptic_patient_day"]
+    right.bar(sweep["alert_at_criteria"].astype(str).radd("≥"), rate,
+              color=["#2a6fdb" if k == SIRS_ALERT_COUNT else "#9dbcf0" for k in sweep["alert_at_criteria"]])
+    right.axhline(budget, color="#d96f2c", lw=1.5)
+    right.text(-0.45, budget, f"budget {budget}/day", va="bottom", ha="left", fontsize=8, color="#d96f2c")
+    for x, value in enumerate(rate):
+        right.text(x, value, f"{value:.2f}", ha="center", va="bottom", fontsize=8)
+    right.set_xlabel("Alert when this many SIRS criteria are met")
+    right.set_ylabel("False alerts per non-septic patient-day")
+    right.set_title("Alarm burden (6 h cooldown)")
+    for ax in (left, right):
+        ax.spines[["top", "right"]].set_visible(False)
+    fig.suptitle("8. SIRS threshold trade-off (validation split only)")
+    fig.text(0.99, 0.005, f"Recreate: {recreate}", ha="right", va="bottom", fontsize=6, color="grey")
+    fig.tight_layout(rect=(0, 0.03, 1, 1))
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+
+
+def hourly_classification_metrics(labels, decisions) -> dict:
+    """Hand-written hourly confusion-matrix metrics (course L9; no library metrics).
+
+    precision   = TP / (TP + FP)      share of flagged hours that are septic-labelled
+    recall      = TP / (TP + FN)      share of septic-labelled hours that are flagged
+    specificity = TN / (TN + FP)      share of non-septic hours left alone
+    F1          = 2TP / (2TP + FP + FN)
+    accuracy    = (TP + TN) / all     reported because the brief asks for it, but
+                                      misleading here: always-no already gets ~98%.
+
+    When nothing is flagged (e.g. always-no), precision is 0/0. Following the
+    course convention it is reported as 0 and flagged in ``no_predicted_positives``.
     """
     labels = np.asarray(labels, dtype=bool)
     decisions = np.asarray(decisions, dtype=bool)
     tp = int((labels & decisions).sum())
     fp = int((~labels & decisions).sum())
     fn = int((labels & ~decisions).sum())
-    precision = tp / (tp + fp) if tp + fp else None
-    recall = tp / (tp + fn) if tp + fn else None
-    if precision is None or recall is None:
-        f1 = 0.0 if recall is not None else None
-    else:
-        f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
+    tn = int((~labels & ~decisions).sum())
+    total = tp + fp + fn + tn
     return {
-        "hourly_tp": tp, "hourly_fp": fp, "hourly_fn": fn,
-        "hourly_precision": precision, "hourly_recall": recall, "hourly_f1": f1,
-        "hourly_alert_rate": float(decisions.mean()) if len(decisions) else None,
+        "hourly_tp": tp, "hourly_fp": fp, "hourly_fn": fn, "hourly_tn": tn,
+        "hourly_accuracy": (tp + tn) / total if total else None,
+        "hourly_precision": tp / (tp + fp) if tp + fp else 0.0,
+        "hourly_recall": tp / (tp + fn) if tp + fn else None,
+        "hourly_specificity": tn / (tn + fp) if tn + fp else None,
+        "hourly_f1": 2 * tp / (2 * tp + fp + fn) if tp + fp + fn else None,
+        "hourly_alert_rate": (tp + fp) / total if total else None,
+        "no_predicted_positives": tp + fp == 0,
     }

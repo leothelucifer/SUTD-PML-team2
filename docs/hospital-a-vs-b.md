@@ -1,14 +1,16 @@
 # Hospital A vs hospital B: what differs
 
-Full public cohorts: 20,336 ICU stays from A and 20,000 from B (PhysioNet
-Challenge 2019, v1.0.0). Descriptive only: nothing here is used to choose
-features, models or thresholds, and B stays the untouched external test set.
-All numbers are aggregates.
+Hospital A = its **training split only** (11,183 of 20,336 stays). A's
+calibration, validation and internal-test stays are left out, following the
+course rule to tune on validation and touch test data once. Hospital B = all
+20,000 stays, described only: nothing here is used to choose features, models
+or thresholds. PhysioNet Challenge 2019, v1.0.0. All numbers are aggregates.
 
 Recreate every figure and the table:
 
 ```bash
-python -m sepsis_warning compare-hospitals --data data/physionet/combined.parquet --output reports/figures
+python -m sepsis_warning split          # once, writes data/physionet/splits.csv
+python -m sepsis_warning compare-hospitals --data data/physionet/combined.parquet --splits data/physionet/splits.csv --output reports/figures
 ```
 
 Figures and the full summary table: [reports/figures/](../reports/figures/README.md).
@@ -45,7 +47,7 @@ age (median 65 vs 62 years) and recorded gender (58% vs 54% male)
 
 ## Points for the report
 
-- **More B septic stays are positive from their first row** (19.5% vs 11.3%).
+- **More B septic stays are positive from their first row** (19.5% vs 12.1%).
   Their onset is unknown (sepsis began before the ICU record), so they are
   excluded from lead-time analysis. At B a larger share of septic patients
   cannot be warned early at all
@@ -53,6 +55,6 @@ age (median 65 vs 62 years) and recorded gender (58% vs 54% male)
 - EtCO2 is 100% missing at A but recorded in about 8% of B hours. A model
   trained on A has never seen it.
 - B is 3 years younger on median age and has fewer patients aged 80+ (11.6% vs
-  15.0%). This matters for the age-group fairness checks.
+  15.2%). This matters for the age-group fairness checks.
 - A record is an ICU stay, not a person. The same person could appear more
   than once.

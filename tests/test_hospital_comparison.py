@@ -10,7 +10,7 @@ import pandas as pd
 from sepsis_warning.baselines import sirs_count
 from sepsis_warning.data import DYNAMIC, STATIC
 from sepsis_warning.hospital_comparison import (
-    add_sirs, missingness, run_comparison, stay_table, summary_table,
+    add_sirs, missingness, restrict_a_to_train, run_comparison, stay_table, summary_table,
 )
 
 
@@ -71,6 +71,16 @@ class HospitalComparison(unittest.TestCase):
         self.assertAlmostEqual(missing.loc["HR", "A"], 4 / 7)
         self.assertAlmostEqual(missing.loc["HR", "B"], 6 / 7)
         self.assertEqual(missing.loc["EtCO2", "A"], 1.0)
+
+    def test_exploration_uses_only_a_train_plus_b(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            splits = Path(tmp) / "splits.csv"
+            pd.DataFrame({
+                "patient_id": ["p1", "p2", "p3", "p4"], "hospital": ["A", "A", "B", "B"],
+                "septic": [0, 1, 1, 0], "split": ["train", "internal_test", "external_test", "external_test"],
+            }).to_csv(splits, index=False)
+            kept = restrict_a_to_train(fixture(), splits)
+            self.assertEqual(sorted(kept["patient_id"].unique()), ["p1", "p3", "p4"])  # p2 (A test) dropped
 
     def test_end_to_end_writes_figures(self):
         with tempfile.TemporaryDirectory() as tmp:

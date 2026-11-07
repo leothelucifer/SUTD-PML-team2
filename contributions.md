@@ -31,8 +31,8 @@
 | E02 | Version data with DVC | Not started | - | - | - |
 | E03 | Data schema checks with Pandera | Not started | - | - | - |
 | E04 | Hospital A / B split | In review | - | 2026-11-07 | `split` command writes `splits.csv` (seed 42, hashes). 55/15/15/15 of A, all B external, every stay once, load-order independent. `tests/test_splits.py`. Stay-level, not person-level. |
-| E05 | Exploratory analysis | In progress | - | 2026-11-07 | `compare-hospitals` command, 7 figures in `reports/figures/`, findings in `docs/hospital-a-vs-b.md`. To do: restrict A to train split; team OK on descriptive use of B. |
-| E06 | SIRS rule baseline | In review | - | 2026-11-07 | `baseline` command → `baseline_metrics.csv`; SIRS F1 0.063 (A val), utility −0.014 at B. Independently recomputed with the official utility formula (match to 1e-15). `tests/test_baselines.py`. |
+| E05 | Exploratory analysis | In progress | - | 2026-11-07 | `compare-hospitals` command, 7 figures in `reports/figures/`, findings in `docs/hospital-a-vs-b.md`. A restricted to train split (no test data). To do: team OK on descriptive use of B. |
+| E06 | SIRS rule baseline | In review | - | 2026-11-07 | `baseline` command → `baseline_metrics.csv`; SIRS F1 0.063 (A val), utility −0.014 at B. Independently recomputed with the official utility formula (match to 1e-15). Adds accuracy, specificity, confusion matrix and a validation-only threshold sweep (fig 8). `tests/test_baselines.py`. |
 | E07 | Prepare slides 4, 5, 8 | Not started | - | - | - |
 
 ### Person 2 - Jawad

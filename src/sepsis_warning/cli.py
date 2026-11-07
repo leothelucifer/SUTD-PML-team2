@@ -13,7 +13,7 @@ from threadpoolctl import threadpool_limits
 
 from .baselines import (
     BASELINE_THRESHOLD, BASELINES, auroc, average_precision, baseline_table,
-    hourly_classification_metrics,
+    hourly_classification_metrics, plot_sirs_threshold_tradeoff, sirs_threshold_sweep,
 )
 from .data import generate_synthetic, load_patients, read_patient, split_patients
 from .hospital_comparison import run_comparison
@@ -114,12 +114,19 @@ def run_experiment(args):
 BASELINE_SPLITS = ["validation", "internal_test", "external_test"]
 BASELINE_COLUMNS = [
     "model", "split", "patients", "septic_patients", "hours", "positive_hour_fraction",
-    "hourly_precision", "hourly_recall", "hourly_f1", "hourly_alert_rate",
+    "hourly_precision", "hourly_recall", "hourly_f1", "hourly_specificity", "hourly_accuracy",
+    "hourly_alert_rate", "no_predicted_positives",
     "normalized_hourly_utility", "alert_events",
     "false_alert_events_per_nonseptic_patient_day", "early_detection_recall",
     "median_inferred_lead_hours", "average_precision", "auroc",
     "eligible_septic_patients_for_lead_time", "left_censored_septic_patients",
-    "hourly_tp", "hourly_fp", "hourly_fn",
+    "hourly_tp", "hourly_fp", "hourly_fn", "hourly_tn",
+]
+SWEEP_COLUMNS = [
+    "alert_at_criteria", "hourly_precision", "hourly_recall", "hourly_f1", "hourly_specificity",
+    "hourly_accuracy", "hourly_alert_rate", "normalized_hourly_utility",
+    "false_alert_events_per_nonseptic_patient_day", "early_detection_recall",
+    "hourly_tp", "hourly_fp", "hourly_fn", "hourly_tn",
 ]
 
 
@@ -153,6 +160,20 @@ def run_baselines(args):
             "auroc", "average_precision",
         ]].round(3).to_string(index=False))
     print(f"Baseline metrics: {path.resolve()}", flush=True)
+    # Threshold trade-off (course L4) on VALIDATION ONLY. Descriptive: the rule
+    # stays at >= 2 criteria; test splits are never used to look at thresholds.
+    validation = baseline_table(splits["validation"], "sirs")
+    sweep = sirs_threshold_sweep(validation, args.cooldown)[SWEEP_COLUMNS]
+    sweep_path = args.output / "sirs_threshold_sweep_validation.csv"
+    sweep.to_csv(sweep_path, index=False)
+    args.figures.mkdir(parents=True, exist_ok=True)
+    plot_sirs_threshold_tradeoff(
+        sweep, float(validation["label"].mean()), 0.2, args.figures / "08_sirs_threshold_tradeoff.png",
+        "python -m sepsis_warning baseline --data data/physionet --output artifacts/baseline",
+    )
+    print(sweep[["alert_at_criteria", "hourly_precision", "hourly_recall", "hourly_f1",
+                 "hourly_specificity", "false_alert_events_per_nonseptic_patient_day"]].round(3).to_string(index=False))
+    print(f"Threshold sweep (validation): {sweep_path.resolve()}", flush=True)
     return result
 
 
@@ -196,6 +217,7 @@ def main():
     baseline.add_argument("--output", type=Path, default=Path("artifacts/baseline"))
     baseline.add_argument("--seed", type=int, default=42)
     baseline.add_argument("--cooldown", type=int, default=6)
+    baseline.add_argument("--figures", type=Path, default=Path("reports/figures"))
     split = sub.add_parser("split", help="Save the patient split once as splits.csv")
     split.add_argument("--data", type=Path, default=Path("data/physionet/combined.parquet"))
     split.add_argument("--output", type=Path, default=Path("data/physionet/splits.csv"))
@@ -206,6 +228,8 @@ def main():
     )
     compare.add_argument("--data", type=Path, default=Path("data/physionet/combined.parquet"))
     compare.add_argument("--output", type=Path, default=Path("reports/figures"))
+    compare.add_argument("--splits", type=Path, default=Path("data/physionet/splits.csv"),
+                         help="Hospital A is restricted to this file's train split")
     args = parser.parse_args()
     try:
         if args.command == "demo":
@@ -241,7 +265,9 @@ def main():
         elif args.command == "compare-hospitals":
             if not args.data.exists():
                 raise ValueError(f"{args.data} not found; run `prepare` first")
-            summary = run_comparison(args.data, args.output)
+            if not args.splits.exists():
+                raise ValueError(f"{args.splits} not found; run `split` first")
+            summary = run_comparison(args.data, args.output, args.splits)
             print(summary.to_string())
             print(f"Figures and README: {args.output.resolve()}")
         elif args.command == "missingness":

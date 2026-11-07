@@ -137,13 +137,35 @@ clinical SIRS:
 
 **Results on the full data** (seed 42; `artifacts/baseline/baseline_metrics.csv`):
 
-| Split | Precision | Recall | F1 | Utility | False alerts / non-septic day |
-|---|---|---|---|---|---|
-| Validation (A) | 0.033 | 0.536 | 0.063 | 0.084 | 1.98 |
-| Internal test (A) | 0.033 | 0.529 | 0.063 | 0.087 | 1.97 |
-| External test (B) | 0.028 | 0.511 | 0.052 | −0.014 | 1.52 |
+| Split | Precision | Recall | F1 | Specificity | Accuracy | Utility | False alerts / non-septic day |
+|---|---|---|---|---|---|---|---|
+| Validation (A) | 0.033 | 0.536 | 0.063 | 0.655 | 0.652 | 0.084 | 1.98 |
+| Internal test (A) | 0.033 | 0.529 | 0.063 | 0.661 | 0.658 | 0.087 | 1.97 |
+| External test (B) | 0.028 | 0.511 | 0.052 | 0.742 | 0.739 | −0.014 | 1.52 |
+| Always-no (validation) | 0 (nothing flagged) | 0 | 0 | 1.000 | **0.978** | 0 | 0 |
 
-Always-no scores 0 on recall, F1, utility and false alerts.
+Metrics follow the course's confusion-matrix definitions (L9), hand-written in
+NumPy: precision TP/(TP+FP), recall TP/(TP+FN), specificity TN/(TN+FP),
+F1 2TP/(2TP+FP+FN), accuracy (TP+TN)/all. Accuracy is reported because the
+brief asks for it, but it is misleading here: always-no is 97.8% "accurate"
+while catching no sepsis at all. When nothing is flagged, precision is 0/0; it
+is reported as 0 and marked in `no_predicted_positives`.
+
+**Threshold trade-off (validation only).** The same command also scores SIRS
+at ≥ 1, 2, 3 and 4 criteria on the validation split
+(`artifacts/baseline/sirs_threshold_sweep_validation.csv`,
+`reports/figures/08_sirs_threshold_tradeoff.png`). Raising the threshold gives
+fewer false alarms but misses more sepsis (course L4). Only ≥ 4 stays under the
+0.2 false-alerts-per-day budget, and it then catches just 3% of septic hours.
+This is descriptive: the rule stays at the standard ≥ 2 and the test splits are
+not used to look at thresholds.
+
+| Alert at | Precision | Recall | F1 | Specificity | False alerts / day |
+|---|---|---|---|---|---|
+| ≥ 1 | 0.025 | 0.823 | 0.049 | 0.293 | 3.43 |
+| **≥ 2 (rule)** | 0.033 | 0.536 | 0.063 | 0.655 | 1.98 |
+| ≥ 3 | 0.044 | 0.220 | 0.074 | 0.895 | 0.70 |
+| ≥ 4 | 0.056 | 0.033 | 0.042 | 0.988 | 0.10 |
 
 ## Patient split
 

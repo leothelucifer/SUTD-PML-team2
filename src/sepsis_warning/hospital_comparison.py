@@ -25,6 +25,9 @@ from .data import DYNAMIC
 KEY = ["hospital", "patient_id"]
 HOSPITALS = ["A", "B"]
 COLORS = {"A": "#2a6fdb", "B": "#e07b39"}
+# Legend names; run_comparison switches A to "Hospital A (train)" when it
+# restricts A to the training split.
+LABELS = {"A": "Hospital A", "B": "Hospital B"}
 AGE_BINS = [0, 45, 65, 80, np.inf]
 AGE_LABELS = ["<45", "45-64", "65-79", "80+"]
 # Plot ranges cut off rare extreme values so the shape is visible.
@@ -35,8 +38,8 @@ VITAL_RANGES = {"HR": (20, 200), "MAP": (20, 160), "Temp": (33, 42), "Resp": (0,
 VITAL_BIN_WIDTH = {"HR": 2, "MAP": 2, "Temp": 0.25, "Resp": 1}
 VITAL_UNITS = {"HR": "beats/min", "MAP": "mmHg", "Temp": "°C", "Resp": "breaths/min"}
 RECREATE = (
-    "python -m sepsis_warning compare-hospitals "
-    "--data data/physionet/combined.parquet --output reports/figures"
+    "python -m sepsis_warning compare-hospitals --data data/physionet/combined.parquet "
+    "--splits data/physionet/splits.csv --output reports/figures"
 )
 
 
@@ -118,7 +121,7 @@ def _left_censored_share(h, s):
 def _bar_pair(ax, labels, a_values, b_values, fmt="{:.1f}"):
     x = np.arange(len(labels))
     for offset, hospital, values in [(-0.2, "A", a_values), (0.2, "B", b_values)]:
-        bars = ax.bar(x + offset, values, 0.4, label=f"Hospital {hospital}", color=COLORS[hospital])
+        bars = ax.bar(x + offset, values, 0.4, label=LABELS[hospital], color=COLORS[hospital])
         ax.bar_label(bars, labels=[fmt.format(v) for v in values], fontsize=8, padding=2)
     ax.set_xticks(x, labels)
     ax.legend(frameon=False)
@@ -149,7 +152,7 @@ def fig_stay_length(stays, path):
     for hospital in HOSPITALS:
         values = stays.loc[stays["hospital"] == hospital, "hours"]
         ax.hist(values.clip(upper=100), bins=bins, density=True, histtype="step", lw=1.8,
-                color=COLORS[hospital], label=f"Hospital {hospital} (median {values.median():.0f} h)")
+                color=COLORS[hospital], label=f"{LABELS[hospital]} (median {values.median():.0f} h)")
     ax.set_xlabel("Hours of ICU data per stay (> 100 h shown at 100)")
     ax.set_ylabel("Density")
     ax.legend(frameon=False)
@@ -198,7 +201,7 @@ def fig_vitals(hours, path):
         for hospital in HOSPITALS:
             values = hours.loc[hours["hospital"] == hospital, column].dropna()
             ax.hist(values.clip(low, high), bins=bins, density=True, histtype="step", lw=1.6,
-                    color=COLORS[hospital], label=f"{hospital} (median {values.median():.1f})")
+                    color=COLORS[hospital], label=f"{LABELS[hospital]} (median {values.median():.1f})")
         ax.set_xlabel(f"{column} ({VITAL_UNITS[column]})")
         ax.set_yticks([])
         ax.legend(frameon=False, fontsize=8)
@@ -225,7 +228,7 @@ def fig_label_timing(stays, path):
     for hospital in HOSPITALS:
         values = stays.loc[(stays["hospital"] == hospital) & stays["septic"], "first_positive_iculos"]
         ax.hist(values.clip(upper=240), bins=bins, density=True, histtype="step", lw=1.8,
-                color=COLORS[hospital], label=f"Hospital {hospital} (median {values.median():.0f} h)")
+                color=COLORS[hospital], label=f"{LABELS[hospital]} (median {values.median():.0f} h)")
     ax.set_xlabel("ICU hour of first positive label (septic stays; > 240 h shown at 240)")
     ax.set_ylabel("Density")
     ax.legend(frameon=False)
@@ -241,9 +244,27 @@ def _save(fig, path):
     plt.close(fig)
 
 
-def run_comparison(data: Path, output: Path) -> pd.DataFrame:
+def restrict_a_to_train(hours: pd.DataFrame, splits: Path) -> pd.DataFrame:
+    """Keep hospital A's TRAINING stays only, plus all of B.
+
+    Course rule: tune on validation, touch the test set once. Exploration can
+    shape later choices, so A's calibration, validation and internal-test
+    stays are left out. B is described only (nothing is tuned on it).
+    """
+    table = pd.read_csv(splits, dtype=str)
+    train_ids = set(table.loc[(table["hospital"] == "A") & (table["split"] == "train"), "patient_id"])
+    keep = (hours["hospital"] == "B") | hours["patient_id"].isin(train_ids)
+    return hours[keep].reset_index(drop=True)
+
+
+def run_comparison(data: Path, output: Path, splits: Path | None = None) -> pd.DataFrame:
     output.mkdir(parents=True, exist_ok=True)
-    hours = add_sirs(load_hours(data))
+    hours = load_hours(data)
+    LABELS["A"] = "Hospital A"
+    if splits is not None:
+        hours = restrict_a_to_train(hours, splits)
+        LABELS["A"] = "Hospital A (train)"
+    hours = add_sirs(hours)
     stays = stay_table(hours)
     missing = missingness(hours)
     summary = summary_table(hours, stays)
@@ -264,7 +285,9 @@ def run_comparison(data: Path, output: Path) -> pd.DataFrame:
         "# Hospital A vs B figures",
         "",
         "Descriptive only: nothing here is used to choose models or thresholds.",
-        "All values are aggregates over ICU stays or hourly rows.",
+        "Hospital A = its TRAINING split only (11,183 stays); A's calibration,",
+        "validation and internal-test stays are left out. Hospital B = all 20,000",
+        "stays, described only. All values are aggregates over stays or hourly rows.",
         "",
         "Recreate everything in this folder:",
         "",
@@ -279,6 +302,8 @@ def run_comparison(data: Path, output: Path) -> pd.DataFrame:
         "| 05_vital_signs.png | HR, MAP, Temp, Resp distributions (measured hours) |",
         "| 06_sirs_firing_rate.png | % of hours with SIRS >= 2, septic vs non-septic stays |",
         "| 07_label_timing.png | ICU hour of the first positive label |",
+        "| 08_sirs_threshold_tradeoff.png | SIRS at >= 1..4 criteria, validation only (made by "
+        "`python -m sepsis_warning baseline --data data/physionet --output artifacts/baseline`) |",
         "| hospital_summary.csv | Summary table below |",
         "| missingness_by_hospital.csv | Missing % for all 34 hourly variables |",
         "",

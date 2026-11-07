@@ -7,7 +7,7 @@ import pandas as pd
 
 from sepsis_warning.baselines import (
     BASELINE_THRESHOLD, auroc, average_precision, baseline_table,
-    hourly_classification_metrics, sirs_count,
+    hourly_classification_metrics, sirs_count, sirs_threshold_sweep,
 )
 from sepsis_warning.data import DYNAMIC, STATIC, Patient
 from sepsis_warning.policy import apply_policy
@@ -78,15 +78,47 @@ class SirsBaseline(unittest.TestCase):
         table = apply_policy(baseline_table([Patient("A:p", "A", frame)], "always_no"), BASELINE_THRESHOLD, 6)
         self.assertEqual(table["alert_event"].sum(), 0)
         metrics = hourly_classification_metrics(table["label"], table["hourly_positive"])
-        self.assertIsNone(metrics["hourly_precision"])
+        # Course convention: 0/0 precision is reported as 0 and flagged.
+        self.assertEqual(metrics["hourly_precision"], 0)
+        self.assertTrue(metrics["no_predicted_positives"])
         self.assertEqual(metrics["hourly_recall"], 0)
         self.assertEqual(metrics["hourly_f1"], 0)
+        self.assertEqual(metrics["hourly_specificity"], 1)
+        # Hours 4-9 are positive (6 of 10), so "never alert" is right on the 4 negatives.
+        self.assertAlmostEqual(metrics["hourly_accuracy"], 0.4)
 
     def test_hand_written_metrics(self):
-        metrics = hourly_classification_metrics([1, 1, 0, 0, 1], [1, 0, 1, 0, 1])
+        # y:    1 1 0 0 1 0
+        # yhat: 1 0 1 0 1 0   -> TP 2, FN 1, FP 1, TN 2
+        metrics = hourly_classification_metrics([1, 1, 0, 0, 1, 0], [1, 0, 1, 0, 1, 0])
+        self.assertEqual((metrics["hourly_tp"], metrics["hourly_fp"], metrics["hourly_fn"], metrics["hourly_tn"]), (2, 1, 1, 2))
         self.assertAlmostEqual(metrics["hourly_precision"], 2 / 3)
         self.assertAlmostEqual(metrics["hourly_recall"], 2 / 3)
-        self.assertAlmostEqual(metrics["hourly_f1"], 2 / 3)
+        self.assertAlmostEqual(metrics["hourly_f1"], 2 * 2 / (2 * 2 + 1 + 1))
+        self.assertAlmostEqual(metrics["hourly_specificity"], 2 / 3)
+        self.assertAlmostEqual(metrics["hourly_accuracy"], 4 / 6)
+        self.assertFalse(metrics["no_predicted_positives"])
+
+    def test_threshold_sweep_trades_recall_for_fewer_alerts(self):
+        rng = np.random.default_rng(3)
+        patients = []
+        for i in range(30):
+            septic_from = 20 if i % 3 == 0 else None
+            frame = make_patient(
+                30, label_from=septic_from, HR=rng.normal(92, 12, 30), Temp=rng.normal(37.6, 0.9, 30),
+                Resp=rng.normal(20, 4, 30), WBC=rng.normal(10, 4, 30),
+            )
+            patients.append(Patient(f"A:p{i}", "A", frame))
+        sweep = sirs_threshold_sweep(baseline_table(patients, "sirs"), cooldown=6)
+        self.assertEqual(list(sweep["alert_at_criteria"]), [1, 2, 3, 4])
+        # Raising the threshold never flags more hours, so recall cannot rise (L4).
+        self.assertTrue((np.diff(sweep["hourly_alert_rate"]) <= 0).all())
+        self.assertTrue((np.diff(sweep["hourly_recall"]) <= 1e-12).all())
+        self.assertTrue((np.diff(sweep["hourly_specificity"]) >= -1e-12).all())
+        # The ">= 2" row equals scoring the official rule directly.
+        direct = apply_policy(baseline_table(patients, "sirs"), BASELINE_THRESHOLD, 6)
+        official = hourly_classification_metrics(direct["label"], direct["hourly_positive"])
+        self.assertAlmostEqual(sweep.loc[1, "hourly_f1"], official["hourly_f1"])
 
 
     def test_ranking_metrics_by_hand(self):
