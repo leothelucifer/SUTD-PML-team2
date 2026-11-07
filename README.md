@@ -94,6 +94,36 @@ Full feature tables are currently built in memory and may consume several GB.
 Start with a subset; add partitioned feature caching before a full-cohort study.
 Raw data and generated artifacts are excluded by `.gitignore`.
 
+## SIRS baseline (the score every model must beat)
+
+```bash
+python -m sepsis_warning baseline --data data/physionet --output artifacts/baseline
+```
+
+Writes `artifacts/baseline/baseline_metrics.csv`: one row per baseline per
+split (`validation`, `internal_test`, `external_test` = hospital B). It uses the
+same patient split (`--seed 42`) as `train`, so model rows can be added to the
+same table later.
+
+| Baseline | Rule |
+|---|---|
+| `sirs` | Alert hour when **≥ 2** of: Temp > 38 or < 36 °C; HR > 90; Resp > 20 or PaCO2 < 32 mmHg; WBC > 12 or < 4 ×10⁹/L. |
+| `always_no` | Never alerts. Shows the score of doing nothing. |
+
+- **Causal.** Each hour uses the last value seen at or before that hour (forward
+  fill only). Future hours never change earlier scores.
+- **Missing = normal.** A variable never observed does not count as abnormal.
+- Band neutrophils (part of the clinical WBC criterion) are not in the dataset.
+- Neither baseline is trained, so they use no training data.
+- Alerts go through the same `policy.apply_policy` (6 h cooldown) and
+  `policy.summarize` as the models. Precision, recall and F1 are hourly and
+  hand-written in `baselines.py`. For `always_no`, precision is undefined (blank).
+- `probability` for SIRS is criteria met ÷ 4, so the ranking metrics (AP, AUROC)
+  are meaningful but it is not a calibrated probability.
+
+Code: [src/sepsis_warning/baselines.py](src/sepsis_warning/baselines.py).
+Tests: [tests/test_baselines.py](tests/test_baselines.py).
+
 ## What is implemented
 
 | Component | First implementation |

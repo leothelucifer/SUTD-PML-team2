@@ -11,6 +11,7 @@ import joblib
 import pandas as pd
 from threadpoolctl import threadpool_limits
 
+from .baselines import BASELINE_THRESHOLD, BASELINES, baseline_table, hourly_classification_metrics
 from .data import generate_synthetic, load_patients, read_patient, split_patients
 from .features import META, build_features, feature_table
 from .modeling import candidate_models, fit_calibrated
@@ -105,6 +106,47 @@ def run_experiment(args):
     print(f"Replay: {(args.output / 'replay.html').resolve()}", flush=True)
 
 
+BASELINE_SPLITS = ["validation", "internal_test", "external_test"]
+BASELINE_COLUMNS = [
+    "model", "split", "patients", "septic_patients", "hours", "positive_hour_fraction",
+    "hourly_precision", "hourly_recall", "hourly_f1", "hourly_alert_rate",
+    "normalized_hourly_utility", "alert_events",
+    "false_alert_events_per_nonseptic_patient_day", "early_detection_recall",
+    "median_inferred_lead_hours", "average_precision", "auroc",
+    "eligible_septic_patients_for_lead_time", "left_censored_septic_patients",
+    "hourly_tp", "hourly_fp", "hourly_fn",
+]
+
+
+def run_baselines(args):
+    """Score SIRS and always-no on validation, internal test and hospital B."""
+    synthetic = (args.data / "SYNTHETIC.json").exists()
+    print("Data mode:", "SYNTHETIC SOFTWARE FIXTURE" if synthetic else "PhysioNet records", flush=True)
+    patients = load_patients(args.data)
+    if not synthetic and any("synthetic_" in p.patient_id for p in patients):
+        raise ValueError("Synthetic filenames found without SYNTHETIC.json marker")
+    # Same seed and split function as `train`, so rows line up with the models.
+    splits = split_patients(patients, args.seed)
+    rows = []
+    for split in BASELINE_SPLITS:
+        for name in BASELINES:
+            table = apply_policy(baseline_table(splits[split], name), BASELINE_THRESHOLD, args.cooldown)
+            metrics = summarize(table)
+            metrics.update(hourly_classification_metrics(table["label"], table["hourly_positive"]))
+            rows.append({"model": name, "split": split, **metrics})
+    result = pd.DataFrame(rows)[BASELINE_COLUMNS]
+    args.output.mkdir(parents=True, exist_ok=True)
+    path = args.output / "baseline_metrics.csv"
+    result.to_csv(path, index=False)
+    with pd.option_context("display.width", 200, "display.max_columns", 12):
+        print(result[BASELINE_COLUMNS[:2] + [
+            "hourly_precision", "hourly_recall", "hourly_f1", "normalized_hourly_utility",
+            "false_alert_events_per_nonseptic_patient_day", "early_detection_recall",
+        ]].round(3).to_string(index=False))
+    print(f"Baseline metrics: {path.resolve()}", flush=True)
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -138,6 +180,13 @@ def main():
     prepare.add_argument(
         "--output", type=Path, default=Path("data/physionet/combined.parquet")
     )
+    baseline = sub.add_parser(
+        "baseline", help="Score the SIRS and always-no baselines on every evaluation split"
+    )
+    baseline.add_argument("--data", type=Path, required=True)
+    baseline.add_argument("--output", type=Path, default=Path("artifacts/baseline"))
+    baseline.add_argument("--seed", type=int, default=42)
+    baseline.add_argument("--cooldown", type=int, default=6)
     args = parser.parse_args()
     try:
         if args.command == "demo":
@@ -159,6 +208,10 @@ def main():
             args.output.parent.mkdir(parents=True, exist_ok=True)
             table.to_csv(args.output, index=False)
             print(args.output.resolve())
+        elif args.command == "baseline":
+            if args.cooldown < 0:
+                raise ValueError("cooldown must be nonnegative")
+            run_baselines(args)
         elif args.command == "missingness":
             synthetic = (args.data / "SYNTHETIC.json").exists()
             patients = load_patients(args.data)
