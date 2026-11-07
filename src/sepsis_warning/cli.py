@@ -11,7 +11,10 @@ import joblib
 import pandas as pd
 from threadpoolctl import threadpool_limits
 
-from .baselines import BASELINE_THRESHOLD, BASELINES, baseline_table, hourly_classification_metrics
+from .baselines import (
+    BASELINE_THRESHOLD, BASELINES, auroc, average_precision, baseline_table,
+    hourly_classification_metrics,
+)
 from .data import generate_synthetic, load_patients, read_patient, split_patients
 from .features import META, build_features, feature_table
 from .modeling import candidate_models, fit_calibrated
@@ -133,6 +136,9 @@ def run_baselines(args):
             table = apply_policy(baseline_table(splits[split], name), BASELINE_THRESHOLD, args.cooldown)
             metrics = summarize(table)
             metrics.update(hourly_classification_metrics(table["label"], table["hourly_positive"]))
+            # Hand-written ranking metrics replace the sklearn ones from summarize.
+            metrics["auroc"] = auroc(table["label"], table["probability"])
+            metrics["average_precision"] = average_precision(table["label"], table["probability"])
             rows.append({"model": name, "split": split, **metrics})
     result = pd.DataFrame(rows)[BASELINE_COLUMNS]
     args.output.mkdir(parents=True, exist_ok=True)
@@ -142,6 +148,7 @@ def run_baselines(args):
         print(result[BASELINE_COLUMNS[:2] + [
             "hourly_precision", "hourly_recall", "hourly_f1", "normalized_hourly_utility",
             "false_alert_events_per_nonseptic_patient_day", "early_detection_recall",
+            "auroc", "average_precision",
         ]].round(3).to_string(index=False))
     print(f"Baseline metrics: {path.resolve()}", flush=True)
     return result

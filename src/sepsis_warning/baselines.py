@@ -84,6 +84,50 @@ def baseline_table(patients: list[Patient], baseline: str) -> pd.DataFrame:
 BASELINE_THRESHOLD = SIRS_ALERT_COUNT / len(SIRS_CRITERIA)
 
 
+def auroc(labels, scores):
+    """Area under the ROC curve via the Mann-Whitney rank formula.
+
+    = probability a random positive hour scores above a random negative hour
+    (ties count half). Tied scores get their average rank.
+    """
+    labels = np.asarray(labels, dtype=bool)
+    scores = np.asarray(scores, dtype=float)
+    n_pos, n_neg = int(labels.sum()), int((~labels).sum())
+    if not n_pos or not n_neg:
+        return None
+    order = np.argsort(scores, kind="mergesort")
+    sorted_scores = scores[order]
+    ranks = np.empty(len(scores))
+    # Average rank (1-based) within each block of equal scores.
+    starts = np.r_[0, np.flatnonzero(np.diff(sorted_scores)) + 1]
+    ends = np.r_[starts[1:], len(scores)]
+    for start, end in zip(starts, ends):
+        ranks[order[start:end]] = (start + 1 + end) / 2
+    return float((ranks[labels].sum() - n_pos * (n_pos + 1) / 2) / (n_pos * n_neg))
+
+
+def average_precision(labels, scores):
+    """AP = sum over thresholds of (recall_k - recall_{k-1}) * precision_k.
+
+    Thresholds are the distinct scores, highest first, so tied hours enter
+    together (same convention as scikit-learn).
+    """
+    labels = np.asarray(labels, dtype=bool)
+    scores = np.asarray(scores, dtype=float)
+    n_pos = int(labels.sum())
+    if not n_pos:
+        return None
+    order = np.argsort(-scores, kind="mergesort")
+    sorted_scores, sorted_labels = scores[order], labels[order]
+    # Last index of each block of equal scores.
+    block_ends = np.r_[np.flatnonzero(np.diff(sorted_scores)), len(scores) - 1]
+    tp = np.cumsum(sorted_labels)[block_ends]
+    flagged = block_ends + 1
+    precision = tp / flagged
+    recall = tp / n_pos
+    return float(np.sum(np.diff(np.r_[0, recall]) * precision))
+
+
 def hourly_classification_metrics(labels, decisions) -> dict:
     """Hand-written hourly precision, recall and F1 (no library metrics).
 

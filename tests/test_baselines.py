@@ -6,7 +6,8 @@ import numpy as np
 import pandas as pd
 
 from sepsis_warning.baselines import (
-    BASELINE_THRESHOLD, baseline_table, hourly_classification_metrics, sirs_count,
+    BASELINE_THRESHOLD, auroc, average_precision, baseline_table,
+    hourly_classification_metrics, sirs_count,
 )
 from sepsis_warning.data import DYNAMIC, STATIC, Patient
 from sepsis_warning.policy import apply_policy
@@ -86,6 +87,26 @@ class SirsBaseline(unittest.TestCase):
         self.assertAlmostEqual(metrics["hourly_precision"], 2 / 3)
         self.assertAlmostEqual(metrics["hourly_recall"], 2 / 3)
         self.assertAlmostEqual(metrics["hourly_f1"], 2 / 3)
+
+
+    def test_ranking_metrics_by_hand(self):
+        # Positives at 0.9 and 0.4; negatives at 0.8 and 0.1.
+        # Pairs (pos > neg): 0.9>0.8, 0.9>0.1, 0.4>0.1 -> 3 of 4.
+        self.assertAlmostEqual(auroc([1, 0, 1, 0], [0.9, 0.8, 0.4, 0.1]), 0.75)
+        # Ranking: P N P N -> precision 1 at recall .5, 2/3 at recall 1.
+        self.assertAlmostEqual(average_precision([1, 0, 1, 0], [0.9, 0.8, 0.4, 0.1]), 0.5 + 0.5 * 2 / 3)
+        # All tied: AUROC 0.5, AP = prevalence.
+        self.assertAlmostEqual(auroc([1, 0, 0, 0], [1, 1, 1, 1]), 0.5)
+        self.assertAlmostEqual(average_precision([1, 0, 0, 0], [1, 1, 1, 1]), 0.25)
+        self.assertIsNone(auroc([0, 0], [0.1, 0.2]))
+
+    def test_ranking_metrics_match_reference_with_ties(self):
+        from sklearn.metrics import average_precision_score, roc_auc_score  # reference only
+        rng = np.random.default_rng(1)
+        labels = rng.random(2000) < 0.05
+        scores = rng.integers(0, 5, 2000) / 4 + labels * rng.random(2000) * 0.3  # heavy ties, like SIRS
+        self.assertAlmostEqual(auroc(labels, scores), roc_auc_score(labels, scores))
+        self.assertAlmostEqual(average_precision(labels, scores), average_precision_score(labels, scores))
 
 
 if __name__ == "__main__":

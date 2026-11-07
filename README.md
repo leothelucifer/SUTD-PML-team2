@@ -116,8 +116,9 @@ same table later.
 - Band neutrophils (part of the clinical WBC criterion) are not in the dataset.
 - Neither baseline is trained, so they use no training data.
 - Alerts go through the same `policy.apply_policy` (6 h cooldown) and
-  `policy.summarize` as the models. Precision, recall and F1 are hourly and
-  hand-written in `baselines.py`. For `always_no`, precision is undefined (blank).
+  `policy.summarize` as the models. Precision, recall, F1, AUROC and AP are
+  hourly and hand-written in `baselines.py` (no sklearn metrics; tests check
+  them against sklearn). For `always_no`, precision is undefined (blank).
 - `probability` for SIRS is criteria met ÷ 4, so the ranking metrics (AP, AUROC)
   are meaningful but it is not a calibrated probability.
 
