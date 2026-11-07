@@ -44,9 +44,10 @@ def main():
     parser.add_argument("--output", type=Path, default=Path("data/physionet"))
     parser.add_argument("--limit", type=int, default=500)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--workers", type=int, default=4, help="parallel downloads")
     args = parser.parse_args()
-    if args.limit < 0:
-        parser.error("limit must be nonnegative")
+    if args.limit < 0 or args.workers < 1:
+        parser.error("limit must be nonnegative and workers positive")
     rng = random.Random(args.seed)
     manifest = []
     for hospital in ["A", "B"]:
@@ -61,7 +62,7 @@ def main():
         directory.mkdir(parents=True, exist_ok=True)
         jobs = [(url + name, directory / name) for name in names]
         print(f"Downloading {len(jobs)} hospital {hospital} records", flush=True)
-        with ThreadPoolExecutor(max_workers=4) as pool:
+        with ThreadPoolExecutor(max_workers=args.workers) as pool:
             manifest.extend(pool.map(download_one, jobs))
     (args.output / "download_manifest.json").write_text(json.dumps({
         "source": "https://physionet.org/content/challenge-2019/1.0.0/",
