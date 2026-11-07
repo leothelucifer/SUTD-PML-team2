@@ -23,6 +23,7 @@ from .missingness import run_missingness_analysis
 from .policy import apply_policy, summarize, tune_threshold
 from .prepare import prepare_parquet, write_summary
 from .report import write_report
+from .splits import write_splits
 
 
 def write_json(path, value):
@@ -195,6 +196,10 @@ def main():
     baseline.add_argument("--output", type=Path, default=Path("artifacts/baseline"))
     baseline.add_argument("--seed", type=int, default=42)
     baseline.add_argument("--cooldown", type=int, default=6)
+    split = sub.add_parser("split", help="Save the patient split once as splits.csv")
+    split.add_argument("--data", type=Path, default=Path("data/physionet/combined.parquet"))
+    split.add_argument("--output", type=Path, default=Path("data/physionet/splits.csv"))
+    split.add_argument("--seed", type=int, default=42)
     compare = sub.add_parser(
         "compare-hospitals",
         help="Descriptive hospital A vs B figures and summary table from the combined Parquet",
@@ -226,6 +231,13 @@ def main():
             if args.cooldown < 0:
                 raise ValueError("cooldown must be nonnegative")
             run_baselines(args)
+        elif args.command == "split":
+            if not args.data.exists():
+                raise ValueError(f"{args.data} not found; run `prepare` first")
+            summary = write_splits(args.data, args.output, args.seed)
+            for name, count in summary["counts"].items():
+                print(f"{name:14s} {count['stays']:6d} stays, {count['septic']:5d} septic")
+            print(f"Splits: {args.output.resolve()}")
         elif args.command == "compare-hospitals":
             if not args.data.exists():
                 raise ValueError(f"{args.data} not found; run `prepare` first")
@@ -265,5 +277,6 @@ def main():
                 f"Records: {summary['records']}; hourly rows: "
                 f"{summary['hourly_rows']}"
             )
-    except ValueError as error:
+    except (ValueError, FileExistsError) as error:
+        # FileExistsError: prepare refuses to overwrite; show a message, not a traceback.
         parser.error(str(error))

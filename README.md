@@ -122,6 +122,53 @@ same table later.
 - `probability` for SIRS is criteria met ÷ 4, so the ranking metrics (AP, AUROC)
   are meaningful but it is not a calibrated probability.
 
+**What this baseline is and is not.** It is a transparent research comparator
+for the benchmark label. It does **not** diagnose sepsis, and it is not full
+clinical SIRS:
+
+- Band neutrophils (> 10% bands) are not recorded, so the white-cell criterion
+  uses WBC only.
+- PaCO2 is only available when a blood gas was taken (91% of A hours and 98% of
+  B hours have none), so the breathing criterion mostly relies on Resp.
+- Old values are carried forward without a time limit. A WBC measured a day
+  ago still counts now.
+- Clinical SIRS also assumes a suspected infection. The rule here is applied to
+  every ICU hour.
+
+**Results on the full data** (seed 42; `artifacts/baseline/baseline_metrics.csv`):
+
+| Split | Precision | Recall | F1 | Utility | False alerts / non-septic day |
+|---|---|---|---|---|---|
+| Validation (A) | 0.033 | 0.536 | 0.063 | 0.084 | 1.98 |
+| Internal test (A) | 0.033 | 0.529 | 0.063 | 0.087 | 1.97 |
+| External test (B) | 0.028 | 0.511 | 0.052 | −0.014 | 1.52 |
+
+Always-no scores 0 on recall, F1, utility and false alerts.
+
+## Patient split
+
+```bash
+python -m sepsis_warning split --data data/physionet/combined.parquet --output data/physionet/splits.csv
+```
+
+Writes `splits.csv` (`patient_id`, `hospital`, `septic`, `split`) and
+`splits.csv.summary.json` (seed, SHA-256 of the Parquet input and of the CSV,
+counts). Both stay in the git-ignored `data/` folder.
+
+| Split | Source | ICU stays | Septic stays |
+|---|---|---|---|
+| train | 55% of A | 11,183 | 984 |
+| calibration | 15% of A | 3,051 | 269 |
+| validation | 15% of A | 3,051 | 268 |
+| internal_test | 15% of A | 3,051 | 269 |
+| external_test | all of B | 20,000 | 1,142 |
+
+- Stratified by "ever septic", so each A split has the same 8.8% septic share.
+- The split depends only on the seed. Records are sorted by ID before
+  splitting, so the load order (folder or Parquet) cannot change it.
+- **The unit is an ICU stay, not a person.** The data has no person ID, so one
+  person could have stays in two different splits.
+
 Code: [src/sepsis_warning/baselines.py](src/sepsis_warning/baselines.py).
 Tests: [tests/test_baselines.py](tests/test_baselines.py).
 
