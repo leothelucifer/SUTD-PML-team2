@@ -11,6 +11,8 @@ import hashlib
 import json
 import random
 import re
+import time
+import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -19,10 +21,21 @@ from pathlib import Path
 BASE = "https://physionet.org/files/challenge-2019/1.0.0/training/"
 
 
-def fetch(url):
+def fetch(url, attempts=5):
+    """GET with retries: transient server errors (502/503/504) and timeouts
+    are common on a 40,000-file download, so back off and try again."""
     request = urllib.request.Request(url, headers={"User-Agent": "SepsisResearchSketch/0.1"})
-    with urllib.request.urlopen(request, timeout=60) as response:
-        return response.read()
+    for attempt in range(attempts):
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:
+                return response.read()
+        except urllib.error.HTTPError as error:
+            if error.code < 500 or attempt == attempts - 1:
+                raise
+        except (urllib.error.URLError, TimeoutError, ConnectionError):
+            if attempt == attempts - 1:
+                raise
+        time.sleep(2 ** attempt)
 
 
 def download_one(item):
