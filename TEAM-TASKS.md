@@ -1,0 +1,181 @@
+# Team Task Tracker
+
+## How to update
+
+- Each owner updates their task rows as work progresses.
+- Use **Not started**, **In progress**, **Blocked**, **In review**, **Done**, or **Deferred** for status.
+- Set a due date and last-updated date using `YYYY-MM-DD`. A dash means not set.
+- Add a PR, test result, or document link in **Evidence / notes**. For blocked tasks, name the blocker and next action.
+- Mark a task **Done** only after its deliverable is verified and reviewed. Link private data evidence without uploading patient data.
+- Statuses start as **Not started** until owners confirm existing work; they are not an assessment of current implementation.
+- Share updates through commits or PRs once this project is in a shared Git repository. Markdown tables are manually maintained.
+
+## Owners and slides
+
+| Person | Owner | Slides |
+|---|---|---|
+| 1 | Edwin | 4, 5, 8 |
+| 2 | Jawad | 6 |
+| 3 | Kaiyuan | 3, 7, 9 |
+| 4 | Josh | 11 |
+| 5 | leo | 13, 14 |
+| 6 | Mashie | 10, 12, 15, 16 |
+
+## Task status
+
+### Person 1 - Edwin
+
+| ID | Task | Status | Due date | Updated | Evidence / notes |
+|---|---|---|---|---|---|
+| E01 | Download data and convert to Parquet | Not started | - | - | - |
+| E02 | Version data with DVC | Not started | - | - | - |
+| E03 | Data schema checks with Pandera | Not started | - | - | - |
+| E04 | Hospital A / B split | Not started | - | - | - |
+| E05 | Exploratory analysis | Not started | - | - | - |
+| E06 | SIRS rule baseline | Not started | - | - | - |
+| E07 | Prepare slides 4, 5, 8 | Not started | - | - | - |
+
+### Person 2 - Jawad
+
+| ID | Task | Status | Due date | Updated | Evidence / notes |
+|---|---|---|---|---|---|
+| J01 | Causal rolling features | Not started | - | - | - |
+| J02 | Missing-value handling | Not started | - | - | - |
+| J03 | Hours since last lab test | Not started | - | - | - |
+| J04 | Leakage tests: corrupt hour t+1 and verify earlier features remain unchanged | Not started | - | - | - |
+| J05 | Fast utility-score function | Not started | - | - | - |
+| J06 | Shared feature module | Not started | - | - | - |
+| J07 | Prepare slide 6 | Not started | - | - | - |
+
+### Person 3 - Kaiyuan
+
+| ID | Task | Status | Due date | Updated | Evidence / notes |
+|---|---|---|---|---|---|
+| K01 | Logistic regression | Not started | - | - | - |
+| K02 | Random forest | Not started | - | - | - |
+| K03 | LightGBM as the main model | Not started | - | - | - |
+| K04 | Probability calibration | Not started | - | - | - |
+| K05 | Alarm threshold and six-hour cooldown | Not started | - | - | - |
+| K06 | Fairness checks | Not started | - | - | - |
+| K07 | Prepare slides 3, 7, 9 | Not started | - | - | - |
+
+### Person 4 - Josh
+
+| ID | Task | Status | Due date | Updated | Evidence / notes |
+|---|---|---|---|---|---|
+| H01 | HMM forward-pass states | Not started | - | - | - |
+| H02 | Signature features | Not started | - | - | - |
+| H03 | With / without tests | Not started | - | - | - |
+| H04 | Optional: GMM | Not started | - | - | - |
+| H05 | Optional: GRU | Not started | - | - | - |
+| H06 | Prepare slide 11 | Not started | - | - | - |
+
+### Person 5 - leo
+
+| ID | Task | Status | Due date | Updated | Evidence / notes |
+|---|---|---|---|---|---|
+| L01 | MLflow tracking and registry | Not started | - | - | - |
+| L02 | FastAPI service | Not started | - | - | - |
+| L03 | Docker image | Not started | - | - | - |
+| L04 | CI/CD with GitHub Actions | Not started | - | - | - |
+| L05 | Latency tests | Not started | - | - | - |
+| L06 | AWS deployment design | Not started | - | - | - |
+| L07 | Prepare slides 13, 14 | Not started | - | - | - |
+
+### Person 6 - Mashie
+
+| ID | Task | Status | Due date | Updated | Evidence / notes |
+|---|---|---|---|---|---|
+| M01 | Hospital B replay | Not started | - | - | - |
+| M02 | Drift monitoring at two speeds | Not started | - | - | - |
+| M03 | SHAP explanations | Not started | - | - | - |
+| M04 | Model card | Not started | - | - | - |
+| M05 | Risk register | Not started | - | - | - |
+| M06 | Final deck assembly | Not started | - | - | - |
+| M07 | Prepare slides 10, 12, 15, 16 | Not started | - | - | - |
+
+## Task details and acceptance criteria
+
+These are proposed deliverables for owner review, not new implementation approvals.
+Reuse existing code and tests before adding tools. New dependencies, storage
+services, deployment infrastructure, and substantial experiments require approval.
+Record verification evidence in the status tables above.
+
+### Edwin - data and baselines
+
+| ID | Scope / deliverable | Acceptance criteria |
+|---|---|---|
+| E01 | Maintain the official A/B download and combined Parquet preparation commands. Preserve source, record identity, original values, missingness, and labels. | Verify raw hashes and Parquet counts; for the full cohort expect 40,336 records and 1,552,210 hours. Test corrupt input, schema consistency, and overwrite refusal. Document reproducible commands. |
+| E02 | Version the approved dataset and provenance with DVC, using an approved private remote. | Demonstrate an authorized fresh-checkout restore with matching hashes. Keep data, DVC cache, and credentials out of Git; commit only appropriate metadata. Confirm remote access and redistribution terms before uploading. |
+| E03 | Define Pandera schema checks for required columns, numeric types, finite observed values, binary nondecreasing labels, and record-local consecutive hours. | Valid fixtures pass; missing columns, invalid labels, infinities, and broken chronology fail explicitly. Missing clinical values remain permitted. Separate extreme-value review flags from hard rejection rules. |
+| E04 | Preserve source provenance and the existing record-level split: A train/calibration/validation/internal test; B external test. Persist seed, hashes, and assignments. | Repeated runs reproduce assignments, every record belongs to one split, and all B is external. Document approximate 55/15/15/15 A proportions and the lack of guaranteed person-disjointness. |
+| E05 | Summarize training record/hour counts, label prevalence, record lengths, missingness, and value ranges. Use validation only for prespecified checks. | Produce reproducible aggregate tables/charts with units and denominators. Exclude test data from exploration and selection. Keep patient trajectories private and clear notebook outputs. |
+| E06 | Implement a transparent SIRS-style rule comparator using available measurements; document thresholds, missing-component handling, and applicability. | Test threshold boundaries and missing inputs; prove prefix causality. Evaluate under the agreed label and alert metrics, and state where available data cannot reproduce full clinical SIRS criteria. Do not claim it diagnoses sepsis. |
+| E07 | Prepare slides 4, 5, 8 covering Edwin's agreed data and baseline contributions. | Slides link to verified evidence, identify data/split versions, distinguish completed from planned work, and contain no patient-level outputs. Obtain team review. |
+
+### Jawad - features and metric implementation
+
+| ID | Scope / deliverable | Acceptance criteria |
+|---|---|---|
+| J01 | Extend the shared causal feature builder with last-seen values and trailing-window mean, standard deviation, count, and change features. | Define window/hour semantics and behavior with short histories and missing measurements. Prefix and future-corruption tests pass; no operation crosses record boundaries. |
+| J02 | Implement record-local forward fill and training-fitted fallback values; document any carry-forward expiry policy before changing it. | Leading missing values do not use future observations. Validation/test values never affect fitted statistics. Test entirely unobserved training columns, outages, and record resets; raw stored data stays unchanged. |
+| J03 | Provide per-lab time since last observation, current-missingness, and never-seen indicators. | Test first hour, never observed, newly observed, and long gaps using ICU-hour semantics. Future appended measurements leave earlier features unchanged. |
+| J04 | Strengthen leakage tests by corrupting hour t+1 onward and changing labels and excluded metadata. | Features through t remain identical; include scoring prefix checks for a fixed fitted model. Test record isolation and training-only preprocessing fits. Fail tests when an intentional leaking implementation is substituted. |
+| J05 | Reuse or optimize the published benchmark utility implementation without changing its semantics. | Match published/reference examples and an independent comparison within a documented tolerance. Test no-positive and censored cases. Use hourly decisions, not cooldown events; benchmark runtime on a stated workload without inventing a speed target. |
+| J06 | Keep feature creation shared across training, replay, and future serving. Expose a consistent feature order, dtype, and configuration contract. | The same history produces the same features in each consumer. Save the feature contract with model artifacts and test schema/version mismatches. Avoid duplicate notebook or API feature implementations. |
+| J07 | Prepare slide 6 explaining causal feature engineering. | Show the feature contract, imputation fit boundary, and leakage-test evidence; clearly distinguish implemented features from proposals. Obtain team review. |
+
+### Kaiyuan - models, calibration, and alarm policy
+
+| ID | Scope / deliverable | Acceptance criteria |
+|---|---|---|
+| K01 | Establish a reproducible logistic-regression baseline using shared features, training-only imputation/scaling, and documented regularization/class weighting. | Compare against the constant-prior baseline on validation; report AP, AUROC, Brier, and convergence. Save fit settings and verify split isolation. Do not select from test results. |
+| K02 | Evaluate a bounded random-forest baseline on the same feature/split contract. | Record seed, tree settings, resource usage, and validation metrics. Keep preprocessing training-fitted; distinguish feature importance from causal evidence. |
+| K03 | Add LightGBM as the proposed main model after dependency/resource approval and compare it with the baselines. | Document missing-value and imbalance handling. Any tuning or early stopping uses explicitly designated record-disjoint development data, never an automatic patient-hour split or test data. Report validation results and do not assume it wins. |
+| K04 | Fit probability calibration on the separate calibration cohort with the underlying estimator frozen. | No estimator refit on calibration records. Report before/after Brier and calibration curves on validation, including sample sizes and bin definitions. Save and reload the calibrated pipeline. |
+| K05 | Select a validation-only threshold under the documented alert budget and apply a six-hour cooldown. | Test threshold equality, hourly timing, record resets, and no-feasible-threshold behavior. Save the chosen policy; report hourly utility and notification burden separately. Do not retune on B. |
+| K06 | Audit performance by available age and recorded-gender groups using prespecified definitions. | Include subgroup record/hour counts, positive counts, calibration, detection, and alert burden with grouped uncertainty where feasible. Flag insufficient samples and label limitations; do not claim clinical fairness from this benchmark alone. |
+| K07 | Prepare slides 3, 7, 9 covering the agreed modeling contributions. | Include model comparisons, calibration/policy settings, and subgroup limitations with traceable evidence. Distinguish validation selection from final testing. Obtain team review. |
+
+### Josh - temporal feature experiments
+
+| ID | Scope / deliverable | Acceptance criteria |
+|---|---|---|
+| H01 | Fit an HMM on training data and expose normalized forward-filtered state probabilities from observations through the current hour. | Test prefix invariance, missing-observation handling, numerical stability, and state normalization. Do not use full-sequence smoothing or Viterbi states as online features; latent states are not established clinical stages. |
+| H02 | Define causal path-signature features over approved trailing windows, with documented channels, time encoding, truncation depth, and missing-value policy. | Test prefix invariance, short-history behavior, deterministic feature order, and computational cost. Fit any preprocessing on training only and obtain dependency approval. |
+| H03 | Run controlled with/without ablations for HMM and signature features. | Use the same splits, base feature contract, evaluation metrics, and declared tuning budget. Report validation performance and resource differences; defer final test comparison until choices are frozen. |
+| H04 | Optional: evaluate training-fitted GMM memberships as an additional representation. | Approve scope first; test deterministic fitting, held-out transformation, and prefix-safe inputs. Compare against the baseline on validation; do not interpret components as validated sepsis subtypes. |
+| H05 | Optional: prototype a GRU using causal histories with record-level sequence handling. | Approve dependency and compute scope first. Test padding/masking, hidden-state resets, and prefix scoring. Log training settings and resource use; use no future labels/observations as inputs. |
+| H06 | Prepare slide 11 explaining temporal representations and ablations. | Include forward-only diagrams, with/without evidence, compute trade-offs, and limitations. Label deferred experiments explicitly. Obtain team review. |
+
+### leo - reproducibility and serving
+
+| ID | Scope / deliverable | Acceptance criteria |
+|---|---|---|
+| L01 | Introduce MLflow tracking and an approved private model registry for reproducible experiments. | Log split/data fingerprints, seeds, parameters, versions, metrics, and feature/policy contracts. Demonstrate authorized model retrieval and scoring parity. Never upload patient records or secrets; registry promotion requires review. |
+| L02 | Build a local FastAPI research-scoring service using the saved model and shared feature code. | Define input/output schemas, history/state semantics, health checks, and explicit invalid-input/model-mismatch errors. Test batch/replay parity and concurrent record isolation. Do not trigger training or downloads per request; agree authentication before exposure. |
+| L03 | Package the approved service as a reproducible Docker image. | Build and smoke-test with synthetic requests as a non-root user. Keep patient data, credentials, and local models out of image layers; document private runtime artifact loading and resource configuration. |
+| L04 | Add reviewed GitHub Actions for focused tests and approved build checks; keep deployment separate until authorized. | Workflows run on synthetic fixtures, use least-privilege permissions, and never expose patient data or secrets. Use internal language setup actions first. Verify the configured checks actually execute; do not add unattended clinical deployment. |
+| L05 | Measure end-to-end service latency for agreed request sizes and concurrency. | Report p50/p95/p99, throughput, failures, cold/warm behavior, hardware, and workload. Include feature computation and artifact loading where applicable. Agree a numeric target before treating it as a pass/fail gate. |
+| L06 | Produce an AWS deployment design, not an unapproved deployment. | Document service choice, private networking, access controls, encryption, artifact/data locations, monitoring, rollback, cost, and educational-use limits. Obtain owner review before provisioning or uploading anything. |
+| L07 | Prepare slides 13, 14 covering tracking, serving, and deployment design. | Clearly separate working local capabilities from proposed cloud architecture. Include reproducibility and latency evidence without credentials or patient data. Obtain team review. |
+
+### Mashie - replay, monitoring, explanations, and reporting
+
+| ID | Scope / deliverable | Acceptance criteria |
+|---|---|---|
+| M01 | Replay B records only after model, feature, calibration, and policy choices are frozen. Use the saved artifact and shared scorer. | Report cross-source metrics, alert burden, timing limitations, and record-grouped uncertainty. No B-guided retuning; keep record-level replay outputs private and distinguish research replay from live clinical use. |
+| M02 | Design two-speed monitoring: rapid input/schema/missingness checks and slower aggregate score, calibration, performance, and alert-burden checks. | Define windows, reference data, thresholds, minimum samples, and response owners before B evaluation. Test simulated shifts; calibration/performance monitoring requires delayed labels, while unlabeled shifts do not prove performance loss. No automatic retraining from alerts. |
+| M03 | Produce SHAP explanations for the fixed model using a training-derived background/reference. | Document explainer settings and supported model output; check explanation consistency and runtime. Use aggregate shareable summaries; keep patient explanations private. Explain associations, not causality or clinical recommendations. |
+| M04 | Write a model card covering intended use, dataset/label semantics, splits, features, selection, calibration, metrics, and limitations. | Cite reproducible run evidence and subgroup results. Include privacy, missingness/shift sensitivity, timing/censoring, out-of-scope clinical use, and unresolved gaps. Obtain team review. |
+| M05 | Maintain a risk register covering leakage, data quality, source shift, privacy, fairness, alert fatigue, licensing, and operational failures. | Each risk has likelihood/impact, owner, mitigation, evidence, and remaining exposure. Record unresolved risks instead of marking unsupported mitigations complete. |
+| M06 | Assemble the final deck from the reviewed owner contributions. | Check slide order, terminology, units, denominators, citations, and agreement between results and artifacts. Remove patient-level outputs and unsupported clinical claims; complete a team walkthrough. |
+| M07 | Prepare slides 10, 12, 15, 16 covering Mashie's agreed evaluation and reporting contributions. | Include frozen-model replay, monitoring design, explanations/risks, and final limitations as agreed with the team. Label synthetic and real-cohort evidence separately. Obtain team review. |
+
+## Shared project boundaries
+
+- Keep patient data under the Git-ignored `data/` directory. DVC metadata may be versioned; patient data must not be committed to Git.
+- Preserve record-level split isolation. Use training data for fitting, calibration data for calibration, and validation data for model and threshold selection.
+- Freeze model, feature, calibration, and alarm-policy decisions before Hospital B replay or held-out evaluation.
+- Use only current and past observations for features; do not shift the supplied benchmark label again.
+- Treat these assignments as planned work, not confirmation that the listed tools or capabilities are already implemented.

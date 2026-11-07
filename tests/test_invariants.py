@@ -7,8 +7,11 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from sepsis_warning.data import generate_synthetic, load_patients, read_patient, split_patients
+from sepsis_warning.data import (
+    DYNAMIC, STATIC, generate_synthetic, load_patients, read_patient, split_patients,
+)
 from sepsis_warning.features import build_features
+from sepsis_warning.prepare import prepare_parquet
 from sepsis_warning.policy import (
     alert_events, apply_policy, normalized_utility, summarize, tune_threshold, utility_components,
 )
@@ -110,6 +113,32 @@ class ResearchInvariants(unittest.TestCase):
         self.assertNotIn("SepsisLabel", read_patient(path, require_labels=False))
         with self.assertRaises(ValueError):
             read_patient(path)
+
+    def test_prepare_combines_validated_records_and_reports_counts(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for hospital, patient_id in [("A", "a001"), ("B", "b001")]:
+                directory = root / f"training_set{hospital}"
+                directory.mkdir()
+                frame = pd.DataFrame(1.0, index=range(2), columns=DYNAMIC + STATIC)
+                frame["ICULOS"] = [1, 2]
+                frame["SepsisLabel"] = [0, 1]
+                frame.to_csv(directory / f"{patient_id}.psv", sep="|", index=False)
+
+            output = root / "combined.parquet"
+            summary = prepare_parquet(root, output)
+            combined = pd.read_parquet(output)
+
+            self.assertEqual(summary["records"], 2)
+            self.assertEqual(summary["hourly_rows"], 4)
+            self.assertEqual(summary["records_by_hospital"], {"A": 1, "B": 1})
+            self.assertEqual(summary["hourly_rows_by_hospital"], {"A": 2, "B": 2})
+            self.assertEqual(len(combined), 4)
+            self.assertEqual(
+                combined.groupby("hospital")["patient_id"].nunique().to_dict(),
+                {"A": 1, "B": 1},
+            )
+            self.assertEqual(set(combined["patient_id"]), {"a001", "b001"})
 
 
 if __name__ == "__main__":
