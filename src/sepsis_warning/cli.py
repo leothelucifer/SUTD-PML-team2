@@ -16,6 +16,7 @@ from .baselines import (
     hourly_classification_metrics,
 )
 from .data import generate_synthetic, load_patients, read_patient, split_patients
+from .hospital_comparison import run_comparison
 from .features import META, build_features, feature_table
 from .modeling import candidate_models, fit_calibrated
 from .missingness import run_missingness_analysis
@@ -194,6 +195,12 @@ def main():
     baseline.add_argument("--output", type=Path, default=Path("artifacts/baseline"))
     baseline.add_argument("--seed", type=int, default=42)
     baseline.add_argument("--cooldown", type=int, default=6)
+    compare = sub.add_parser(
+        "compare-hospitals",
+        help="Descriptive hospital A vs B figures and summary table from the combined Parquet",
+    )
+    compare.add_argument("--data", type=Path, default=Path("data/physionet/combined.parquet"))
+    compare.add_argument("--output", type=Path, default=Path("reports/figures"))
     args = parser.parse_args()
     try:
         if args.command == "demo":
@@ -219,6 +226,12 @@ def main():
             if args.cooldown < 0:
                 raise ValueError("cooldown must be nonnegative")
             run_baselines(args)
+        elif args.command == "compare-hospitals":
+            if not args.data.exists():
+                raise ValueError(f"{args.data} not found; run `prepare` first")
+            summary = run_comparison(args.data, args.output)
+            print(summary.to_string())
+            print(f"Figures and README: {args.output.resolve()}")
         elif args.command == "missingness":
             synthetic = (args.data / "SYNTHETIC.json").exists()
             patients = load_patients(args.data)

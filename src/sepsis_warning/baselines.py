@@ -37,10 +37,18 @@ def sirs_criteria(frame: pd.DataFrame) -> pd.DataFrame:
     (forward fill only, never backward fill). A variable that has never been
     observed is treated as normal, because NaN comparisons evaluate to False.
     """
-    last_seen = frame[SIRS_COLUMNS].ffill()
-    result = pd.DataFrame(index=frame.index)
+    return sirs_criteria_from_last_seen(frame[SIRS_COLUMNS].ffill())
+
+
+def sirs_criteria_from_last_seen(last_seen: pd.DataFrame) -> pd.DataFrame:
+    """Apply the SIRS thresholds to values that are ALREADY forward-filled.
+
+    Use this for many patients at once after a per-patient
+    ``groupby(...).ffill()``, so values never cross from one stay to the next.
+    """
+    result = pd.DataFrame(index=last_seen.index)
     for name, tests in SIRS_CRITERIA.items():
-        met = np.zeros(len(frame), dtype=bool)
+        met = np.zeros(len(last_seen), dtype=bool)
         for column, test in tests:
             met |= test(last_seen[column]).to_numpy(dtype=bool)
         result[name] = met
