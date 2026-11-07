@@ -14,7 +14,9 @@ from threadpoolctl import threadpool_limits
 from .data import generate_synthetic, load_patients, read_patient, split_patients
 from .features import META, build_features, feature_table
 from .modeling import candidate_models, fit_calibrated
+from .missingness import run_missingness_analysis
 from .policy import apply_policy, summarize, tune_threshold
+from .prepare import prepare_parquet, write_summary
 from .report import write_report
 
 
@@ -120,6 +122,22 @@ def main():
     replay.add_argument("--model", type=Path, required=True)
     replay.add_argument("--patient", type=Path, required=True)
     replay.add_argument("--output", type=Path, default=Path("artifacts/patient_replay.csv"))
+    missingness = sub.add_parser(
+        "missingness",
+        help="Audit training/validation missingness and compare fixed baselines",
+    )
+    missingness.add_argument("--data", type=Path, required=True)
+    missingness.add_argument(
+        "--output", type=Path, default=Path("artifacts/missingness")
+    )
+    missingness.add_argument("--seed", type=int, default=42)
+    prepare = sub.add_parser(
+        "prepare", help="Validate PSV files and combine them into one Parquet file"
+    )
+    prepare.add_argument("--data", type=Path, required=True)
+    prepare.add_argument(
+        "--output", type=Path, default=Path("data/physionet/combined.parquet")
+    )
     args = parser.parse_args()
     try:
         if args.command == "demo":
@@ -129,7 +147,7 @@ def main():
             if args.window < 1 or args.budget < 0 or args.cooldown < 0:
                 raise ValueError("window must be positive; budget and cooldown must be nonnegative")
             run_experiment(args)
-        else:
+        elif args.command == "replay":
             bundle = joblib.load(args.model)
             frame = read_patient(args.patient, require_labels=False)
             features = build_features(frame, bundle["window"])
@@ -141,5 +159,38 @@ def main():
             args.output.parent.mkdir(parents=True, exist_ok=True)
             table.to_csv(args.output, index=False)
             print(args.output.resolve())
+        elif args.command == "missingness":
+            synthetic = (args.data / "SYNTHETIC.json").exists()
+            patients = load_patients(args.data)
+            if not synthetic and any(
+                "synthetic_" in patient.patient_id for patient in patients
+            ):
+                raise ValueError(
+                    "Synthetic filenames found without SYNTHETIC.json marker"
+                )
+            summary = run_missingness_analysis(
+                patients,
+                args.output,
+                seed=args.seed,
+                synthetic=synthetic,
+            )
+            print(
+                f"Missingness report: {(args.output / 'missingness_report.html').resolve()}"
+            )
+            print(
+                f"Records used: train={summary['training_records']}, "
+                f"validation={summary['validation_records']}"
+            )
+        else:
+            summary = prepare_parquet(args.data, args.output)
+            summary_path = args.output.with_name(
+                f"{args.output.name}.summary.json"
+            )
+            write_summary(summary_path, summary)
+            print(f"Combined Parquet: {args.output.resolve()}")
+            print(
+                f"Records: {summary['records']}; hourly rows: "
+                f"{summary['hourly_rows']}"
+            )
     except ValueError as error:
         parser.error(str(error))
