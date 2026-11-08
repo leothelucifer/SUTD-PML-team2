@@ -45,3 +45,15 @@ def feature_table(patients: list[Patient], window: int) -> pd.DataFrame:
 
 
 META = ["patient_id", "hospital", "hour", "label"]
+
+
+def select_saved_features(features: pd.DataFrame, feature_columns: list[str]) -> pd.DataFrame:
+    """Keep the saved column list, in that order. Reject a stay that cannot supply it."""
+    if not feature_columns:
+        raise ValueError("saved model has no feature columns")
+    missing = [name for name in feature_columns if name not in features.columns]
+    if missing:
+        shown = ", ".join(missing[:5])
+        extra = "" if len(missing) <= 5 else f" and {len(missing) - 5} more"
+        raise ValueError(f"saved feature columns are missing from this stay: {shown}{extra}")
+    return features.loc[:, feature_columns]
