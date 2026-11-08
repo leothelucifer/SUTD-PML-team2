@@ -1,0 +1,111 @@
+<section id="aws" style="background:#f5f3ee;color:#16232a;font-family:Inter, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:20px">
+<h2 style="font-family:'Space Grotesk', sans-serif;font-size:64px;font-weight:600;line-height:1.1">Deployment on AWS</h2>
+<div style="display:flex;gap:16px;align-items:stretch">
+<div style="width:180px;display:flex;flex-direction:column;justify-content:center;gap:4px">
+<p style="font-size:28px;font-weight:600">Serve</p>
+<p style="font-size:24px;line-height:1.3;color:#5b6870">hourly, from the hospital</p>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:6px;background:#ffffff;padding:14px;border:1px solid #dcdfdc;border-radius:12px">
+<img src="/_blob/f2f53795603d51df73ecd7c796fdb9ff" alt="AWS Site-to-Site VPN" style="width:52px;height:52px;object-fit:contain">
+<p style="font-size:26px;font-weight:600">VPN</p>
+<p style="font-size:24px;line-height:1.3;color:#5b6870">site-to-site</p>
+</div>
+<x-shape kind="arrow-right" style="width:32px;height:20px;background:#2c6285;align-self:center"></x-shape>
+<div style="flex:1;display:flex;flex-direction:column;gap:6px;background:#ffffff;padding:14px;border:1px solid #dcdfdc;border-radius:12px">
+<img src="/_blob/8287e4d9d7ec77240e954fb96cf6a129" alt="Amazon API Gateway" style="width:52px;height:52px;object-fit:contain">
+<p style="font-size:26px;font-weight:600">API Gateway</p>
+<p style="font-size:24px;line-height:1.3;color:#5b6870">private, OAuth2</p>
+</div>
+<x-shape kind="arrow-right" style="width:32px;height:20px;background:#2c6285;align-self:center"></x-shape>
+<div style="flex:1;display:flex;flex-direction:column;gap:6px;background:#ffffff;padding:14px;border:1px solid #dcdfdc;border-radius:12px">
+<img src="/_blob/f575024b91cc2b37fd8b31721a70cd64" alt="Elastic Load Balancing" style="width:52px;height:52px;object-fit:contain">
+<p style="font-size:26px;font-weight:600">Load balancer</p>
+<p style="font-size:24px;line-height:1.3;color:#5b6870">internal</p>
+</div>
+<x-shape kind="arrow-right" style="width:32px;height:20px;background:#2c6285;align-self:center"></x-shape>
+<div style="flex:1;display:flex;flex-direction:column;gap:6px;background:#0f2a33;color:#f5f3ee;padding:14px;border-radius:12px">
+<img src="/_blob/7cc1b007450e1eff9a7c4d29932add5b" alt="AWS Fargate" style="width:52px;height:52px;object-fit:contain">
+<p style="font-size:26px;font-weight:600">ECS Fargate</p>
+<p style="font-size:24px;line-height:1.3;color:#c9d4d8">FastAPI scoring</p>
+</div>
+<x-shape kind="arrow-right" style="width:32px;height:20px;background:#2c6285;align-self:center"></x-shape>
+<div style="flex:1;display:flex;flex-direction:column;gap:6px;background:#ffffff;padding:14px;border:1px solid #dcdfdc;border-radius:12px">
+<img src="/_blob/ee726f198e4fcc98450b214dd50cf527" alt="Amazon DynamoDB" style="width:52px;height:52px;object-fit:contain">
+<p style="font-size:26px;font-weight:600">DynamoDB</p>
+<p style="font-size:24px;line-height:1.3;color:#5b6870">state per stay</p>
+</div>
+</div>
+<div style="display:flex;gap:16px;align-items:stretch">
+<div style="width:180px;display:flex;flex-direction:column;justify-content:center;gap:4px">
+<p style="font-size:28px;font-weight:600">Build</p>
+<p style="font-size:24px;line-height:1.3;color:#5b6870">CI and training</p>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:6px;background:#ffffff;padding:14px;border:1px solid #dcdfdc;border-radius:12px">
+<x-icon name="Code" style="color:#16232a;width:52px;height:52px"></x-icon>
+<p style="font-size:26px;font-weight:600">GitHub Actions</p>
+<p style="font-size:24px;line-height:1.3;color:#5b6870">tests, build</p>
+</div>
+<x-shape kind="arrow-right" style="width:32px;height:20px;background:#2c6285;align-self:center"></x-shape>
+<div style="flex:1;display:flex;flex-direction:column;gap:6px;background:#ffffff;padding:14px;border:1px solid #dcdfdc;border-radius:12px">
+<img src="/_blob/f8ad0c27b33d4cb3971c8a02381a62f9" alt="Amazon Elastic Container Registry" style="width:52px;height:52px;object-fit:contain">
+<p style="font-size:26px;font-weight:600">ECR</p>
+<p style="font-size:24px;line-height:1.3;color:#5b6870">scanned image</p>
+</div>
+<p style="font-size:32px;font-weight:600;color:#2c6285;align-self:center;width:32px;text-align:center">+</p>
+<div style="flex:1;display:flex;flex-direction:column;gap:6px;background:#ffffff;padding:14px;border:1px solid #dcdfdc;border-radius:12px">
+<img src="/_blob/9bb8596c927521a8603a5357288ad09a" alt="Amazon S3" style="width:52px;height:52px;object-fit:contain">
+<p style="font-size:26px;font-weight:600">S3</p>
+<p style="font-size:24px;line-height:1.3;color:#5b6870">data, DVC</p>
+</div>
+<x-shape kind="arrow-right" style="width:32px;height:20px;background:#2c6285;align-self:center"></x-shape>
+<div style="flex:1;display:flex;flex-direction:column;gap:6px;background:#ffffff;padding:14px;border:1px solid #dcdfdc;border-radius:12px">
+<img src="/_blob/5c2e4297d1301dd949734f617021f8e3" alt="Amazon SageMaker AI" style="width:52px;height:52px;object-fit:contain">
+<p style="font-size:26px;font-weight:600">SageMaker</p>
+<p style="font-size:24px;line-height:1.3;color:#5b6870">training job</p>
+</div>
+<x-shape kind="arrow-right" style="width:32px;height:20px;background:#2c6285;align-self:center"></x-shape>
+<div style="flex:1;display:flex;flex-direction:column;gap:6px;background:#ffffff;padding:14px;border:1px solid #dcdfdc;border-radius:12px">
+<img src="/_blob/5c2e4297d1301dd949734f617021f8e3" alt="Amazon SageMaker AI" style="width:52px;height:52px;object-fit:contain">
+<p style="font-size:26px;font-weight:600">SageMaker</p>
+<p style="font-size:24px;line-height:1.3;color:#5b6870">MLflow registry</p>
+</div>
+</div>
+<div style="display:flex;gap:16px;align-items:stretch">
+<div style="width:180px;display:flex;flex-direction:column;justify-content:center;gap:4px">
+<p style="font-size:28px;font-weight:600">Watch</p>
+<p style="font-size:24px;line-height:1.3;color:#5b6870">two speeds</p>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:6px;background:#ffffff;padding:14px;border:1px solid #dcdfdc;border-radius:12px">
+<img src="/_blob/45f30bf32054e64e00f7c4bfa7e18fd0" alt="Amazon EventBridge" style="width:52px;height:52px;object-fit:contain">
+<p style="font-size:26px;font-weight:600">EventBridge</p>
+<p style="font-size:24px;line-height:1.3;color:#5b6870">hourly, weekly</p>
+</div>
+<x-shape kind="arrow-right" style="width:32px;height:20px;background:#2c6285;align-self:center"></x-shape>
+<div style="flex:1;display:flex;flex-direction:column;gap:6px;background:#ffffff;padding:14px;border:1px solid #dcdfdc;border-radius:12px">
+<img src="/_blob/7cc1b007450e1eff9a7c4d29932add5b" alt="AWS Fargate" style="width:52px;height:52px;object-fit:contain">
+<p style="font-size:26px;font-weight:600">Monitor jobs</p>
+<p style="font-size:24px;line-height:1.3;color:#5b6870">PSI drift, labels</p>
+</div>
+<x-shape kind="arrow-right" style="width:32px;height:20px;background:#2c6285;align-self:center"></x-shape>
+<div style="flex:1;display:flex;flex-direction:column;gap:6px;background:#ffffff;padding:14px;border:1px solid #dcdfdc;border-radius:12px">
+<img src="/_blob/553ba0bb8d0e715a3cd9953863bc10e6" alt="Amazon SNS" style="width:52px;height:52px;object-fit:contain">
+<p style="font-size:26px;font-weight:600">SNS</p>
+<p style="font-size:24px;line-height:1.3;color:#5b6870">email the owner</p>
+</div>
+<x-shape kind="arrow-left" style="width:32px;height:20px;background:#2c6285;align-self:center"></x-shape>
+<div style="flex:1;display:flex;flex-direction:column;gap:6px;background:#ffffff;padding:14px;border:1px solid #dcdfdc;border-radius:12px">
+<img src="/_blob/83bc000f96e51b6dc5193c3ef15f9638" alt="Amazon CloudWatch" style="width:52px;height:52px;object-fit:contain">
+<p style="font-size:26px;font-weight:600">CloudWatch</p>
+<p style="font-size:24px;line-height:1.3;color:#5b6870">logs, alarms</p>
+</div>
+</div>
+<div style="display:flex;gap:28px;align-items:center;background:#0f2a33;color:#f5f3ee;padding:16px 24px;border-radius:12px">
+<p style="font-size:26px;font-weight:600;width:156px">Protect</p>
+<div style="display:flex;gap:10px;align-items:center"><img src="/_blob/c89d29857fe71b0bd74ae571cf020762" alt="AWS IAM" style="width:40px;height:40px;object-fit:contain"><p style="font-size:24px">IAM least privilege</p></div>
+<div style="display:flex;gap:10px;align-items:center"><img src="/_blob/0ff2cd77de84ffdc03ec6e6ed116a6e7" alt="AWS KMS" style="width:40px;height:40px;object-fit:contain"><p style="font-size:24px">KMS encryption</p></div>
+<div style="display:flex;gap:10px;align-items:center"><img src="/_blob/816ca1b72680601438d3e97858d418ad" alt="AWS Secrets Manager" style="width:40px;height:40px;object-fit:contain"><p style="font-size:24px">Secrets Manager</p></div>
+<div style="display:flex;gap:10px;align-items:center"><img src="/_blob/06877701e1c99d72c3edcf603aa4c748" alt="AWS CloudTrail" style="width:40px;height:40px;object-fit:contain"><p style="font-size:24px">CloudTrail audit</p></div>
+</div>
+<p style="position:absolute;left:128px;bottom:64px;width:1664px;font-size:24px;color:#5b6870">Target design in ap-southeast-1 (Singapore); the project runs locally in Docker · icons: AWS Architecture Icons · 18</p>
+<aside>Read the top row left to right: the hospital's integration engine sends the last 7 hourly rows over the VPN to a private API Gateway, which checks the OAuth2 token and forwards to the scoring service on Fargate. The service reads and writes each stay's carry-forward state in DynamoDB. The same Docker image from ECR runs SageMaker training and the API. Monitoring alarms email the owner; retraining needs team approval. Before any real use, check data-residency and health-data rules in the hospital's country.</aside>
+</section>

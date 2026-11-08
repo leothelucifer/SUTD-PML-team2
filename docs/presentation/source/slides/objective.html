@@ -1,0 +1,20 @@
+<section id="objective" style="background:#f5f3ee;color:#16232a;font-family:Inter, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:56px">
+<h2 style="font-family:'Space Grotesk', sans-serif;font-size:64px;font-weight:600;line-height:1.1">Objective and metrics</h2>
+<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:32px">
+<div style="display:flex;flex-direction:column;gap:16px;background:#ffffff;padding:40px;border:1px solid #dcdfdc;border-radius:16px">
+<h3 style="font-size:32px;font-weight:600;color:#2c6285">Unit of prediction</h3>
+<p style="font-size:28px;line-height:1.45">One ICU hour. At hour t, the probability that this hour carries the challenge's sepsis label, using data up to t only. The label turns on 6 h before onset.</p>
+</div>
+<div style="display:flex;flex-direction:column;gap:16px;background:#ffffff;padding:40px;border:1px solid #dcdfdc;border-radius:16px">
+<h3 style="font-size:32px;font-weight:600;color:#2c6285">Primary metric</h3>
+<p style="font-size:28px;line-height:1.45">Challenge clinical utility score: rewards early alerts, penalises late, missed and false ones. AUROC, AUPRC and Brier score also reported.</p>
+</div>
+<div style="display:flex;flex-direction:column;gap:16px;background:#ffffff;padding:40px;border:1px solid #dcdfdc;border-radius:16px">
+<h3 style="font-size:32px;font-weight:600;color:#2c6285">Operational limit</h3>
+<p style="font-size:28px;line-height:1.45">At most 0.2 false alerts per non-septic patient-day, with a 6-hour cooldown. The threshold is the highest-utility cut-off inside that limit.</p>
+</div>
+</div>
+<p style="font-size:28px;line-height:1.45;color:#5b6870;width:1500px">Scope: research and engineering on de-identified public data. Decision support only; not a medical device. The 0.2 budget is a placeholder until clinicians set one.</p>
+<p style="position:absolute;left:128px;bottom:64px;width:1664px;font-size:24px;color:#5b6870">3</p>
+<aside>The score is not "probability of onset in the next 6 hours": the label stays on after onset, so say "the challenge label". The alert budget, not AUROC, decides whether this would be usable. Without a cooldown, a patient above threshold for five hours would count as five alarms; clinically it is one.</aside>
+</section>

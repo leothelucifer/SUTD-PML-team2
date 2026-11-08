@@ -233,6 +233,11 @@ notifications are a separate operational metric. No positive patients means
 the normalized utility is undefined and is reported as null. The prototype's
 average precision is sklearn's metric, not a claim of official leaderboard AUPRC.
 
+## Design and presentation
+
+- [Design page](docs/design/sepsis-warning-pipeline.html): data split, training, model selection, alert policy, ICU call contract, AWS deployment and MLOps loop. Open it in a browser.
+- [Final presentation](docs/presentation/sepsis-early-warning.pptx): 22 slides with speaker notes. Source, assets and rebuild steps are in [docs/presentation](docs/presentation/README.md).
+
 ## Files and artifacts
 
 ```text
