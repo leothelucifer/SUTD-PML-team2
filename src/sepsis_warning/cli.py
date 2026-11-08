@@ -20,6 +20,7 @@ from .hospital_comparison import run_comparison
 from .features import META, build_features, feature_table
 from .modeling import candidate_models, fit_calibrated
 from .missingness import run_missingness_analysis
+from .monitoring import REPLAY_SPLITS, MonitoringConfig, replay_monitoring, setup_monitoring
 from .policy import apply_policy, summarize, tune_threshold
 from .prepare import prepare_parquet, write_summary
 from .report import write_report
@@ -230,6 +231,34 @@ def main():
     compare.add_argument("--output", type=Path, default=Path("reports/figures"))
     compare.add_argument("--splits", type=Path, default=Path("data/physionet/splits.csv"),
                          help="Hospital A is restricted to this file's train split")
+    defaults = MonitoringConfig()
+    monitor_setup = sub.add_parser(
+        "monitor-setup",
+        help="Freeze the two-speed monitoring reference from A train/validation (run before any test replay)",
+    )
+    monitor_setup.add_argument("--data", type=Path, required=True)
+    monitor_setup.add_argument("--model", type=Path, required=True, help="Frozen model.joblib from train/demo")
+    monitor_setup.add_argument("--output", type=Path, default=Path("artifacts/monitoring/reference"))
+    monitor_setup.add_argument("--seed", type=int, default=42, help="Patient split seed used by train")
+    monitor_setup.add_argument("--fast-window-hours", type=int, default=defaults.fast_window_hours)
+    monitor_setup.add_argument("--slow-window-hours", type=int, default=defaults.slow_window_hours)
+    monitor_setup.add_argument("--min-observed-values", type=int, default=defaults.min_observed_values,
+                               help="Minimum observed hourly values for a variable's PSI in one fast window")
+    monitor_setup.add_argument("--min-observed-stays", type=int, default=defaults.min_observed_stays,
+                               help="Minimum stays for the PSI of Age, Gender and HospAdmTime in one fast window")
+    monitor_setup.add_argument("--min-slow-stays", type=int, default=defaults.min_slow_stays)
+    monitor_setup.add_argument("--min-slow-septic-stays", type=int, default=defaults.min_slow_septic_stays)
+    monitor_setup.add_argument("--min-subgroup-septic-stays", type=int, default=defaults.min_subgroup_septic_stays)
+    monitor_setup.add_argument("--null-windows", type=int, default=defaults.null_windows)
+    monitor_replay = sub.add_parser(
+        "monitor-replay",
+        help="Replay a held-out split through the frozen monitoring reference (aggregate outputs only)",
+    )
+    monitor_replay.add_argument("--data", type=Path, required=True)
+    monitor_replay.add_argument("--model", type=Path, required=True)
+    monitor_replay.add_argument("--reference", type=Path, required=True, help="monitoring_reference.json")
+    monitor_replay.add_argument("--split", choices=REPLAY_SPLITS, default="external_test")
+    monitor_replay.add_argument("--output", type=Path, default=Path("artifacts/monitoring/replay"))
     args = parser.parse_args()
     try:
         if args.command == "demo":
@@ -292,6 +321,27 @@ def main():
                 f"Records used: train={summary['training_records']}, "
                 f"validation={summary['validation_records']}"
             )
+        elif args.command == "monitor-setup":
+            config = MonitoringConfig(
+                fast_window_hours=args.fast_window_hours, slow_window_hours=args.slow_window_hours,
+                min_observed_values=args.min_observed_values, min_observed_stays=args.min_observed_stays,
+                min_slow_stays=args.min_slow_stays,
+                min_slow_septic_stays=args.min_slow_septic_stays,
+                min_subgroup_septic_stays=args.min_subgroup_septic_stays, null_windows=args.null_windows,
+            )
+            reference = setup_monitoring(args.data, args.model, args.output, config, split_seed=args.seed)
+            print(f"Data mode: {reference['data_mode']}; model {reference['model_name']} "
+                  f"(SHA-256 {reference['model_sha256'][:12]})")
+            print("Reference: A train inputs; A validation scores, alerts and performance. No test data used.")
+            print(f"Monitoring reference: {(args.output / 'monitoring_reference.json').resolve()}")
+        elif args.command == "monitor-replay":
+            summary = replay_monitoring(args.data, args.model, args.reference, args.split, args.output)
+            print("Research replay only; not live clinical monitoring. No automatic retraining.")
+            for family, row in summary["families"].items():
+                print(f"{family:16s} {row['speed']:4s} owner={row['owner']:8s} "
+                      f"ok={row['ok']:3d} warn={row['warn']:3d} alert={row['alert']:3d} "
+                      f"insufficient={row['insufficient_data']:3d}")
+            print(f"Report: {(args.output / 'monitoring_report.md').resolve()}")
         else:
             summary = prepare_parquet(args.data, args.output)
             summary_path = args.output.with_name(
