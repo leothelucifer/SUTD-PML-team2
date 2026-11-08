@@ -11,6 +11,8 @@ import hashlib
 import json
 import random
 import re
+import time
+import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -19,10 +21,21 @@ from pathlib import Path
 BASE = "https://physionet.org/files/challenge-2019/1.0.0/training/"
 
 
-def fetch(url):
+def fetch(url, attempts=5):
+    """GET with retries: transient server errors (502/503/504) and timeouts
+    are common on a 40,000-file download, so back off and try again."""
     request = urllib.request.Request(url, headers={"User-Agent": "SepsisResearchSketch/0.1"})
-    with urllib.request.urlopen(request, timeout=60) as response:
-        return response.read()
+    for attempt in range(attempts):
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:
+                return response.read()
+        except urllib.error.HTTPError as error:
+            if error.code < 500 or attempt == attempts - 1:
+                raise
+        except (urllib.error.URLError, TimeoutError, ConnectionError):
+            if attempt == attempts - 1:
+                raise
+        time.sleep(2 ** attempt)
 
 
 def download_one(item):
@@ -44,9 +57,10 @@ def main():
     parser.add_argument("--output", type=Path, default=Path("data/physionet"))
     parser.add_argument("--limit", type=int, default=500)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--workers", type=int, default=4, help="parallel downloads")
     args = parser.parse_args()
-    if args.limit < 0:
-        parser.error("limit must be nonnegative")
+    if args.limit < 0 or args.workers < 1:
+        parser.error("limit must be nonnegative and workers positive")
     rng = random.Random(args.seed)
     manifest = []
     for hospital in ["A", "B"]:
@@ -61,7 +75,7 @@ def main():
         directory.mkdir(parents=True, exist_ok=True)
         jobs = [(url + name, directory / name) for name in names]
         print(f"Downloading {len(jobs)} hospital {hospital} records", flush=True)
-        with ThreadPoolExecutor(max_workers=4) as pool:
+        with ThreadPoolExecutor(max_workers=args.workers) as pool:
             manifest.extend(pool.map(download_one, jobs))
     (args.output / "download_manifest.json").write_text(json.dumps({
         "source": "https://physionet.org/content/challenge-2019/1.0.0/",

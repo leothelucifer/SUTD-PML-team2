@@ -69,8 +69,11 @@ def load_patients(root: Path) -> list[Patient]:
 
 def split_patients(patients: list[Patient], seed: int) -> dict[str, list[Patient]]:
     """Four disjoint source splits; hospital B is never used to select a model."""
-    source = [p for p in patients if p.hospital == "A"]
-    external = [p for p in patients if p.hospital == "B"]
+    # Sort by ID first so the split depends only on the seed, never on the
+    # order records were loaded in (e.g. .psv folder vs Parquet file).
+    ordered = sorted(patients, key=lambda p: p.patient_id)
+    source = [p for p in ordered if p.hospital == "A"]
+    external = [p for p in ordered if p.hospital == "B"]
     if not source or not external:
         raise ValueError("Both source hospital A and external hospital B are required")
     if min(sum(p.septic for p in source), sum(not p.septic for p in source)) < 10:
