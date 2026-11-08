@@ -94,6 +94,106 @@ Full feature tables are currently built in memory and may consume several GB.
 Start with a subset; add partitioned feature caching before a full-cohort study.
 Raw data and generated artifacts are excluded by `.gitignore`.
 
+## SIRS baseline (the score every model must beat)
+
+```bash
+python -m sepsis_warning baseline --data data/physionet --output artifacts/baseline
+```
+
+Writes `artifacts/baseline/baseline_metrics.csv`: one row per baseline per
+split (`validation`, `internal_test`, `external_test` = hospital B). It uses the
+same patient split (`--seed 42`) as `train`, so model rows can be added to the
+same table later.
+
+| Baseline | Rule |
+|---|---|
+| `sirs` | Alert hour when **≥ 2** of: Temp > 38 or < 36 °C; HR > 90; Resp > 20 or PaCO2 < 32 mmHg; WBC > 12 or < 4 ×10⁹/L. |
+| `always_no` | Never alerts. Shows the score of doing nothing. |
+
+- **Causal.** Each hour uses the last value seen at or before that hour (forward
+  fill only). Future hours never change earlier scores.
+- **Missing = normal.** A variable never observed does not count as abnormal.
+- Band neutrophils (part of the clinical WBC criterion) are not in the dataset.
+- Neither baseline is trained, so they use no training data.
+- Alerts go through the same `policy.apply_policy` (6 h cooldown) and
+  `policy.summarize` as the models. Precision, recall, F1, AUROC and AP are
+  hourly and hand-written in `baselines.py` (no sklearn metrics; tests check
+  them against sklearn). For `always_no`, precision is undefined (blank).
+- `probability` for SIRS is criteria met ÷ 4, so the ranking metrics (AP, AUROC)
+  are meaningful but it is not a calibrated probability.
+
+**What this baseline is and is not.** It is a transparent research comparator
+for the benchmark label. It does **not** diagnose sepsis, and it is not full
+clinical SIRS:
+
+- Band neutrophils (> 10% bands) are not recorded, so the white-cell criterion
+  uses WBC only.
+- PaCO2 is only available when a blood gas was taken (91% of A hours and 98% of
+  B hours have none), so the breathing criterion mostly relies on Resp.
+- Old values are carried forward without a time limit. A WBC measured a day
+  ago still counts now.
+- Clinical SIRS also assumes a suspected infection. The rule here is applied to
+  every ICU hour.
+
+**Results on the full data** (seed 42; `artifacts/baseline/baseline_metrics.csv`):
+
+| Split | Precision | Recall | F1 | Specificity | Accuracy | Utility | False alerts / non-septic day |
+|---|---|---|---|---|---|---|---|
+| Validation (A) | 0.033 | 0.536 | 0.063 | 0.655 | 0.652 | 0.084 | 1.98 |
+| Internal test (A) | 0.033 | 0.529 | 0.063 | 0.661 | 0.658 | 0.087 | 1.97 |
+| External test (B) | 0.028 | 0.511 | 0.052 | 0.742 | 0.739 | −0.014 | 1.52 |
+| Always-no (validation) | 0 (nothing flagged) | 0 | 0 | 1.000 | **0.978** | 0 | 0 |
+
+Metrics follow the course's confusion-matrix definitions (L9), hand-written in
+NumPy: precision TP/(TP+FP), recall TP/(TP+FN), specificity TN/(TN+FP),
+F1 2TP/(2TP+FP+FN), accuracy (TP+TN)/all. Accuracy is reported because the
+brief asks for it, but it is misleading here: always-no is 97.8% "accurate"
+while catching no sepsis at all. When nothing is flagged, precision is 0/0; it
+is reported as 0 and marked in `no_predicted_positives`.
+
+**Threshold trade-off (validation only).** The same command also scores SIRS
+at ≥ 1, 2, 3 and 4 criteria on the validation split
+(`artifacts/baseline/sirs_threshold_sweep_validation.csv`,
+`reports/figures/08_sirs_threshold_tradeoff.png`). Raising the threshold gives
+fewer false alarms but misses more sepsis (course L4). Only ≥ 4 stays under the
+0.2 false-alerts-per-day budget, and it then catches just 3% of septic hours.
+This is descriptive: the rule stays at the standard ≥ 2 and the test splits are
+not used to look at thresholds.
+
+| Alert at | Precision | Recall | F1 | Specificity | False alerts / day |
+|---|---|---|---|---|---|
+| ≥ 1 | 0.025 | 0.823 | 0.049 | 0.293 | 3.43 |
+| **≥ 2 (rule)** | 0.033 | 0.536 | 0.063 | 0.655 | 1.98 |
+| ≥ 3 | 0.044 | 0.220 | 0.074 | 0.895 | 0.70 |
+| ≥ 4 | 0.056 | 0.033 | 0.042 | 0.988 | 0.10 |
+
+## Patient split
+
+```bash
+python -m sepsis_warning split --data data/physionet/combined.parquet --output data/physionet/splits.csv
+```
+
+Writes `splits.csv` (`patient_id`, `hospital`, `septic`, `split`) and
+`splits.csv.summary.json` (seed, SHA-256 of the Parquet input and of the CSV,
+counts). Both stay in the git-ignored `data/` folder.
+
+| Split | Source | ICU stays | Septic stays |
+|---|---|---|---|
+| train | 55% of A | 11,183 | 984 |
+| calibration | 15% of A | 3,051 | 269 |
+| validation | 15% of A | 3,051 | 268 |
+| internal_test | 15% of A | 3,051 | 269 |
+| external_test | all of B | 20,000 | 1,142 |
+
+- Stratified by "ever septic", so each A split has the same 8.8% septic share.
+- The split depends only on the seed. Records are sorted by ID before
+  splitting, so the load order (folder or Parquet) cannot change it.
+- **The unit is an ICU stay, not a person.** The data has no person ID, so one
+  person could have stays in two different splits.
+
+Code: [src/sepsis_warning/baselines.py](src/sepsis_warning/baselines.py).
+Tests: [tests/test_baselines.py](tests/test_baselines.py).
+
 ## What is implemented
 
 | Component | First implementation |

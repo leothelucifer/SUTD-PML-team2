@@ -48,3 +48,12 @@ Thumbs.db
 # Supplied course brief is local reference material, not a project deliverable.
 # Do not ignore all PDFs: the team's final report should be versioned.
 /Project Instructions- PML 2026.pdf
+
+# Edwin's personal course material (restricted slides, notes, study files).
+# Never published: slides are marked "Restricted" and the brief contains a
+# cluster password. Put any future school files in /school/ or /_personal/.
+/Production Machine Learning slides and notes/
+/PML_course_notes.md
+/school/
+/_personal/
+/HANDOFF-person1*.md
