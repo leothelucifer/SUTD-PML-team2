@@ -10,7 +10,9 @@ import pandas as pd
 from sepsis_warning.data import (
     DYNAMIC, STATIC, generate_synthetic, load_patients, read_patient, split_patients,
 )
-from sepsis_warning.features import build_features
+from sklearn.ensemble import HistGradientBoostingClassifier
+
+from sepsis_warning.features import build_features, select_saved_features
 from sepsis_warning.prepare import prepare_parquet
 from sepsis_warning.policy import (
     alert_events, apply_policy, normalized_utility, summarize, tune_threshold, utility_components,
@@ -43,6 +45,52 @@ class ResearchInvariants(unittest.TestCase):
         frame["SepsisLabel"] = 1 - frame["SepsisLabel"]
         frame["Unit1"] = 999
         pd.testing.assert_frame_equal(before, build_features(frame).iloc[:10])
+
+    def test_next_hour_does_not_change_current_features(self):
+        frame = self.patients[0].frame.iloc[:6].copy()
+        before = build_features(frame).iloc[:4]
+        frame.loc[4:, "HR"] = 9999
+        frame.loc[4:, "Lactate"] = 9999
+        frame.loc[4:, "SepsisLabel"] = 1
+        frame.loc[4:, "Unit1"] = 999
+        pd.testing.assert_frame_equal(before, build_features(frame).iloc[:4])
+
+    def test_lab_recency_covers_first_hour_gap_and_never_seen(self):
+        frame = self.patients[0].frame.iloc[:6].copy()
+        frame["Lactate"] = [np.nan, np.nan, 1.5, np.nan, np.nan, 2.0]
+        frame["Fibrinogen"] = np.nan
+        features = build_features(frame)
+        self.assertEqual(features.loc[0, "Lactate__never_seen"], 1)
+        self.assertEqual(features.loc[0, "Lactate__missing_now"], 1)
+        self.assertTrue(pd.isna(features.loc[0, "Lactate__hours_since_seen"]))
+        self.assertEqual(features.loc[2, "Lactate__hours_since_seen"], 0)
+        self.assertEqual(features.loc[2, "Lactate__missing_now"], 0)
+        self.assertEqual(features.loc[2, "Lactate__never_seen"], 0)
+        self.assertEqual(features.loc[4, "Lactate__hours_since_seen"], frame.loc[4, "ICULOS"] - frame.loc[2, "ICULOS"])
+        self.assertEqual(features.loc[4, "Lactate__missing_now"], 1)
+        self.assertTrue(features["Fibrinogen__never_seen"].eq(1).all())
+        self.assertTrue(features["Fibrinogen__missing_now"].eq(1).all())
+        self.assertTrue(features["Fibrinogen__hours_since_seen"].isna().all())
+
+    def test_scoring_a_prefix_matches_the_full_stay(self):
+        frame = next(patient.frame for patient in self.patients if patient.frame["SepsisLabel"].nunique() == 2)
+        full = build_features(frame)
+        model = HistGradientBoostingClassifier(max_iter=5, max_depth=3, random_state=0)
+        model.fit(full, frame["SepsisLabel"].to_numpy())
+        prefix = build_features(frame.iloc[:8])
+        full_scores = model.predict_proba(full.iloc[:8])[:, 1]
+        prefix_scores = model.predict_proba(prefix)[:, 1]
+        np.testing.assert_allclose(prefix_scores, full_scores)
+
+    def test_saved_feature_columns_must_match_this_stay(self):
+        features = build_features(self.patients[0].frame.iloc[:4])
+        columns = list(features.columns)
+        selected = select_saved_features(features, columns)
+        self.assertEqual(list(selected.columns), columns)
+        with self.assertRaises(ValueError):
+            select_saved_features(features, [])
+        with self.assertRaises(ValueError):
+            select_saved_features(features, columns + ["HR__mean_12h"])
 
     def test_missing_value_is_not_backfilled(self):
         frame = self.patients[0].frame.iloc[:3].copy()

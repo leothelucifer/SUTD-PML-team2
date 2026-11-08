@@ -17,7 +17,7 @@ from .baselines import (
 )
 from .data import generate_synthetic, load_patients, read_patient, split_patients
 from .hospital_comparison import run_comparison
-from .features import META, build_features, feature_table
+from .features import META, build_features, feature_table, select_saved_features
 from .modeling import candidate_models, fit_calibrated
 from .missingness import run_missingness_analysis
 from .policy import apply_policy, summarize, tune_threshold
@@ -242,10 +242,10 @@ def main():
         elif args.command == "replay":
             bundle = joblib.load(args.model)
             frame = read_patient(args.patient, require_labels=False)
-            features = build_features(frame, bundle["window"])
+            features = select_saved_features(build_features(frame, bundle["window"]), bundle["feature_columns"])
             table = pd.DataFrame({"patient_id": args.patient.stem, "hour": frame["ICULOS"]})
             with threadpool_limits(limits=2):
-                table["probability"] = bundle["model"].predict_proba(features[bundle["feature_columns"]])[:, 1]
+                table["probability"] = bundle["model"].predict_proba(features)[:, 1]
             table = apply_policy(table, bundle["threshold"], bundle["cooldown"])
             # Replay supports histories without a SepsisLabel column.
             args.output.parent.mkdir(parents=True, exist_ok=True)
