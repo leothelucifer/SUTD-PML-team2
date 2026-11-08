@@ -206,6 +206,7 @@ Tests: [tests/test_baselines.py](tests/test_baselines.py).
 | Alert selection | Threshold grid, fixed six-hour cooldown, validation alarm budget |
 | Evaluation | Average precision, AUROC, Brier score, normalized hourly utility, alert count, early-detection recall, inferred warning lead time |
 | Serving sketch | Batch replay from a saved model; labels are not required |
+| Monitoring | Two-speed drift checks (fast: schema, missingness, input and score PSI, alert rate; slow: calibration, AUROC, utility, early recall, false alerts, subgroup gaps) with thresholds frozen from hospital A only |
 | Reproducibility | Seed, versions, file hashes, patient split manifest, model and predictions |
 
 Source hospital A is split approximately 55% training, 15% calibration,
@@ -237,6 +238,31 @@ average precision is sklearn's metric, not a claim of official leaderboard AUPRC
 
 - [Design page](docs/design/sepsis-warning-pipeline.html): data split, training, model selection, alert policy, ICU call contract, AWS deployment and MLOps loop. Open it in a browser.
 - [Final presentation](docs/presentation/sepsis-early-warning.pptx): 22 slides with speaker notes. Source, assets and rebuild steps are in [docs/presentation](docs/presentation/README.md).
+- [Monitoring plan](docs/monitoring-plan.md) (M02): two-speed checks, reference data, thresholds, owners and runbook.
+- [Risk register](docs/risk-register.md) (M05): leakage, data quality, source shift, privacy, fairness, alert fatigue, licensing and operational risks, with evidence and remaining exposure.
+
+## Two-speed monitoring (M02)
+
+Freeze a monitoring reference from hospital A, then replay a held-out split
+through it. The reference reads only A train (inputs) and A validation scored
+by the frozen bundle (scores, alerts, performance); thresholds are the larger
+of a fixed floor and the 95th/99th percentile on no-shift A-validation
+windows. Nothing retrains automatically.
+
+```bash
+python -m sepsis_warning monitor-setup --data data/physionet --model artifacts/real/model.joblib \
+  --output artifacts/monitoring/reference
+python -m sepsis_warning monitor-replay --data data/physionet --model artifacts/real/model.joblib \
+  --reference artifacts/monitoring/reference/monitoring_reference.json \
+  --split external_test --output artifacts/monitoring/replay-b
+```
+
+Run the replay only after the model, features, calibration and alert policy
+are frozen. The replay refuses a bundle whose SHA-256 differs from the
+reference and writes aggregates only (`monitoring_report.md`, `summary.json`,
+per-window CSVs, `monitoring_overview.png`). Fast (unlabeled) alarms are a
+prompt to investigate, not proof of performance loss. The synthetic smoke run
+and the meaning of every check are in [docs/monitoring-plan.md](docs/monitoring-plan.md).
 
 ## Files and artifacts
 
@@ -249,8 +275,11 @@ src/sepsis_warning/
   cli.py              # training and replay commands
   report.py           # offline report generation
   report_template.html
+  scoring.py          # score whole cohorts with a saved bundle (shared scorer)
+  monitoring.py       # two-speed drift monitoring (M02)
 scripts/download_data.py
 tests/test_invariants.py
+tests/test_monitoring.py
 ```
 
 The experiment creates:
@@ -290,7 +319,8 @@ are appended. The implementation is not yet an incremental streaming service.
 5. Examine false alarms, missed cases, very early alarms, and measurement outages.
    Document censored onset assumptions and post-onset rows in the challenge task.
 6. Add feature caching for the complete dataset and a lightweight API if needed.
-   Monitor input missingness, calibration, cohort shift, alert volume, and latency.
+   Monitoring of missingness, calibration, cohort shift and alert volume is
+   implemented (M02, `monitor-setup`/`monitor-replay`); service latency (L05) remains.
 
 Suggested team split: data/splits; features/models; calibration/alert policy;
 evaluation/bias audit; replay/reproducibility/report integration. Each person

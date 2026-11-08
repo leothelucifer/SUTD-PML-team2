@@ -87,10 +87,10 @@
 | ID | Task | Status | Due date | Updated | Evidence / notes |
 |---|---|---|---|---|---|
 | M01 | Hospital B replay | Not started | - | - | - |
-| M02 | Drift monitoring at two speeds | Not started | - | - | - |
+| M02 | Drift monitoring at two speeds | In review | - | 2026-11-08 | `monitor-setup` / `monitor-replay` commands ([monitoring.py](src/sepsis_warning/monitoring.py)); plan, owners and runbook in [docs/monitoring-plan.md](docs/monitoring-plan.md). Reference from A train/validation only; thresholds frozen before any test replay. 18 tests incl. no-shift and simulated shifts (`tests/test_monitoring.py`). To do: team review of owners/floors; real-data reference after the K03-K05 freeze. |
 | M03 | SHAP explanations | Not started | - | - | - |
 | M04 | Model card | Not started | - | - | - |
-| M05 | Risk register | Not started | - | - | - |
+| M05 | Risk register | In review | - | 2026-11-08 | [docs/risk-register.md](docs/risk-register.md): 25 risks with likelihood/impact, owner, evidence and remaining exposure; unresolved items left open. To do: each owner confirms their rows. |
 | M06 | Final deck assembly | Not started | - | - | - |
 | M07 | Prepare slides 10, 12, 15, 16 | Not started | - | - | - |
 
