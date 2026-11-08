@@ -1,0 +1,38 @@
+<section id="architecture" style="background:#f5f3ee;color:#16232a;font-family:Inter, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:40px">
+<h2 style="font-family:'Space Grotesk', sans-serif;font-size:64px;font-weight:600;line-height:1.1">Engineering building blocks</h2>
+<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:32px">
+<div style="display:flex;flex-direction:column;gap:16px;background:#ffffff;padding:36px;border:1px solid #dcdfdc;border-radius:16px">
+<h3 style="font-size:32px;font-weight:600;color:#2c6285">Build</h3>
+<ul style="font-size:26px;line-height:1.6">
+<li>DVC data versions</li>
+<li>MLflow tracking + registry</li>
+<li>Tests: leakage, schema, parity</li>
+<li>GitHub Actions CI</li>
+</ul>
+</div>
+<div style="display:flex;flex-direction:column;gap:16px;background:#ffffff;padding:36px;border:1px solid #dcdfdc;border-radius:16px">
+<h3 style="font-size:32px;font-weight:600;color:#2c6285">Serve</h3>
+<ul style="font-size:26px;line-height:1.6">
+<li>FastAPI POST /v1/score</li>
+<li>Docker image, scanned</li>
+<li>OAuth2 client credentials</li>
+<li>No patient IDs in logs</li>
+</ul>
+</div>
+<div style="display:flex;flex-direction:column;gap:16px;background:#ffffff;padding:36px;border:1px solid #dcdfdc;border-radius:16px">
+<h3 style="font-size:32px;font-weight:600;color:#2c6285">Watch</h3>
+<ul style="font-size:26px;line-height:1.6">
+<li>Input drift (PSI), missingness</li>
+<li>Alert-rate band</li>
+<li>Retrain only after review</li>
+<li>Model card, risk register</li>
+</ul>
+</div>
+</div>
+<div style="display:flex;flex-direction:column;gap:12px;background:#eaf1f6;padding:28px 36px;border-radius:16px">
+<p style="font-size:26px;line-height:1.45"><b>Serving contract:</b> each hour the hospital sends the last 7 hourly rows for a stay. The service keeps that stay's carry-forward state in DynamoDB: last value and hour seen per variable, HMM state and last alert hour. Features match training exactly, and the model itself stays stateless.</p>
+<p style="font-size:26px;line-height:1.45;color:#2c6285">p95 latency [__ ms] · image size [__ MB] · leakage and parity tests passing in CI [link]</p>
+</div>
+<p style="position:absolute;left:128px;bottom:64px;width:1664px;font-size:24px;color:#5b6870">16</p>
+<aside>Why 7 rows plus state, not "the last 24 hours": a lab measured 30 hours ago is still the last lactate, and the HMM state depends on the whole stay. Sending a window alone would give different features from training. Demo point: one command reproduces the model, the container and the monitoring report.</aside>
+</section>

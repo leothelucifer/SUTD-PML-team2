@@ -1,0 +1,20 @@
+{
+  "f2f53795603d51df73ecd7c796fdb9ff": "AWSSitetoSiteVPN.svg",
+  "8287e4d9d7ec77240e954fb96cf6a129": "AmazonAPIGateway.svg",
+  "f575024b91cc2b37fd8b31721a70cd64": "ElasticLoadBalancing.svg",
+  "7cc1b007450e1eff9a7c4d29932add5b": "AWSFargate.svg",
+  "ee726f198e4fcc98450b214dd50cf527": "AmazonDynamoDB.svg",
+  "f8ad0c27b33d4cb3971c8a02381a62f9": "AmazonElasticContainerRegistry.svg",
+  "9bb8596c927521a8603a5357288ad09a": "AmazonSimpleStorageService.svg",
+  "5c2e4297d1301dd949734f617021f8e3": "AmazonSageMakerAI.svg",
+  "45f30bf32054e64e00f7c4bfa7e18fd0": "AmazonEventBridge.svg",
+  "553ba0bb8d0e715a3cd9953863bc10e6": "AmazonSimpleNotificationService.svg",
+  "83bc000f96e51b6dc5193c3ef15f9638": "AmazonCloudWatch.svg",
+  "c89d29857fe71b0bd74ae571cf020762": "AWSIdentityandAccessManagement.svg",
+  "0ff2cd77de84ffdc03ec6e6ed116a6e7": "AWSKeyManagementService.svg",
+  "816ca1b72680601438d3e97858d418ad": "AWSSecretsManager.svg",
+  "06877701e1c99d72c3edcf603aa4c748": "AWSCloudTrail.svg",
+  "4bd38755817cf6bda7e6a4bc6a441689": "04_missingness.png",
+  "1308986dd4bdd0a389d3585ec00c1ba8": "05_vital_signs.png",
+  "17af033ec1613abe21e3a7b882226feb": "08_sirs_threshold_tradeoff.png"
+}

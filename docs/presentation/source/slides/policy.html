@@ -1,0 +1,40 @@
+<section id="policy" style="background:#f5f3ee;color:#16232a;font-family:Inter, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:36px">
+<h2 style="font-family:'Space Grotesk', sans-serif;font-size:64px;font-weight:600;line-height:1.1">From score to alert</h2>
+<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:32px">
+<div style="display:flex;flex-direction:column;gap:14px;background:#ffffff;padding:32px;border:1px solid #dcdfdc;border-radius:16px">
+<h3 style="font-size:32px;font-weight:600;color:#2c6285">1 · Calibrate</h3>
+<p style="font-size:26px;line-height:1.45">Sigmoid fitted on the calibration split with the model frozen, so scores become probabilities.</p>
+</div>
+<div style="display:flex;flex-direction:column;gap:14px;background:#ffffff;padding:32px;border:1px solid #dcdfdc;border-radius:16px">
+<h3 style="font-size:32px;font-weight:600;color:#2c6285">2 · Choose threshold</h3>
+<p style="font-size:26px;line-height:1.45">On validation, try 102 cut-offs; keep those within 0.2 false alerts per day; take the best utility.</p>
+</div>
+<div style="display:flex;flex-direction:column;gap:14px;background:#ffffff;padding:32px;border:1px solid #dcdfdc;border-radius:16px">
+<h3 style="font-size:32px;font-weight:600;color:#2c6285">3 · Cooldown</h3>
+<p style="font-size:26px;line-height:1.45">After an alert, none for 6 h. Utility scores every hour; staff see only the alerts.</p>
+</div>
+</div>
+<div style="display:flex;flex-direction:column;gap:10px">
+<div style="display:flex;gap:16px;align-items:center">
+<p style="width:280px;font-size:24px;color:#5b6870">Label (afterwards)</p>
+<div style="flex:1;display:flex;gap:4px">
+<div style="flex:1;height:34px;background:#e6e3dc"></div><div style="flex:1;height:34px;background:#e6e3dc"></div><div style="flex:1;height:34px;background:#e6e3dc"></div><div style="flex:1;height:34px;background:#e6e3dc"></div><div style="flex:1;height:34px;background:#e6e3dc"></div><div style="flex:1;height:34px;background:#e6e3dc"></div><div style="flex:1;height:34px;background:#e6e3dc"></div><div style="flex:1;height:34px;background:#e6e3dc"></div><div style="flex:1;height:34px;background:#e6e3dc"></div><div style="flex:1;height:34px;background:#e6e3dc"></div><div style="flex:1;height:34px;background:#e6e3dc"></div><div style="flex:1;height:34px;background:#e6e3dc"></div><div style="flex:1;height:34px;background:#e8b79c"></div><div style="flex:1;height:34px;background:#e8b79c"></div><div style="flex:1;height:34px;background:#e8b79c"></div><div style="flex:1;height:34px;background:#e8b79c"></div><div style="flex:1;height:34px;background:#e8b79c"></div><div style="flex:1;height:34px;background:#e8b79c"></div><div style="flex:1;height:34px;background:#e8b79c"></div><div style="flex:1;height:34px;background:#e8b79c"></div><div style="flex:1;height:34px;background:#e8b79c"></div><div style="flex:1;height:34px;background:#e8b79c"></div><div style="flex:1;height:34px;background:#e8b79c"></div><div style="flex:1;height:34px;background:#e8b79c"></div>
+</div>
+</div>
+<div style="display:flex;gap:16px;align-items:center">
+<p style="width:280px;font-size:24px;color:#5b6870">Above threshold</p>
+<div style="flex:1;display:flex;gap:4px">
+<div style="flex:1;height:34px;background:#e6e3dc"></div><div style="flex:1;height:34px;background:#e6e3dc"></div><div style="flex:1;height:34px;background:#e6e3dc"></div><div style="flex:1;height:34px;background:#e6e3dc"></div><div style="flex:1;height:34px;background:#e6e3dc"></div><div style="flex:1;height:34px;background:#e6e3dc"></div><div style="flex:1;height:34px;background:#e6e3dc"></div><div style="flex:1;height:34px;background:#e6e3dc"></div><div style="flex:1;height:34px;background:#e6e3dc"></div><div style="flex:1;height:34px;background:#2c6285"></div><div style="flex:1;height:34px;background:#2c6285"></div><div style="flex:1;height:34px;background:#2c6285"></div><div style="flex:1;height:34px;background:#2c6285"></div><div style="flex:1;height:34px;background:#2c6285"></div><div style="flex:1;height:34px;background:#2c6285"></div><div style="flex:1;height:34px;background:#2c6285"></div><div style="flex:1;height:34px;background:#2c6285"></div><div style="flex:1;height:34px;background:#2c6285"></div><div style="flex:1;height:34px;background:#2c6285"></div><div style="flex:1;height:34px;background:#2c6285"></div><div style="flex:1;height:34px;background:#2c6285"></div><div style="flex:1;height:34px;background:#2c6285"></div><div style="flex:1;height:34px;background:#2c6285"></div><div style="flex:1;height:34px;background:#2c6285"></div>
+</div>
+</div>
+<div style="display:flex;gap:16px;align-items:center">
+<p style="width:280px;font-size:24px;color:#5b6870">Alert to staff</p>
+<div style="flex:1;display:flex;gap:4px">
+<div style="flex:1;height:34px;background:#e6e3dc"></div><div style="flex:1;height:34px;background:#e6e3dc"></div><div style="flex:1;height:34px;background:#e6e3dc"></div><div style="flex:1;height:34px;background:#e6e3dc"></div><div style="flex:1;height:34px;background:#e6e3dc"></div><div style="flex:1;height:34px;background:#e6e3dc"></div><div style="flex:1;height:34px;background:#e6e3dc"></div><div style="flex:1;height:34px;background:#e6e3dc"></div><div style="flex:1;height:34px;background:#e6e3dc"></div><div style="flex:1;height:34px;background:#b84f1e"></div><div style="flex:1;height:34px;background:#e6e3dc"></div><div style="flex:1;height:34px;background:#e6e3dc"></div><div style="flex:1;height:34px;background:#e6e3dc"></div><div style="flex:1;height:34px;background:#e6e3dc"></div><div style="flex:1;height:34px;background:#e6e3dc"></div><div style="flex:1;height:34px;background:#b84f1e"></div><div style="flex:1;height:34px;background:#e6e3dc"></div><div style="flex:1;height:34px;background:#e6e3dc"></div><div style="flex:1;height:34px;background:#e6e3dc"></div><div style="flex:1;height:34px;background:#e6e3dc"></div><div style="flex:1;height:34px;background:#e6e3dc"></div><div style="flex:1;height:34px;background:#b84f1e"></div><div style="flex:1;height:34px;background:#e6e3dc"></div><div style="flex:1;height:34px;background:#e6e3dc"></div>
+</div>
+</div>
+</div>
+<p style="font-size:26px;line-height:1.45;width:1600px">One illustrative 24-hour stay. The label turns on at hour 13, so onset is hour 19. The first alert, at hour 10, came <b>9 hours before onset</b>; hours 11–15 stay quiet.</p>
+<p style="position:absolute;left:128px;bottom:64px;width:1664px;font-size:24px;color:#5b6870">Code: modeling.fit_calibrated, policy.tune_threshold, policy.alert_events · 11</p>
+<aside>Two different counts: hourly decisions are what the PhysioNet utility scores; alerts with the cooldown are what a nurse would see, and what the alert budget limits. The label is never shifted again: onset is inferred as first label hour plus 6.</aside>
+</section>

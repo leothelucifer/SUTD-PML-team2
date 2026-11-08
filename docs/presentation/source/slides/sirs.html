@@ -1,0 +1,19 @@
+<section id="sirs" style="background:#f5f3ee;color:#16232a;font-family:Inter, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:40px">
+<h2 style="font-family:'Space Grotesk', sans-serif;font-size:64px;font-weight:600;line-height:1.1">The bar to beat: the SIRS rule</h2>
+<div style="display:flex;gap:48px;align-items:flex-start">
+<div style="display:flex;flex-direction:column;gap:20px;width:560px">
+<h3 style="font-size:32px;font-weight:600;color:#2c6285">Alert when ≥ 2 of 4 hold</h3>
+<ul style="font-size:26px;line-height:1.6">
+<li>Temp &gt; 38 or &lt; 36 °C</li>
+<li>HR &gt; 90 beats/min</li>
+<li>Resp &gt; 20 or PaCO2 &lt; 32</li>
+<li>WBC &gt; 12 or &lt; 4 ×10⁹/L</li>
+</ul>
+<p style="font-size:24px;line-height:1.45;color:#5b6870">Uses the last value seen; never measured counts as normal. Band neutrophils are not recorded.</p>
+</div>
+<img src="/_blob/17af033ec1613abe21e3a7b882226feb" alt="SIRS threshold trade-off on the validation split: at 2 criteria, recall 0.54, precision 0.033 and 1.98 false alerts per non-septic patient-day against a 0.2 budget" style="width:1056px;height:432px;object-fit:contain;background:#ffffff;border:1px solid #dcdfdc;border-radius:12px">
+</div>
+<p style="font-size:30px;line-height:1.45;width:1600px">At the clinical rule, SIRS flags about half of septic-labelled hours but raises <b style="color:#b84f1e">1.98 false alerts per non-septic patient-day</b>, ten times our 0.2 budget.</p>
+<p style="position:absolute;left:128px;bottom:64px;width:1664px;font-size:24px;color:#5b6870">Validation split only; the rule is fixed at ≥ 2, not tuned · 10</p>
+<aside>SIRS is never trained, so it uses no data to fit. It goes through the same threshold, cooldown and metric code as the models. The sweep over 1 to 4 criteria is descriptive: the rule stays at 2.</aside>
+</section>
