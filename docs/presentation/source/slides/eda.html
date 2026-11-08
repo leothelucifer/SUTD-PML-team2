@@ -1,0 +1,28 @@
+<section id="eda" style="background:#f5f3ee;color:#16232a;font-family:Inter, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:32px">
+<h2 style="font-family:'Space Grotesk', sans-serif;font-size:64px;font-weight:600;line-height:1.1">What the data showed</h2>
+<div style="display:flex;gap:32px">
+<div style="flex:1;display:flex;flex-direction:column;gap:8px;background:#ffffff;padding:24px 32px;border:1px solid #dcdfdc;border-radius:16px">
+<p style="font-family:'Space Grotesk', sans-serif;font-size:56px;font-weight:600;color:#b84f1e">8.8%</p>
+<p style="font-size:26px;line-height:1.35">of hospital A training stays become septic</p>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:8px;background:#ffffff;padding:24px 32px;border:1px solid #dcdfdc;border-radius:16px">
+<p style="font-family:'Space Grotesk', sans-serif;font-size:56px;font-weight:600;color:#b84f1e">2.2%</p>
+<p style="font-size:26px;line-height:1.35">of their hours carry a positive label</p>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:8px;background:#ffffff;padding:24px 32px;border:1px solid #dcdfdc;border-radius:16px">
+<p style="font-family:'Space Grotesk', sans-serif;font-size:56px;font-weight:600;color:#b84f1e">12.1%</p>
+<p style="font-size:26px;line-height:1.35">of septic stays are positive from the first hour</p>
+</div>
+</div>
+<div style="display:flex;gap:32px;align-items:flex-start">
+<img src="/_blob/4bd38755817cf6bda7e6a4bc6a441689" alt="Missing values per variable, hospital A training split vs hospital B: labs are 80–100% missing; DBP, Resp and the blood gases differ most between hospitals" style="width:380px;height:488px;object-fit:contain;background:#ffffff;border:1px solid #dcdfdc;border-radius:12px">
+<img src="/_blob/1308986dd4bdd0a389d3585ec00c1ba8" alt="Distributions of HR, MAP, Temp and Resp at hospital A (training split) and hospital B; MAP is higher at B" style="width:732px;height:488px;object-fit:contain;background:#ffffff;border:1px solid #dcdfdc;border-radius:12px">
+<div style="flex:1;display:flex;flex-direction:column;gap:20px">
+<p style="font-size:26px;line-height:1.4"><b>Heavy imbalance:</b> accuracy is useless; we use utility and alert rate.</p>
+<p style="font-size:26px;line-height:1.4"><b>Labs are sparse</b> and B records far fewer blood gases.</p>
+<p style="font-size:26px;line-height:1.4"><b>MAP runs higher at B</b> (median 84 vs 77 mmHg).</p>
+</div>
+</div>
+<p style="position:absolute;left:128px;bottom:64px;width:1664px;font-size:24px;color:#5b6870">A = training split only (11,183 stays); B shown for inputs only, no labels · 9</p>
+<aside>Only hospital A's training split is explored, so nothing here peeks at A's test stays. Hospital B appears only through its inputs (missingness and vitals), which a deployed system would see anyway; B's labels stay untouched until the final test.</aside>
+</section>

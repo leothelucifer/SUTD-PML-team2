@@ -1,0 +1,53 @@
+<section id="release" style="background:#f5f3ee;color:#16232a;font-family:Inter, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:32px">
+<h2 style="font-family:'Space Grotesk', sans-serif;font-size:64px;font-weight:600;line-height:1.1">From commit to production</h2>
+<p style="font-size:26px;font-weight:600;color:#5b6870;letter-spacing:1px">BUILD AND TEST</p>
+<div style="display:flex;gap:16px;align-items:center">
+<div style="flex:1;display:flex;flex-direction:column;gap:10px;background:#ffffff;padding:28px;border:1px solid #dcdfdc;border-radius:16px">
+<h3 style="font-size:30px;font-weight:600">Pull request</h3>
+<p style="font-size:24px;line-height:1.4">CI runs tests and the synthetic demo</p>
+</div>
+<x-shape kind="arrow-right" style="width:44px;height:28px;background:#2c6285"></x-shape>
+<div style="flex:1;display:flex;flex-direction:column;gap:10px;background:#ffffff;padding:28px;border:1px solid #dcdfdc;border-radius:16px">
+<h3 style="font-size:30px;font-weight:600">Training run</h3>
+<p style="font-size:24px;line-height:1.4">Data and split hashes in MLflow</p>
+</div>
+<x-shape kind="arrow-right" style="width:44px;height:28px;background:#2c6285"></x-shape>
+<div style="flex:1;display:flex;flex-direction:column;gap:10px;background:#ffffff;padding:28px;border:1px solid #dcdfdc;border-radius:16px">
+<h3 style="font-size:30px;font-weight:600">Candidate</h3>
+<p style="font-size:24px;line-height:1.4">Registered and frozen</p>
+</div>
+<x-shape kind="arrow-right" style="width:44px;height:28px;background:#2c6285"></x-shape>
+<div style="flex:1;display:flex;flex-direction:column;gap:10px;background:#ffffff;padding:28px;border:1px solid #dcdfdc;border-radius:16px">
+<h3 style="font-size:30px;font-weight:600">Evaluate</h3>
+<p style="font-size:24px;line-height:1.4">Internal test and B replay</p>
+</div>
+</div>
+<p style="font-size:26px;font-weight:600;color:#5b6870;letter-spacing:1px">RELEASE AND RUN</p>
+<div style="display:flex;gap:16px;align-items:center">
+<div style="flex:1;display:flex;flex-direction:column;gap:10px;background:#0f2a33;color:#f5f3ee;padding:28px;border-radius:16px">
+<h3 style="font-size:30px;font-weight:600">Approve</h3>
+<p style="font-size:24px;line-height:1.4">Team review with the model card</p>
+</div>
+<x-shape kind="arrow-right" style="width:44px;height:28px;background:#2c6285"></x-shape>
+<div style="flex:1;display:flex;flex-direction:column;gap:10px;background:#ffffff;padding:28px;border:1px solid #dcdfdc;border-radius:16px">
+<h3 style="font-size:30px;font-weight:600">Staging</h3>
+<p style="font-size:24px;line-height:1.4">Smoke, parity and latency tests</p>
+</div>
+<x-shape kind="arrow-right" style="width:44px;height:28px;background:#2c6285"></x-shape>
+<div style="flex:1;display:flex;flex-direction:column;gap:10px;background:#0f2a33;color:#f5f3ee;padding:28px;border-radius:16px">
+<h3 style="font-size:30px;font-weight:600">Production</h3>
+<p style="font-size:24px;line-height:1.4">Registry alias moved; rollback ready</p>
+</div>
+<x-shape kind="arrow-right" style="width:44px;height:28px;background:#2c6285"></x-shape>
+<div style="flex:1;display:flex;flex-direction:column;gap:10px;background:#ffffff;padding:28px;border:1px solid #dcdfdc;border-radius:16px">
+<h3 style="font-size:30px;font-weight:600">Monitor</h3>
+<p style="font-size:24px;line-height:1.4">Alarm → team review → manual retrain</p>
+</div>
+</div>
+<div style="display:flex;gap:32px">
+<p style="flex:1;font-size:26px;line-height:1.45;background:#eaf1f6;padding:24px;border-radius:12px"><b>Two versions:</b> the image is tagged by git commit, the model by MLflow version. Each rolls back on its own.</p>
+<p style="flex:1;font-size:26px;line-height:1.45;background:#fbe9df;padding:24px;border-radius:12px"><b>Silent mode:</b> replaying hospital B hour by hour through the API is our simulated pilot, with nobody acting on alerts.</p>
+</div>
+<p style="position:absolute;left:128px;bottom:64px;width:1664px;font-size:24px;color:#5b6870">Dark boxes are the two human gates · 17</p>
+<aside>Nothing retrains or redeploys automatically. Parity means the API gives exactly the same scores as the batch replay for the same stay. Staging uses synthetic stays only.</aside>
+</section>

@@ -1,0 +1,832 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sepsis Warning Pipeline</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: one reading column; each step is a short lead, one wide diagram, then the details. Split colours are a fixed code used in every figure. */
+:root {
+  --bg: #f3f5f7;
+  --surface: #ffffff;
+  --ink: #17212b;
+  --muted: #5a6775;
+  --line: #c6cfd8;
+  --accent: #0d6f7c;
+  --train: #2f5fc4;
+  --cal: #7a4ac2;
+  --val: #b9740a;
+  --itest: #1c8656;
+  --etest: #c03a58;
+  --f-display: "IBM Plex Sans Condensed", "Arial Narrow", sans-serif;
+  --f-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f151b; --surface: #17202a; --ink: #e2e8ee; --muted: #94a2b0; --line: #2e3b48;
+    --accent: #4cc0cb; --train: #7fa3ff; --cal: #b592f3; --val: #efb04c; --itest: #5dd29a; --etest: #ff7f99;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f151b; --surface: #17202a; --ink: #e2e8ee; --muted: #94a2b0; --line: #2e3b48;
+  --accent: #4cc0cb; --train: #7fa3ff; --cal: #b592f3; --val: #efb04c; --itest: #5dd29a; --etest: #ff7f99;
+  color-scheme: dark;
+}
+body {
+  background: var(--bg); color: var(--ink); font-family: var(--f-body); font-size: 16px; line-height: 1.55;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 40px 64px;
+}
+main { max-width: 1000px; margin: 0 auto; display: grid; gap: 56px; }
+header { display: grid; gap: 12px; }
+.eyebrow { font-family: var(--f-mono); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+h1 { font-family: var(--f-display); font-weight: 700; font-size: clamp(32px, 5vw, 46px); line-height: 1.05; margin: 0; text-wrap: balance; }
+h2 { font-family: var(--f-display); font-weight: 700; font-size: 28px; line-height: 1.15; margin: 0; text-wrap: balance; display: flex; gap: 14px; align-items: baseline; }
+h2 .n { font-family: var(--f-mono); font-size: 15px; font-weight: 500; color: var(--accent); }
+h3 { font-family: var(--f-display); font-weight: 600; font-size: 19px; margin: 0; }
+p { margin: 0; max-width: 68ch; }
+.lead { color: var(--muted); font-size: 17px; }
+code { font-family: var(--f-mono); font-size: .88em; }
+section { display: grid; gap: 20px; }
+
+.steps { list-style: none; padding: 0; margin: 8px 0 0; display: flex; flex-wrap: wrap; gap: 8px; counter-reset: s; }
+.steps li { counter-increment: s; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 8px 12px; font-size: 14px; display: flex; gap: 8px; align-items: baseline; }
+.steps li::before { content: counter(s); font-family: var(--f-mono); font-size: 12px; color: var(--accent); }
+
+.key { display: flex; flex-wrap: wrap; gap: 8px 18px; font-size: 13.5px; color: var(--muted); }
+.key span { display: inline-flex; align-items: center; gap: 7px; }
+.sw { width: 12px; height: 12px; border-radius: 3px; border: 1.5px solid currentColor; display: inline-block; }
+.sw.train { color: var(--train); } .sw.cal { color: var(--cal); } .sw.val { color: var(--val); }
+.sw.itest { color: var(--itest); } .sw.etest { color: var(--etest); }
+.sw.solid { color: var(--ink); background: var(--surface); }
+.sw.dash { color: var(--muted); border-style: dashed; }
+
+figure { margin: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 18px 18px 14px; display: grid; gap: 12px; min-width: 0; }
+.scroll { overflow-x: auto; }
+figure svg { display: block; width: 100%; height: auto; min-width: 760px; }
+figcaption { font-size: 14px; color: var(--muted); max-width: 80ch; }
+
+/* SVG styling from page tokens */
+.bx { fill: var(--surface); stroke: var(--line); stroke-width: 1.5; }
+.bx.plan { stroke: var(--muted); stroke-dasharray: 5 4; }
+.bx.acc { fill: var(--accent); fill-opacity: .12; stroke: var(--accent); stroke-width: 2; }
+.sp rect { fill-opacity: .12; stroke-width: 1.6; }
+.sp.train rect { fill: var(--train); stroke: var(--train); }
+.sp.cal rect { fill: var(--cal); stroke: var(--cal); }
+.sp.val rect { fill: var(--val); stroke: var(--val); }
+.sp.itest rect { fill: var(--itest); stroke: var(--itest); }
+.sp.etest rect { fill: var(--etest); stroke: var(--etest); }
+.t { fill: var(--ink); font-family: var(--f-body); font-weight: 600; font-size: 13px; }
+.s { fill: var(--muted); font-family: var(--f-body); font-size: 11.5px; }
+.m { fill: var(--muted); font-family: var(--f-mono); font-size: 10.5px; }
+.lab { fill: var(--muted); font-family: var(--f-body); font-size: 11px; font-style: italic; }
+.acc-t { fill: var(--accent); font-family: var(--f-body); font-weight: 600; font-size: 11.5px; }
+.e { stroke: var(--muted); stroke-width: 1.5; fill: none; }
+.e.plan { stroke-dasharray: 5 4; }
+.e.acc { stroke: var(--accent); stroke-width: 2; }
+.ah { fill: var(--muted); }
+.ah.acc { fill: var(--accent); }
+.grid { stroke: var(--line); stroke-width: 1; }
+.thr { stroke: var(--val); stroke-width: 1.5; stroke-dasharray: 6 4; }
+.curve { stroke: var(--ink); stroke-width: 2; fill: none; }
+.onset { stroke: var(--etest); stroke-width: 1.5; stroke-dasharray: 3 3; }
+.cell-off { fill: none; stroke: var(--line); }
+.cell-lab { fill: var(--etest); fill-opacity: .55; }
+.cell-pos { fill: var(--train); fill-opacity: .6; }
+.alert { fill: var(--accent); }
+
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+.tablewrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
+th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-family: var(--f-mono); font-size: 11.5px; font-weight: 500; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
+tr:last-child td { border-bottom: 0; }
+td:first-child { font-family: var(--f-mono); font-size: 13px; white-space: nowrap; }
+.tag { display: inline-block; font-family: var(--f-mono); font-size: 11px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+.tag.plan { border-style: dashed; }
+.tag.now { border-color: var(--itest); color: var(--itest); }
+
+.two { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+.note { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 16px 18px; display: grid; gap: 8px; min-width: 0; }
+.note ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: 14.5px; }
+.note.flag { border-color: var(--accent); }
+pre { margin: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; overflow-x: auto; font-family: var(--f-mono); font-size: 12.5px; line-height: 1.6; min-width: 0; }
+pre .c { color: var(--muted); }
+pre .k { color: var(--accent); }
+.codehead { font-family: var(--f-mono); font-size: 12px; color: var(--muted); letter-spacing: .04em; text-transform: uppercase; }
+.stack { display: grid; gap: 8px; min-width: 0; }
+footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--line); padding-top: 16px; display: grid; gap: 6px; }
+</style>
+</head>
+<body>
+
+<main>
+  <header>
+    <div class="eyebrow">SUTD PML · Team 2 · PhysioNet Challenge 2019</div>
+    <h1>Sepsis Warning Pipeline</h1>
+    <p class="lead">How the ICU data is split, how each candidate model is trained, how one model is chosen and frozen, how that model turns each patient hour into an alert, and how it would be deployed and maintained on AWS. Drawn from the code on <code>main</code> plus PR #48. Planned parts are marked as planned.</p>
+    <ol class="steps" aria-label="The process in order">
+      <li>40,336 ICU stays</li>
+      <li>5 splits by stay</li>
+      <li>4 candidate models trained the same way</li>
+      <li>1 winner, frozen as a bundle</li>
+      <li>Scored hour by hour, with a 6 h alert cooldown</li>
+    </ol>
+  </header>
+
+  <div class="key" aria-label="Colour key for the splits">
+    <span><i class="sw train"></i>Train</span>
+    <span><i class="sw cal"></i>Calibration</span>
+    <span><i class="sw val"></i>Validation</span>
+    <span><i class="sw itest"></i>Internal test (A)</span>
+    <span><i class="sw etest"></i>External test (B)</span>
+  </div>
+
+  <!-- 1. SPLIT -->
+  <section>
+    <h2><span class="n">1</span>How the data is split</h2>
+    <p>Each <code>.psv</code> file is one ICU stay. Whole stays go to one split, so hours from the same stay never appear on both sides. Hospital A is divided four ways, stratified so each part has the same septic share. Hospital B is kept whole as the external test, because the project's question is whether the model still works at another hospital.</p>
+    <figure>
+      <div class="scroll">
+      <svg viewBox="0 0 960 344" role="img" aria-label="40,336 stays split by hospital. Hospital A is split into train 55%, calibration, validation and internal test at 15% each. All of hospital B is the external test. The two test splits sit below a line and are only used after the model is frozen.">
+        <defs><marker id="m1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah" d="M0 0L10 5L0 10z"/></marker></defs>
+        <rect class="bx" x="20" y="179" width="170" height="60" rx="6"/>
+        <text class="t" x="105" y="204" text-anchor="middle">PhysioNet 2019</text>
+        <text class="s" x="105" y="222" text-anchor="middle">40,336 ICU stays</text>
+        <path class="e" d="M190 209H220V120H248" marker-end="url(#m1)"/>
+        <path class="e" d="M220 209V298H248" marker-end="url(#m1)"/>
+
+        <rect class="bx" x="250" y="85" width="170" height="70" rx="6"/>
+        <text class="t" x="335" y="107" text-anchor="middle">Hospital A</text>
+        <text class="s" x="335" y="125" text-anchor="middle">20,336 stays</text>
+        <text class="s" x="335" y="141" text-anchor="middle">1,790 septic (8.8%)</text>
+        <rect class="bx" x="250" y="263" width="170" height="70" rx="6"/>
+        <text class="t" x="335" y="285" text-anchor="middle">Hospital B</text>
+        <text class="s" x="335" y="303" text-anchor="middle">20,000 stays</text>
+        <text class="s" x="335" y="319" text-anchor="middle">1,142 septic (5.7%)</text>
+
+        <path class="e" d="M420 120H470M470 38V222"/>
+        <path class="e" d="M470 38H518" marker-end="url(#m1)"/>
+        <path class="e" d="M470 94H518" marker-end="url(#m1)"/>
+        <path class="e" d="M470 150H518" marker-end="url(#m1)"/>
+        <path class="e" d="M470 222H518" marker-end="url(#m1)"/>
+        <path class="e" d="M420 298H518" marker-end="url(#m1)"/>
+        <text class="lab" x="428" y="113">stratified</text>
+
+        <g class="sp train"><rect x="520" y="14" width="200" height="48" rx="6"/></g>
+        <text class="t" x="534" y="34">Train · 55%</text><text class="s" x="534" y="51">11,183 stays · 984 septic</text>
+        <g class="sp cal"><rect x="520" y="70" width="200" height="48" rx="6"/></g>
+        <text class="t" x="534" y="90">Calibration · 15%</text><text class="s" x="534" y="107">3,051 stays · ~269 septic</text>
+        <g class="sp val"><rect x="520" y="126" width="200" height="48" rx="6"/></g>
+        <text class="t" x="534" y="146">Validation · 15%</text><text class="s" x="534" y="163">3,051 stays · ~269 septic</text>
+
+        <line class="e plan" x1="500" y1="186" x2="950" y2="186"/>
+        <text class="acc-t" x="948" y="180" text-anchor="end">below this line: used once, after the freeze</text>
+
+        <g class="sp itest"><rect x="520" y="198" width="200" height="48" rx="6"/></g>
+        <text class="t" x="534" y="218">Internal test · 15%</text><text class="s" x="534" y="235">3,051 stays · ~269 septic</text>
+        <g class="sp etest"><rect x="520" y="274" width="200" height="48" rx="6"/></g>
+        <text class="t" x="534" y="294">External test · all of B</text><text class="s" x="534" y="311">20,000 stays · 1,142 septic</text>
+
+        <text class="s" x="740" y="42">→ fit imputers and models</text>
+        <text class="s" x="740" y="98">→ fit calibration only</text>
+        <text class="s" x="740" y="154">→ choose model and threshold</text>
+        <text class="s" x="740" y="226">→ same-hospital result</text>
+        <text class="s" x="740" y="302">→ other-hospital result</text>
+      </svg>
+      </div>
+      <figcaption>Split by stay with seed 42, stratified on whether the stay is ever septic (<code>data.split_patients</code>). PR #48 saves the assignment as <code>splits.csv</code> with hashes. The dataset has no person ID, so one person could still have stays in two splits.</figcaption>
+    </figure>
+  </section>
+
+  <!-- 2. TRAINING -->
+  <section>
+    <h2><span class="n">2</span>How each model is trained</h2>
+    <p>Every candidate goes through the same six stages on the same splits. The coloured blocks show which split each stage learns from. Features are built from each stay's own past and current hours only, so nothing from a later hour can leak into an earlier score.</p>
+    <figure>
+      <div class="scroll">
+      <svg viewBox="0 0 960 236" role="img" aria-label="Six training stages: causal features, fit model on train, freeze, calibrate on the calibration split, tune the threshold on validation, record the validation result. Repeated for every candidate.">
+        <defs><marker id="m2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah" d="M0 0L10 5L0 10z"/></marker></defs>
+        <rect class="bx" x="22" y="24" width="136" height="34" rx="6"/>
+        <text class="s" x="90" y="45" text-anchor="middle">train, cal and val stays</text>
+        <g class="sp train"><rect x="178" y="24" width="136" height="34" rx="6"/></g>
+        <text class="t" x="246" y="46" text-anchor="middle">Train split</text>
+        <g class="sp cal"><rect x="490" y="24" width="136" height="34" rx="6"/></g>
+        <text class="t" x="558" y="46" text-anchor="middle">Calibration split</text>
+        <g class="sp val"><rect x="646" y="24" width="136" height="34" rx="6"/></g>
+        <text class="t" x="714" y="46" text-anchor="middle">Validation split</text>
+
+        <path class="e" d="M90 58V108" marker-end="url(#m2)"/><text class="lab" x="96" y="88">built for</text>
+        <path class="e" d="M246 58V108" marker-end="url(#m2)"/><text class="lab" x="252" y="88">fits on</text>
+        <path class="e" d="M558 58V108" marker-end="url(#m2)"/><text class="lab" x="564" y="88">fits on</text>
+        <path class="e" d="M714 58V108" marker-end="url(#m2)"/><text class="lab" x="720" y="88">tunes on</text>
+
+        <rect class="bx" x="22" y="110" width="136" height="72" rx="6"/>
+        <text class="t" x="34" y="132">Causal features</text><text class="s" x="34" y="150">276 per hour</text><text class="s" x="34" y="166">past + current only</text>
+        <rect class="bx" x="178" y="110" width="136" height="72" rx="6"/>
+        <text class="t" x="190" y="132">Fit model</text><text class="s" x="190" y="150">imputer + scaler</text><text class="s" x="190" y="166">+ estimator</text>
+        <rect class="bx" x="334" y="110" width="136" height="72" rx="6"/>
+        <text class="t" x="346" y="132">Freeze</text><text class="s" x="346" y="150">no refitting from</text><text class="s" x="346" y="166">here on</text>
+        <rect class="bx" x="490" y="110" width="136" height="72" rx="6"/>
+        <text class="t" x="502" y="132">Calibrate</text><text class="s" x="502" y="150">sigmoid, 2 params</text><text class="s" x="502" y="166">scores → probability</text>
+        <rect class="bx" x="646" y="110" width="136" height="72" rx="6"/>
+        <text class="t" x="658" y="132">Tune threshold</text><text class="s" x="658" y="150">102 cut-offs tried</text><text class="s" x="658" y="166">≤ 0.2 false alerts/day</text>
+        <rect class="bx" x="802" y="110" width="136" height="72" rx="6"/>
+        <text class="t" x="814" y="132">Record result</text><text class="s" x="814" y="150">best utility within</text><text class="s" x="814" y="166">the alert budget</text>
+
+        <path class="e" d="M158 146H176" marker-end="url(#m2)"/>
+        <path class="e" d="M314 146H332" marker-end="url(#m2)"/>
+        <path class="e" d="M470 146H488" marker-end="url(#m2)"/>
+        <path class="e" d="M626 146H644" marker-end="url(#m2)"/>
+        <path class="e" d="M782 146H800" marker-end="url(#m2)"/>
+
+        <text class="s" x="480" y="216" text-anchor="middle">Repeated for each candidate below. Each run adds one row to validation_models.csv.</text>
+      </svg>
+      </div>
+      <figcaption>Threshold tuning tries cut-offs from 0 to 1 in steps of 0.01, plus 1.01 meaning "never alert". It keeps those with at most 0.2 false alerts per non-septic patient-day on validation (with the 6 h cooldown applied), then takes the one with the highest PhysioNet utility. Code: <code>features.py</code>, <code>modeling.fit_calibrated</code>, <code>policy.tune_threshold</code>.</figcaption>
+    </figure>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Candidate</th><th>What it is</th><th>Missing values</th><th>Status</th></tr></thead>
+        <tbody>
+          <tr><td>constant_prior</td><td>Always predicts the average septic-hour rate. Not calibrated. This is the floor every model must beat.</td><td>Ignored</td><td><span class="tag now">in code</span></td></tr>
+          <tr><td>logistic_regression</td><td>Scaled linear model, C = 0.3, balanced class weights.</td><td>Median from train</td><td><span class="tag now">in code</span> K01</td></tr>
+          <tr><td>random_forest</td><td>80 trees, depth ≤ 8, ≥ 20 rows per leaf, balanced.</td><td>Median from train</td><td><span class="tag now">in code</span> K02</td></tr>
+          <tr><td>hist_gradient_boosting</td><td>sklearn boosting: 100 rounds, 15 leaves, learning rate 0.06, no early stopping (stopping would split hours inside a stay).</td><td>Handled natively</td><td><span class="tag now">in code</span></td></tr>
+          <tr><td>lightgbm</td><td>Proposed main model. Must tune only on folds grouped by stay.</td><td>Handled natively</td><td><span class="tag plan">planned</span> K03</td></tr>
+          <tr><td>+ HMM / signature features</td><td>Extra feature sets tested with and without, on the same splits.</td><td>Forward filter only</td><td><span class="tag plan">planned</span> H01–H03</td></tr>
+          <tr><td>sirs, always_no</td><td>Fixed rules, never trained. Scored with the same threshold, cooldown and metrics as the models.</td><td>Last seen value</td><td><span class="tag now">PR #48</span> E06</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 3. SELECTION -->
+  <section>
+    <h2><span class="n">3</span>How one model is chosen and frozen</h2>
+    <p>After every candidate has a validation row, one rule picks the winner. The winner, its feature list and its threshold are saved together as one bundle. From that point nothing changes, and only then are the two test splits scored.</p>
+    <figure>
+      <div class="scroll">
+      <svg viewBox="0 0 960 206" role="img" aria-label="Validation results feed a fixed ranking rule. The winner is saved as model.joblib, frozen, then scored once on the internal test from hospital A and the external test from hospital B.">
+        <defs>
+          <marker id="m3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah" d="M0 0L10 5L0 10z"/></marker>
+          <marker id="m3a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah acc" d="M0 0L10 5L0 10z"/></marker>
+        </defs>
+        <g class="sp val"><rect x="20" y="60" width="160" height="80" rx="6"/></g>
+        <text class="t" x="34" y="84">Validation results</text><text class="s" x="34" y="102">one row per candidate</text><text class="m" x="34" y="122">validation_models.csv</text>
+        <rect class="bx" x="214" y="50" width="176" height="100" rx="6"/>
+        <text class="t" x="228" y="74">Pick the winner</text>
+        <text class="s" x="228" y="94">1. highest utility</text><text class="s" x="228" y="112">2. fewest false alerts</text><text class="s" x="228" y="130">3. highest avg. precision</text>
+        <rect class="bx" x="424" y="60" width="164" height="80" rx="6"/>
+        <text class="t" x="438" y="84">Save the bundle</text><text class="m" x="438" y="102">model.joblib</text><text class="s" x="438" y="122">model, features, threshold</text>
+        <rect class="bx acc" x="622" y="70" width="110" height="60" rx="6"/>
+        <text class="t" x="677" y="96" text-anchor="middle">Freeze</text><text class="s" x="677" y="114" text-anchor="middle">nothing changes</text>
+        <g class="sp itest"><rect x="770" y="30" width="170" height="56" rx="6"/></g>
+        <text class="t" x="784" y="53">Internal test · A</text><text class="s" x="784" y="71">3,051 stays · scored once</text>
+        <g class="sp etest"><rect x="770" y="114" width="170" height="56" rx="6"/></g>
+        <text class="t" x="784" y="137">External test · B</text><text class="s" x="784" y="155">20,000 stays · scored once</text>
+        <path class="e" d="M180 100H212" marker-end="url(#m3)"/>
+        <path class="e" d="M390 100H422" marker-end="url(#m3)"/>
+        <path class="e" d="M588 100H620" marker-end="url(#m3)"/>
+        <path class="e acc" d="M732 100H750V58H768" marker-end="url(#m3a)"/>
+        <path class="e acc" d="M750 100V142H768" marker-end="url(#m3a)"/>
+        <text class="m" x="855" y="194" text-anchor="middle">metrics.json · replay.html</text>
+      </svg>
+      </div>
+      <figcaption>Code: <code>cli.run_experiment</code>. Today the freeze is a team rule: the same command picks the winner and then immediately scores both tests. The planned change is a separate evaluate step that only accepts a frozen, registered bundle.</figcaption>
+    </figure>
+
+    <h3>Recommended change to how choices are made</h3>
+    <p>As planned, validation decides everything: model, feature set, settings and threshold. Every one of those decisions fits a little to the same ~269 septic stays. The fix moves the first three decisions into cross-validation inside train.</p>
+    <figure>
+      <div class="scroll">
+      <svg viewBox="0 0 960 256" role="img" aria-label="Today all four decisions use the validation split. Recommended: model, features and settings are chosen with 5-fold grouped cross-validation inside train, and validation is used only for the threshold.">
+        <defs>
+          <marker id="m4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah" d="M0 0L10 5L0 10z"/></marker>
+          <marker id="m4a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah acc" d="M0 0L10 5L0 10z"/></marker>
+        </defs>
+        <text class="t" x="20" y="20">As planned</text>
+        <rect class="bx" x="20" y="40" width="190" height="34" rx="6"/><text class="s" x="34" y="61">Which model?</text>
+        <rect class="bx" x="20" y="86" width="190" height="34" rx="6"/><text class="s" x="34" y="107">Which features? (HMM, …)</text>
+        <rect class="bx" x="20" y="132" width="190" height="34" rx="6"/><text class="s" x="34" y="153">Which settings?</text>
+        <rect class="bx" x="20" y="178" width="190" height="34" rx="6"/><text class="s" x="34" y="199">Which threshold?</text>
+        <path class="e" d="M210 57L298 116" marker-end="url(#m4)"/>
+        <path class="e" d="M210 103L298 128" marker-end="url(#m4)"/>
+        <path class="e" d="M210 149L298 144" marker-end="url(#m4)"/>
+        <path class="e" d="M210 195L298 156" marker-end="url(#m4)"/>
+        <g class="sp val"><rect x="300" y="96" width="150" height="80" rx="6"/></g>
+        <text class="t" x="314" y="120">Validation</text><text class="s" x="314" y="138">3,051 stays</text><text class="s" x="314" y="156">~269 septic</text>
+        <text class="lab" x="235" y="240" text-anchor="middle">all four choices reuse the same septic stays</text>
+
+        <line class="grid" x1="480" y1="10" x2="480" y2="246"/>
+
+        <text class="t" x="510" y="20">Recommended</text>
+        <rect class="bx" x="510" y="40" width="190" height="34" rx="6"/><text class="s" x="524" y="61">Which model?</text>
+        <rect class="bx" x="510" y="86" width="190" height="34" rx="6"/><text class="s" x="524" y="107">Which features? (HMM, …)</text>
+        <rect class="bx" x="510" y="132" width="190" height="34" rx="6"/><text class="s" x="524" y="153">Which settings?</text>
+        <rect class="bx" x="510" y="178" width="190" height="34" rx="6"/><text class="s" x="524" y="199">Which threshold?</text>
+        <path class="e acc" d="M700 57L788 72" marker-end="url(#m4a)"/>
+        <path class="e acc" d="M700 103L788 95" marker-end="url(#m4a)"/>
+        <path class="e acc" d="M700 149L788 118" marker-end="url(#m4a)"/>
+        <path class="e" d="M700 195H788" marker-end="url(#m4)"/>
+        <g class="sp train"><rect x="790" y="40" width="150" height="110" rx="6"/></g>
+        <text class="t" x="804" y="66">Train</text><text class="s" x="804" y="86">5-fold CV, folds</text><text class="s" x="804" y="102">grouped by stay</text><text class="s" x="804" y="122">11,183 stays</text>
+        <g class="sp val"><rect x="790" y="168" width="150" height="56" rx="6"/></g>
+        <text class="t" x="804" y="191">Validation</text><text class="s" x="804" y="209">threshold + final check</text>
+        <text class="lab" x="725" y="244" text-anchor="middle">validation keeps one job</text>
+      </svg>
+      </div>
+      <figcaption>Use <code>StratifiedGroupKFold</code> inside train for model, feature and setting choices, including LightGBM early stopping. Report bootstrap confidence intervals: with ~230 septic stays usable for lead time, recall near 50% is only known to about ±6.5 points.</figcaption>
+    </figure>
+  </section>
+
+  <!-- 4. RUNNING -->
+  <section>
+    <h2><span class="n">4</span>How the final system runs</h2>
+    <p>Each hour, the frozen model turns the patient's history so far into a probability. Two separate things then happen. Every hour above the threshold counts as a positive decision; this is what the PhysioNet utility scores. A visible alert is raised only if none was raised in the previous 6 hours, so staff are not paged every hour.</p>
+    <figure>
+      <div class="scroll">
+      <svg viewBox="0 0 960 292" role="img" aria-label="Example 24-hour stay. The probability crosses the 0.30 threshold at hour 10. Every hour from 10 on is a positive decision, but alerts fire only at hours 10, 16 and 22 because of the 6-hour cooldown. The label turns positive at hour 13, so the inferred onset is hour 19 and the first alert came 9 hours earlier.">
+        <line class="grid" x1="130" y1="170" x2="890" y2="170"/>
+        <line class="grid" x1="130" y1="30" x2="890" y2="30"/>
+        <text class="m" x="120" y="173" text-anchor="end">0</text>
+        <text class="m" x="120" y="121" text-anchor="end">0.30</text>
+        <text class="m" x="120" y="33" text-anchor="end">0.80</text>
+        <text class="s" x="134" y="22">calibrated probability</text>
+        <line class="thr" x1="130" y1="117.5" x2="890" y2="117.5"/>
+        <text class="s" x="890" y="111" text-anchor="end">threshold 0.30 (set on validation)</text>
+        <polyline class="curve" points="130,161.25 163,159.5 196,161.25 229,156 262,157.75 295,152.5 328,149 361,143.75 394,131.5 427,112.25 460,103.5 493,108.75 526,98.25 559,87.75 592,79 625,84.25 658,73.75 691,63.25 724,68.5 757,58 790,54.5 823,47.5 856,51 889,44"/>
+        <line class="onset" x1="724" y1="30" x2="724" y2="262"/>
+        <text class="s" x="724" y="14" text-anchor="middle">inferred onset = first label + 6 h</text>
+        <path class="e acc" d="M427 40V34H724V40"/>
+        <text class="acc-t" x="575" y="28" text-anchor="middle">first alert 9 h before onset</text>
+
+        <g class="m" text-anchor="middle">
+          <text x="130" y="186">1</text><text x="163" y="186">2</text><text x="196" y="186">3</text><text x="229" y="186">4</text><text x="262" y="186">5</text><text x="295" y="186">6</text><text x="328" y="186">7</text><text x="361" y="186">8</text><text x="394" y="186">9</text><text x="427" y="186">10</text><text x="460" y="186">11</text><text x="493" y="186">12</text><text x="526" y="186">13</text><text x="559" y="186">14</text><text x="592" y="186">15</text><text x="625" y="186">16</text><text x="658" y="186">17</text><text x="691" y="186">18</text><text x="724" y="186">19</text><text x="757" y="186">20</text><text x="790" y="186">21</text><text x="823" y="186">22</text><text x="856" y="186">23</text><text x="889" y="186">24</text>
+        </g>
+        <text class="m" x="120" y="186" text-anchor="end">ICU hour</text>
+
+        <text class="m" x="120" y="210" text-anchor="end">SepsisLabel</text>
+        <text class="m" x="120" y="234" text-anchor="end">hourly_positive</text>
+        <text class="m" x="120" y="258" text-anchor="end">alert_event</text>
+        <g class="cell-off">
+          <rect x="118" y="199" width="24" height="14" rx="2"/><rect x="151" y="199" width="24" height="14" rx="2"/><rect x="184" y="199" width="24" height="14" rx="2"/><rect x="217" y="199" width="24" height="14" rx="2"/><rect x="250" y="199" width="24" height="14" rx="2"/><rect x="283" y="199" width="24" height="14" rx="2"/><rect x="316" y="199" width="24" height="14" rx="2"/><rect x="349" y="199" width="24" height="14" rx="2"/><rect x="382" y="199" width="24" height="14" rx="2"/><rect x="415" y="199" width="24" height="14" rx="2"/><rect x="448" y="199" width="24" height="14" rx="2"/><rect x="481" y="199" width="24" height="14" rx="2"/>
+          <rect x="118" y="223" width="24" height="14" rx="2"/><rect x="151" y="223" width="24" height="14" rx="2"/><rect x="184" y="223" width="24" height="14" rx="2"/><rect x="217" y="223" width="24" height="14" rx="2"/><rect x="250" y="223" width="24" height="14" rx="2"/><rect x="283" y="223" width="24" height="14" rx="2"/><rect x="316" y="223" width="24" height="14" rx="2"/><rect x="349" y="223" width="24" height="14" rx="2"/><rect x="382" y="223" width="24" height="14" rx="2"/>
+        </g>
+        <g class="cell-lab">
+          <rect x="514" y="199" width="24" height="14" rx="2"/><rect x="547" y="199" width="24" height="14" rx="2"/><rect x="580" y="199" width="24" height="14" rx="2"/><rect x="613" y="199" width="24" height="14" rx="2"/><rect x="646" y="199" width="24" height="14" rx="2"/><rect x="679" y="199" width="24" height="14" rx="2"/><rect x="712" y="199" width="24" height="14" rx="2"/><rect x="745" y="199" width="24" height="14" rx="2"/><rect x="778" y="199" width="24" height="14" rx="2"/><rect x="811" y="199" width="24" height="14" rx="2"/><rect x="844" y="199" width="24" height="14" rx="2"/><rect x="877" y="199" width="24" height="14" rx="2"/>
+        </g>
+        <g class="cell-pos">
+          <rect x="415" y="223" width="24" height="14" rx="2"/><rect x="448" y="223" width="24" height="14" rx="2"/><rect x="481" y="223" width="24" height="14" rx="2"/><rect x="514" y="223" width="24" height="14" rx="2"/><rect x="547" y="223" width="24" height="14" rx="2"/><rect x="580" y="223" width="24" height="14" rx="2"/><rect x="613" y="223" width="24" height="14" rx="2"/><rect x="646" y="223" width="24" height="14" rx="2"/><rect x="679" y="223" width="24" height="14" rx="2"/><rect x="712" y="223" width="24" height="14" rx="2"/><rect x="745" y="223" width="24" height="14" rx="2"/><rect x="778" y="223" width="24" height="14" rx="2"/><rect x="811" y="223" width="24" height="14" rx="2"/><rect x="844" y="223" width="24" height="14" rx="2"/><rect x="877" y="223" width="24" height="14" rx="2"/>
+        </g>
+        <circle class="alert" cx="427" cy="254" r="6"/><circle class="alert" cx="625" cy="254" r="6"/><circle class="alert" cx="823" cy="254" r="6"/>
+        <path class="e" d="M427 264V270H625V264"/>
+        <text class="s" x="526" y="285" text-anchor="middle">6 h cooldown: no new alert</text>
+      </svg>
+      </div>
+      <figcaption>Illustrative stay, not real data. The supplied label already turns positive 6 h before onset, so onset is inferred as first label + 6 h and the label is never shifted again. Code: <code>policy.apply_policy</code>, <code>policy.alert_events</code>.</figcaption>
+    </figure>
+
+    <div class="key" aria-label="Key for the system diagram">
+      <span><i class="sw solid"></i>Runs today in the <code>replay</code> command</span>
+      <span><i class="sw dash"></i>Planned (L01–L06, M02)</span>
+    </div>
+    <figure>
+      <div class="scroll">
+      <svg viewBox="0 0 960 366" role="img" aria-label="Planned serving path: a client sends the hourly history to a scoring service, which checks the input, builds features with the shared code, scores with the frozen model loaded from the registry, applies the alert policy and returns a response. Fast and slow monitoring feed a team review, which can decide to retrain. Features, model, policy and the training pipeline exist today.">
+        <defs>
+          <marker id="m5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah" d="M0 0L10 5L0 10z"/></marker>
+        </defs>
+        <rect class="bx plan" x="20" y="30" width="140" height="64" rx="6"/>
+        <text class="t" x="32" y="54">Hourly rows</text><text class="s" x="32" y="72">last 7 hourly rows</text>
+        <rect class="bx plan" x="190" y="30" width="130" height="64" rx="6"/>
+        <text class="t" x="202" y="54">POST /score</text><text class="s" x="202" y="72">FastAPI service</text>
+        <rect class="bx plan" x="350" y="30" width="130" height="64" rx="6"/>
+        <text class="t" x="362" y="54">Check input</text><text class="s" x="362" y="72">training's schema</text>
+        <rect class="bx" x="510" y="30" width="130" height="64" rx="6"/>
+        <text class="t" x="522" y="54">Build features</text><text class="s" x="522" y="72">shared features.py</text>
+        <rect class="bx" x="670" y="30" width="120" height="64" rx="6"/>
+        <text class="t" x="682" y="54">Score</text><text class="s" x="682" y="72">calibrated model</text>
+        <rect class="bx" x="820" y="30" width="120" height="64" rx="6"/>
+        <text class="t" x="832" y="54">Alert policy</text><text class="s" x="832" y="72">threshold</text><text class="s" x="832" y="87">+ 6 h cooldown</text>
+        <path class="e plan" d="M160 62H188" marker-end="url(#m5)"/>
+        <path class="e plan" d="M320 62H348" marker-end="url(#m5)"/>
+        <path class="e plan" d="M480 62H508" marker-end="url(#m5)"/>
+        <path class="e" d="M640 62H668" marker-end="url(#m5)"/>
+        <path class="e" d="M790 62H818" marker-end="url(#m5)"/>
+
+        <rect class="bx" x="20" y="150" width="140" height="64" rx="6"/>
+        <text class="t" x="32" y="174">Training pipeline</text><text class="s" x="32" y="192">split, fit, select</text>
+        <rect class="bx plan" x="190" y="150" width="130" height="64" rx="6"/>
+        <text class="t" x="202" y="174">Register</text><text class="s" x="202" y="192">frozen bundle</text><text class="s" x="202" y="207">MLflow, checksum</text>
+        <path class="e plan" d="M160 182H188" marker-end="url(#m5)"/>
+        <path class="e plan" d="M320 182H730V96" marker-end="url(#m5)"/>
+        <text class="lab" x="600" y="176" text-anchor="middle">loaded once at startup</text>
+
+        <rect class="bx" x="820" y="150" width="120" height="64" rx="6"/>
+        <text class="t" x="832" y="174">Response</text><text class="s" x="832" y="192">probability, alert,</text><text class="s" x="832" y="207">top 3 reasons</text>
+        <path class="e" d="M880 94V148" marker-end="url(#m5)"/>
+        <rect class="bx plan" x="820" y="270" width="120" height="64" rx="6"/>
+        <text class="t" x="832" y="294">Care team view</text><text class="s" x="832" y="312">research only</text>
+        <path class="e plan" d="M880 214V268" marker-end="url(#m5)"/>
+
+        <rect class="bx plan" x="350" y="270" width="130" height="64" rx="6"/>
+        <text class="t" x="362" y="294">Fast checks</text><text class="s" x="362" y="312">input drift (PSI)</text><text class="s" x="362" y="327">every hour</text>
+        <rect class="bx plan" x="510" y="270" width="130" height="64" rx="6"/>
+        <text class="t" x="522" y="294">Slow checks</text><text class="s" x="522" y="312">calibration, groups</text><text class="s" x="522" y="327">needs later labels</text>
+        <rect class="bx plan" x="190" y="270" width="130" height="64" rx="6"/>
+        <text class="t" x="202" y="294">Team review</text><text class="s" x="202" y="312">no auto-retrain</text>
+        <path class="e plan" d="M415 94V268" marker-end="url(#m5)"/>
+        <text class="lab" x="421" y="250">input stats</text>
+        <path class="e plan" d="M820 302H642" marker-end="url(#m5)"/>
+        <text class="lab" x="731" y="296" text-anchor="middle">alerts + later labels</text>
+        <path class="e plan" d="M350 302H322" marker-end="url(#m5)"/>
+        <path class="e plan" d="M575 334V350H255V336" marker-end="url(#m5)"/>
+        <path class="e plan" d="M190 302H90V216" marker-end="url(#m5)"/>
+        <text class="lab" x="96" y="250">manual retrain</text>
+      </svg>
+      </div>
+      <figcaption>Section 5 shows who calls the service each hour and what one call carries. Today <code>python -m sepsis_warning replay --model … --patient …</code> runs the solid boxes on one patient file and writes one row per hour.</figcaption>
+    </figure>
+
+    <div class="two">
+      <div class="note">
+        <h3>What makes this production-ready</h3>
+        <ul>
+          <li>Training, replay and the API share one feature module.</li>
+          <li>The bundle stores a versioned feature list and a checksum.</li>
+          <li>Scoring refuses a bundle whose feature list does not match.</li>
+          <li>Test splits only take a frozen, registered bundle.</li>
+          <li>No retraining happens automatically from a monitoring alert.</li>
+        </ul>
+      </div>
+      <div class="note flag">
+        <h3>Limits to say out loud</h3>
+        <ul>
+          <li>Scores estimate the challenge label, not a diagnosis.</li>
+          <li>Probabilities calibrated at A (8.8% septic) will run high at B (5.7%).</li>
+          <li>The 0.2 false alerts per day budget is a demo choice, not a clinical one.</li>
+          <li>Stays, not people, are kept apart across splits.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- 5. ICU CALLS -->
+  <section>
+    <h2><span class="n">5</span>How the ICU calls the model</h2>
+    <p>ICU devices never call the model directly. Readings are charted into the hospital record (EHR) as they happen. Once an hour, the hospital's integration engine collects each ICU stay's last 7 hourly rows and sends them over the VPN to the scoring service. The service adds what it remembers about that stay, scores the hour and replies. The hospital shows any alert to the care team.</p>
+    <figure>
+      <div class="scroll">
+      <svg viewBox="0 0 960 562" role="img" aria-label="Sequence of one hourly call. Monitors and labs chart readings into the EHR. Every hour the hospital's integration engine fetches each stay's last 7 hours, bins them to one value per hour and posts them to the scoring API. The API reads the stay's stored state from DynamoDB, builds features, scores, applies the alert rule, writes the new state and returns the score, the alert flag and the top reasons. The hospital shows any alert to the care team.">
+        <defs>
+          <marker id="m6" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah" d="M0 0L10 5L0 10z"/></marker>
+          <marker id="m6a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah acc" d="M0 0L10 5L0 10z"/></marker>
+        </defs>
+        <rect class="bx" x="10" y="10" width="140" height="44" rx="6"/><text class="t" x="80" y="30" text-anchor="middle">Monitors + labs</text><text class="s" x="80" y="46" text-anchor="middle">devices, lab system</text>
+        <rect class="bx" x="170" y="10" width="140" height="44" rx="6"/><text class="t" x="240" y="30" text-anchor="middle">EHR</text><text class="s" x="240" y="46" text-anchor="middle">charted readings</text>
+        <rect class="bx" x="330" y="10" width="140" height="44" rx="6"/><text class="t" x="400" y="30" text-anchor="middle">Hospital engine</text><text class="s" x="400" y="46" text-anchor="middle">HL7 / FHIR, hourly</text>
+        <rect class="bx acc" x="490" y="10" width="140" height="44" rx="6"/><text class="t" x="560" y="30" text-anchor="middle">Scoring API</text><text class="s" x="560" y="46" text-anchor="middle">Fargate, model loaded</text>
+        <rect class="bx" x="650" y="10" width="140" height="44" rx="6"/><text class="t" x="720" y="30" text-anchor="middle">DynamoDB</text><text class="s" x="720" y="46" text-anchor="middle">state per stay</text>
+        <rect class="bx" x="810" y="10" width="140" height="44" rx="6"/><text class="t" x="880" y="30" text-anchor="middle">Care team</text><text class="s" x="880" y="46" text-anchor="middle">dashboard or EHR</text>
+        <line class="grid" x1="80" y1="54" x2="80" y2="552" stroke-dasharray="3 4"/>
+        <line class="grid" x1="240" y1="54" x2="240" y2="552" stroke-dasharray="3 4"/>
+        <line class="grid" x1="400" y1="54" x2="400" y2="552" stroke-dasharray="3 4"/>
+        <line class="grid" x1="560" y1="54" x2="560" y2="552" stroke-dasharray="3 4"/>
+        <line class="grid" x1="720" y1="54" x2="720" y2="552" stroke-dasharray="3 4"/>
+        <line class="grid" x1="880" y1="54" x2="880" y2="552" stroke-dasharray="3 4"/>
+
+        <path class="e" d="M80 90H238" marker-end="url(#m6)"/><text class="s" x="160" y="83" text-anchor="middle">readings charted</text>
+        <path class="e" d="M400 134H242" marker-end="url(#m6)"/><text class="s" x="320" y="127" text-anchor="middle">last 7 h per stay</text>
+        <path class="e plan" d="M240 178H398" marker-end="url(#m6)"/><text class="s" x="320" y="171" text-anchor="middle">34 variables, age, gender</text>
+        <rect class="bx" x="310" y="204" width="180" height="32" rx="6"/><text class="s" x="400" y="224" text-anchor="middle">one value per hour, map units</text>
+        <path class="e acc" d="M400 270H558" marker-end="url(#m6a)"/><text class="acc-t" x="480" y="263" text-anchor="middle">POST /v1/score</text>
+        <path class="e" d="M560 314H718" marker-end="url(#m6)"/><text class="s" x="640" y="307" text-anchor="middle">read state</text>
+        <path class="e plan" d="M720 358H562" marker-end="url(#m6)"/><text class="s" x="640" y="351" text-anchor="middle">last values, HMM state</text>
+        <rect class="bx" x="450" y="384" width="220" height="32" rx="6"/><text class="s" x="560" y="404" text-anchor="middle">features → score → alert rule</text>
+        <path class="e" d="M560 446H718" marker-end="url(#m6)"/><text class="s" x="640" y="439" text-anchor="middle">write new state</text>
+        <path class="e acc plan" d="M560 490H402" marker-end="url(#m6a)"/><text class="acc-t" x="480" y="483" text-anchor="middle">score, alert, reasons</text>
+        <path class="e" d="M400 534H878" marker-end="url(#m6)"/><text class="s" x="640" y="527" text-anchor="middle">only if alert_event: show alert</text>
+      </svg>
+      </div>
+      <figcaption>Calls are hourly, not one per reading, because the model was trained on one row per ICU hour. The engine must bin readings with the same rule the challenge data used (Reyna et al., 2020) and map hospital codes and units to the 34 PhysioNet variables. For the course, a replay of hospital B plays the hospital engine.</figcaption>
+    </figure>
+
+    <h3>How the service knows the earlier hours</h3>
+    <p>Sending only the last 6 hours is not enough on its own. Several features look further back: <code>Lactate__last</code> and <code>Lactate__hours_since_seen</code> need the last lactate even if it was taken 20 hours ago, the HMM state depends on the whole stay, and the cooldown needs the last alert hour. So each call carries the last 7 raw hourly rows, and the service keeps a small <b>state record</b> per stay in DynamoDB. It holds, for every variable, the last value and the hour it was seen before those rows, plus the HMM forward state and the last alert hour. The model code itself keeps nothing between calls, and the hospital stores nothing extra.</p>
+    <figure>
+      <div class="scroll">
+      <svg viewBox="0 0 960 186" role="img" aria-label="Call at ICU hour 20. Hours 14 to 20 are sent as raw rows. Hours 1 to 13 are summarised in the stored state, which records that lactate was last seen at hour 9 with value 2.1 and heart rate at hour 13. At hour 20 the model gets the same lactate features it would get from the full history.">
+        <text class="t" x="40" y="20">Call at ICU hour 20</text>
+        <text class="s" x="412" y="44" text-anchor="middle">Lactate 2.1</text><path class="ah acc" d="M406 52L418 52L412 60z"/>
+        <text class="s" x="590" y="44" text-anchor="middle">HR 94</text><path class="ah acc" d="M584 52L596 52L590 60z"/>
+        <rect class="bx acc" x="606" y="62" width="314" height="46" rx="6"/>
+        <text class="acc-t" x="763" y="44" text-anchor="middle">sent as raw rows</text>
+        <g>
+          <rect class="cell-off" x="40" y="70" width="40" height="30" rx="3"/><rect class="cell-off" x="84" y="70" width="40" height="30" rx="3"/><rect class="cell-off" x="128" y="70" width="40" height="30" rx="3"/><rect class="cell-off" x="172" y="70" width="40" height="30" rx="3"/><rect class="cell-off" x="216" y="70" width="40" height="30" rx="3"/><rect class="cell-off" x="260" y="70" width="40" height="30" rx="3"/><rect class="cell-off" x="304" y="70" width="40" height="30" rx="3"/><rect class="cell-off" x="348" y="70" width="40" height="30" rx="3"/><rect class="cell-off" x="392" y="70" width="40" height="30" rx="3"/><rect class="cell-off" x="436" y="70" width="40" height="30" rx="3"/><rect class="cell-off" x="480" y="70" width="40" height="30" rx="3"/><rect class="cell-off" x="524" y="70" width="40" height="30" rx="3"/><rect class="cell-off" x="568" y="70" width="40" height="30" rx="3"/>
+          <rect class="bx" x="612" y="70" width="40" height="30" rx="3"/><rect class="bx" x="656" y="70" width="40" height="30" rx="3"/><rect class="bx" x="700" y="70" width="40" height="30" rx="3"/><rect class="bx" x="744" y="70" width="40" height="30" rx="3"/><rect class="bx" x="788" y="70" width="40" height="30" rx="3"/><rect class="bx" x="832" y="70" width="40" height="30" rx="3"/><rect class="bx" x="876" y="70" width="40" height="30" rx="3"/>
+        </g>
+        <g class="m" text-anchor="middle">
+          <text x="60" y="89">1</text><text x="104" y="89">2</text><text x="148" y="89">3</text><text x="192" y="89">4</text><text x="236" y="89">5</text><text x="280" y="89">6</text><text x="324" y="89">7</text><text x="368" y="89">8</text><text x="412" y="89">9</text><text x="456" y="89">10</text><text x="500" y="89">11</text><text x="544" y="89">12</text><text x="588" y="89">13</text><text x="632" y="89">14</text><text x="676" y="89">15</text><text x="720" y="89">16</text><text x="764" y="89">17</text><text x="808" y="89">18</text><text x="852" y="89">19</text><text x="896" y="89">20</text>
+        </g>
+        <path class="e" d="M40 114V120H604V114"/>
+        <text class="s" x="322" y="138" text-anchor="middle">stored state: last value + hour seen per variable, HMM state, last alert hour</text>
+        <path class="e acc" d="M612 114V120H916V114"/>
+        <text class="s" x="764" y="138" text-anchor="middle">enough for 6 h mean, std and change</text>
+        <text class="s" x="40" y="172">At hour 20 the model gets Lactate__last = 2.1 and Lactate__hours_since_seen = 11, exactly what the full history gives.</text>
+      </svg>
+      </div>
+      <figcaption>7 rows because the 6-hour change compares hour t with hour t − 6. If the windows grow to 12 h, send 13 rows. The service checks that the rows start right after the hour the stored state covers, so a missed hour never leaves a gap.</figcaption>
+    </figure>
+
+    <div class="two">
+      <div class="stack">
+        <div class="codehead">Request · POST /v1/score · OAuth2 bearer token</div>
+<pre>{
+  <span class="k">"stay_id"</span>: "icu-7f3a91",
+  <span class="k">"static"</span>: { "age": 64, "gender": 1, "hosp_adm_time": -5.2 },
+  <span class="k">"rows"</span>: [
+    { "iculos": 14, "HR": 96, "MAP": 71, "Temp": null,
+      "Resp": 22, "Lactate": null, <span class="c">…all 34 variables</span> },
+    <span class="c">…hours 15 to 19…</span>
+    { "iculos": 20, "HR": 104, "MAP": 66, "Temp": 38.4,
+      "Resp": 26, "Lactate": null, <span class="c">…</span> }
+  ]
+}</pre>
+      </div>
+      <div class="stack">
+        <div class="codehead">Response</div>
+<pre>{
+  <span class="k">"stay_id"</span>: "icu-7f3a91", <span class="k">"iculos"</span>: 20,
+  <span class="k">"probability"</span>: 0.27, <span class="k">"threshold"</span>: 0.30,
+  <span class="k">"hourly_positive"</span>: false, <span class="k">"alert_event"</span>: false,
+  <span class="k">"next_alert_allowed_hour"</span>: 22,
+  <span class="k">"top_features"</span>: [
+    { "feature": "Resp__mean_6h", "shap": 0.41 },
+    { "feature": "HR__last", "shap": 0.22 },
+    { "feature": "Temp__last", "shap": 0.15 } ],
+  <span class="k">"model"</span>: "hgb-v3", <span class="k">"feature_spec"</span>: "f6a1c2",
+  <span class="k">"warnings"</span>: ["Lactate not measured for 11 h"],
+  <span class="k">"state_as_of_hour"</span>: 14
+}</pre>
+      </div>
+    </div>
+    <div class="stack">
+      <div class="codehead">State record in DynamoDB (one per stay, numbers only)</div>
+<pre>{ "stay_id": "icu-7f3a91", "as_of_hour": 13, "model": "hgb-v3", "feature_spec": "f6a1c2",
+  "last": { "HR": [13, 94], "Lactate": [9, 2.1], "Temp": [12, 38.1], "EtCO2": null, <span class="c">…</span> },
+  "hmm_forward": [0.71, 0.24, 0.05], "last_alert_hour": 16, "last_scored_hour": 19 }</pre>
+    </div>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Situation</th><th>What happens</th></tr></thead>
+        <tbody>
+          <tr><td>First call for a stay</td><td>No stored state. The engine sends every row from ICU hour 1 and the service builds the state.</td></tr>
+          <tr><td>State missing, or from an older model</td><td>The service answers 409 "send full history". The engine resends from hour 1.</td></tr>
+          <tr><td>Engine missed some hours</td><td>Rows start right after the state's <code>as_of_hour</code>, so the list is longer. A gap in hours is rejected with 422.</td></tr>
+          <tr><td>Late lab result</td><td>If it falls inside the 7 rows, the next call picks it up. Past scores are never rewritten.</td></tr>
+          <tr><td>Same call sent twice</td><td>The hour was already scored, so the stored answer comes back and the state is not changed. Safe to retry.</td></tr>
+          <tr><td>Bad value or unknown field</td><td>422, naming the field. Uses the same schema rules as training.</td></tr>
+          <tr><td>Security and privacy</td><td>OAuth2 client credentials over the VPN. No name or MRN; <code>stay_id</code> is a pseudonym. The state holds only numbers and expires after discharge.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="note flag">
+      <h3>Code changes this needs</h3>
+      <ul>
+        <li><code>features.py</code> counts hours from <code>ICULOS</code>, not row number, so a window that starts at hour 14 gives the right gaps.</li>
+        <li><code>build_features</code> accepts a starting state and returns the end state, including the HMM forward state.</li>
+        <li>A parity test: for every hour of every synthetic stay, 7 rows + state must give the same features as the full history.</li>
+        <li>An input schema for the 34 variables, with the same names and units as the <code>.psv</code> files (L02).</li>
+        <li><code>top_features</code> from SHAP with a training-split background (M03).</li>
+        <li>A short mapping document for the hospital engine: codes and units to PhysioNet variables, and the hourly binning rule.</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- 6. AWS + MLOPS -->
+  <section>
+    <h2><span class="n">6</span>Deploying on AWS and running MLOps</h2>
+    <p>This is the design for tasks L01–L06, matching slide 18 of the deck. Nothing is provisioned yet; the project rules require owner review before anything is created or uploaded. Each box shows the AWS service it uses. The same Docker image runs training and serving, everything stays in private networking in the Singapore region, and no long-lived AWS keys exist.</p>
+    <figure>
+      <div class="scroll">
+      <svg viewBox="0 0 1080 672" role="img" aria-label="AWS architecture with service icons. Serve: the hospital's integration engine reaches a private API Gateway over a site-to-site VPN; requests pass an internal load balancer to the scoring API on ECS Fargate, which keeps each stay's state in DynamoDB. Build: GitHub Actions pushes images to ECR; a SageMaker training job runs that image on data in S3 and logs to SageMaker managed MLflow, whose approved model the API loads; approved images are deployed to the API. Watch: EventBridge Scheduler starts monitoring jobs on Fargate; they and CloudWatch alarms notify the owner through SNS. Protect: IAM, KMS, Secrets Manager and CloudTrail apply to every service.">
+        <defs>
+          <marker id="m7" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah" d="M0 0L10 5L0 10z"/></marker>
+          <marker id="m7a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah acc" d="M0 0L10 5L0 10z"/></marker>
+        </defs>
+        <rect class="bx plan" x="210" y="20" width="850" height="640" rx="10" fill="none"/>
+                <rect class="bx plan" x="20" y="70" width="170" height="72" rx="6"/>
+        <text class="t" x="32" y="100">Hospital</text>
+        <text class="s" x="32" y="117">integration engine</text>
+        <text class="s" x="32" y="132">course: B replay</text>
+        <rect class="bx" x="20" y="260" width="170" height="72" rx="6"/>
+        <text class="t" x="32" y="290">GitHub Actions</text>
+        <text class="s" x="32" y="307">tests, build</text>
+        <text class="s" x="32" y="322">OIDC to AWS</text>
+        <rect class="bx" x="232" y="70" width="175" height="72" rx="6"/>
+        <image href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHRpdGxlPkljb24tQXJjaGl0ZWN0dXJlLzQ4L0FyY2hfQVdTLVNpdGUtdG8tU2l0ZS1WUE5fNDg8L3RpdGxlPjxnIGZpbGw9Im5vbmUiIGZpbGwtcnVsZT0iZXZlbm9kZCI+PHBhdGggZmlsbD0iIzhjNGZmZiIgZD0iTTAgMGg2NHY2NEgweiIvPjxwYXRoIGZpbGw9IiNmZmYiIGQ9Ik0zMi4wMTQgMzhjMS4xMDMgMCAyIC44OTcgMiAycy0uODk3IDItMiAyLTItLjg5Ny0yLTIgLjg5Ny0yIDItMm0tMSA1Ljg1OFY0OGgydi00LjE0MmMxLjcyMS0uNDQ3IDMtMiAzLTMuODU4IDAtMi4yMDYtMS43OTQtNC00LTRzLTQgMS43OTQtNCA0YzAgMS44NTggMS4yNzkgMy40MTEgMyAzLjg1OE01My40MjggMjRsLTQuNzA3IDQuNzA3LTEuNDE0LTEuNDE0TDQ5LjYgMjVIMTQuNDI4bDIuMjkzIDIuMjkzLTEuNDE0IDEuNDE0TDEwLjYgMjRsNC43MDctNC43MDcgMS40MTQgMS40MTRMMTQuNDI4IDIzSDQ5LjZsLTIuMjkzLTIuMjkzIDEuNDE0LTEuNDE0em0tMjkuNDE0LTNoLTJ2LTFjMC01LjUxNCA0LjQ4Ni0xMCAxMC0xMHMxMCA0LjQ4NiAxMCAxMHYxaC0ydi0xYzAtNC40MTEtMy41ODktOC04LThzLTggMy41ODktOCA4em0tNSAzMWgyNlYzMmgtMjZ6bTIzLTI1aC0ydjNoLTE2di0zaC0ydjNoLTV2MjRoMzBWMzBoLTV6Ii8+PC9nPjwvc3ZnPg==" x="244" y="86" width="40" height="40"/>
+        <text class="t" x="294" y="100">VPN</text>
+        <text class="s" x="294" y="117">site-to-site</text>
+        <text class="s" x="294" y="132">to the hospital</text>
+        <rect class="bx" x="442" y="70" width="175" height="72" rx="6"/>
+        <image href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIGZpbGw9Im5vbmUiIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHBhdGggZmlsbD0iIzhjNGZmZiIgZD0iTTAgMGg2NHY2NEgweiIvPjxwYXRoIGZpbGw9IiNmZmYiIGZpbGwtcnVsZT0iZXZlbm9kZCIgZD0iTTI4IDQ0aDN2LTJoLTN6bTUgMGgzdi0yaC0zem0tNS0yMmgzdi0yaC0zem01IDBoM3YtMmgtM3ptLTExLTkuMjYtMTAgNS44MzR2MjcuODA4bDEwIDV6TTI0IDIwaDJ2MmgtMnYyMGgydjJoLTJ2OWExIDEgMCAwIDEtMS40NDcuODk1bC0xMi02QTEgMSAwIDAgMSAxMCA0N1YxOGExIDEgMCAwIDEgLjQ5Ni0uODY0bDEyLTdBMS4wMDIgMS4wMDIgMCAwIDEgMjQgMTF6bTI4LTEuNDI2TDQyIDEyLjc0djM4LjY0MWwxMC01ek01NCAxOHYyOWMwIC4zNzktLjIxNC43MjUtLjU1My44OTVsLTEyIDZhMSAxIDAgMCAxLS45NzItLjA0NEExIDEgMCAwIDEgNDAgNTN2LTloLTJ2LTJoMlYyMmgtMnYtMmgydi05YS45OTguOTk4IDAgMCAxIDEuNTA0LS44NjRsMTIgN0ExIDEgMCAwIDEgNTQgMThtLTE5LjA2MSA5LjM0Mi0xLjg3OC0uNjg0LTQgMTEgMS44NzguNjg0em00Ljc2OCA1LjM2NWExIDEgMCAwIDAgMC0xLjQxNGwtMy0zLTEuNDE0IDEuNDE0TDM3LjU4NiAzMmwtMi4yOTMgMi4yOTMgMS40MTQgMS40MTR6bS0xMi40MTQgMy0zLTNhMSAxIDAgMCAxIDAtMS40MTRsMy0zIDEuNDE0IDEuNDE0TDI2LjQxNCAzMmwyLjI5MyAyLjI5M3oiIGNsaXAtcnVsZT0iZXZlbm9kZCIvPjwvc3ZnPg==" x="454" y="86" width="40" height="40"/>
+        <text class="t" x="504" y="100">API Gateway</text>
+        <text class="s" x="504" y="117">private</text>
+        <text class="s" x="504" y="132">OAuth2 clients</text>
+        <rect class="bx" x="652" y="70" width="175" height="72" rx="6"/>
+        <image href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHRpdGxlPkljb24tQXJjaGl0ZWN0dXJlLzQ4L0FyY2hfRWxhc3RpYy1Mb2FkLUJhbGFuY2luZ180ODwvdGl0bGU+PGcgZmlsbD0ibm9uZSIgZmlsbC1ydWxlPSJldmVub2RkIj48cGF0aCBmaWxsPSIjOGM0ZmZmIiBkPSJNMCAwaDY0djY0SDB6Ii8+PHBhdGggZmlsbD0iI2ZmZiIgZD0iTTIzLjUgNDJDMTcuNzEgNDIgMTMgMzcuMjkgMTMgMzEuNVMxNy43MSAyMSAyMy41IDIxIDM0IDI1LjcxIDM0IDMxLjUgMjkuMjkgNDIgMjMuNSA0Mk00OCA0OGMwIDEuNjU0LTEuMzQ2IDMtMyAzcy0zLTEuMzQ2LTMtMyAxLjM0Ni0zIDMtMyAzIDEuMzQ2IDMgM20tMy0zNWMxLjY1NCAwIDMgMS4zNDYgMyAzcy0xLjM0NiAzLTMgMy0zLTEuMzQ2LTMtMyAxLjM0Ni0zIDMtM20zIDE2YzEuNjU0IDAgMyAxLjM0NiAzIDNzLTEuMzQ2IDMtMyAzLTMtMS4zNDYtMy0zIDEuMzQ2LTMgMy0zbS0xMi4wOTkgNGg3LjIwMUE1LjAxIDUuMDEgMCAwIDAgNDggMzdjMi43NTcgMCA1LTIuMjQzIDUtNXMtMi4yNDMtNS01LTVhNS4wMSA1LjAxIDAgMCAwLTQuODk4IDRoLTcuMTI3YTEyLjUgMTIuNSAwIDAgMC0uODc5LTQuMTQ0bDcuNzAzLTYuMzg5QTQuOTQgNC45NCAwIDAgMCA0NSAyMWMyLjc1NyAwIDUtMi4yNDMgNS01cy0yLjI0My01LTUtNS01IDIuMjQzLTUgNWMwIDEuMjI0LjQ1OSAyLjMzMSAxLjE5MSAzLjIwMWwtNy4wMTkgNS44MjNDMzEuOTc3IDIxLjQyIDI4LjAyMSAxOSAyMy41IDE5IDE2LjYwNyAxOSAxMSAyNC42MDcgMTEgMzEuNVMxNi42MDcgNDQgMjMuNSA0NGM0LjI0MyAwIDcuOTkzLTIuMTI5IDEwLjI1NC01LjM3MWw3LjQzNyA2LjE3QzQwLjQ1OSA0NS42NjkgNDAgNDYuNzc2IDQwIDQ4YzAgMi43NTcgMi4yNDMgNSA1IDVzNS0yLjI0MyA1LTUtMi4yNDMtNS01LTVhNC45NCA0Ljk0IDAgMCAwLTIuMjAxLjUzM2wtOC4wMjktNi42NmMuNTc0LTEuMi45NjYtMi41IDEuMTMxLTMuODczIi8+PC9nPjwvc3ZnPg==" x="664" y="86" width="40" height="40"/>
+        <text class="t" x="714" y="100">Load balancer</text>
+        <text class="s" x="714" y="117">internal ALB</text>
+        <rect class="bx acc" x="862" y="70" width="175" height="72" rx="6"/>
+        <image href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHRpdGxlPkljb24tQXJjaGl0ZWN0dXJlLzQ4L0FyY2hfQVdTLUZhcmdhdGVfNDg8L3RpdGxlPjxnIGZpbGw9Im5vbmUiIGZpbGwtcnVsZT0iZXZlbm9kZCI+PHBhdGggZmlsbD0iI2VkNzEwMCIgZD0iTTAgMGg2NHY2NEgweiIvPjxwYXRoIGZpbGw9IiNmZmYiIGQ9Ik00Mi40NjcgNDYuMzgydi0zLjc2NGwxLjk5NC0xdjMuNzY0em0tMy45ODctNC43NjQgMS45OTQgMXYzLjc2NGwtMS45OTQtMXptLTQuOTgzIDkuNzY0di0zLjc2NGwxLjk5My0xdjMuNzY0em0tMy45ODctNC43NjQgMS45OTMgMXYzLjc2NGwtMS45OTMtMXptLTQuOTg0LS4yMzZ2LTMuNzY0bDEuOTk0LTF2My43NjR6bS0zLjk4Ny00Ljc2NCAxLjk5NCAxdjMuNzY0bC0xLjk5NC0xem0yLjk5LTIuNSAxLjc1OS44ODItMS43NTguODgyTDIxLjc3IDQwem04Ljk3MSA1IDEuNzU4Ljg4Mi0xLjc1OC44ODJMMzAuNzQyIDQ1em04Ljk3LTVMNDMuMjMgNDBsLTEuNzU5Ljg4MkwzOS43MTIgNDB6bTQuNDMzLS4wMTItMy45ODctMmEuOTkuOTkgMCAwIDAtLjg5MSAwbC0zLjk4NyAyYTEgMSAwIDAgMC0uNTUxLjg5NHYzLjg4MmwtMy41NDEtMS43NzZhLjk5Ljk5IDAgMCAwLS44OTIgMGwtMy41NCAxLjc3NlY0MGExIDEgMCAwIDAtLjU1Mi0uODk0bC0zLjk4Ny0yYS45OS45OSAwIDAgMC0uODkgMGwtMy45ODggMmExIDEgMCAwIDAtLjU1Ljg5NHY2YzAgLjM3OS4yMTIuNzI1LjU1Ljg5NWwzLjk4NyAyYTEgMSAwIDAgMCAuODkxIDBsMy41NDEtMS43NzdWNTFjMCAuMzc5LjIxNC43MjUuNTUyLjg5NWwzLjk4NiAyYTEgMSAwIDAgMCAuODkyIDBsMy45ODYtMmMuMzM4LS4xNy41NTItLjUxNi41NTItLjg5NXYtMy44ODJsMy41NCAxLjc3N2ExIDEgMCAwIDAgLjg5MiAwbDMuOTg3LTJjLjMzOC0uMTcuNTUtLjUxNi41NS0uODk1di02YTEgMSAwIDAgMC0uNTUtLjg5NE01NCAyOC4wOWMwIDUuMTAzLTExLjA3NyA3Ljg1Ni0yMS41IDcuODU2UzExIDMzLjE5MyAxMSAyOC4wOWMwLTIuNDYxIDIuNjgtNC42MTYgNy41NDctNi4wNjdsLjU2OCAxLjkxN2MtMy43NzYgMS4xMjYtNi4xMjIgMi43MTYtNi4xMjIgNC4xNSAwIDIuNzY0IDguMzQzIDUuODU2IDE5LjUwNyA1Ljg1NnMxOS41MDctMy4wOTIgMTkuNTA3LTUuODU2YzAtMS40MzQtMi4zNDYtMy4wMjQtNi4xMjItNC4xNWwuNTY4LTEuOTE3QzUxLjMyIDIzLjQ3NCA1NCAyNS42MjkgNTQgMjguMDlNMzIuNSAxMi4wNjQgNDAuNTQ3IDE1IDMyLjUgMTcuOTM2IDI0LjQ1MyAxNXptOC44NjggMTYuNTg0Yy0xLjU1Ni43LTQuMTU1IDEuNTE2LTcuODcxIDEuNjQ1VjE5LjcwMWw4Ljk3LTMuMjczdjEwLjQ4NWMwIC43NTQtLjQzMSAxLjQzNS0xLjEgMS43MzVtLTE4LjgzNS0xLjczNVYxNi40MjhsOC45NyAzLjI3M3YxMC41OTJjLTMuNzE2LS4xMjktNi4zMTUtLjk0NS03Ljg3LTEuNjQ1LS42NjktLjMtMS4xLS45ODEtMS4xLTEuNzM1bS4yODMgMy41NmMxLjg3Ljg0MiA1LjA3IDEuODQ2IDkuNjg0IDEuODQ2IDQuNjE1IDAgNy44MTMtMS4wMDQgOS42ODQtMS44NDYgMS4zODMtLjYyMiAyLjI3Ny0yLjAxOSAyLjI3Ny0zLjU2VjE1YTEgMSAwIDAgMC0uNjU2LS45NGwtMTAuOTY0LTRhMSAxIDAgMCAwLS42ODIgMGwtMTAuOTY0IDRhMSAxIDAgMCAwLS42NTYuOTR2MTEuOTEzYzAgMS41NDEuODk0IDIuOTM4IDIuMjc3IDMuNTYiLz48L2c+PC9zdmc+" x="874" y="86" width="40" height="40"/>
+        <text class="t" x="924" y="100">Scoring API</text>
+        <text class="s" x="924" y="117">ECS Fargate</text>
+        <text class="s" x="924" y="132">FastAPI</text>
+        <rect class="bx" x="652" y="160" width="175" height="72" rx="6"/>
+        <image href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHRpdGxlPkljb24tQXJjaGl0ZWN0dXJlLzQ4L0FyY2hfQW1hem9uLUR5bmFtb0RCXzQ4PC90aXRsZT48ZyBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiPjxwYXRoIGZpbGw9IiNjOTI1ZDEiIGQ9Ik0wIDBoNjR2NjRIMHoiLz48cGF0aCBmaWxsPSIjZmZmIiBkPSJNNDYuNTg2IDI1LjI1SDQzYTEgMSAwIDAgMS0uODIyLS40MzUgMS4wMiAxLjAyIDAgMCAxLS4xMTQtLjkzMWwyLjQ5My02LjcyMmgtOC45MTNsLTQuMDkxIDkuMDk4SDM2Yy4zMiAwIC42MjMuMTU2LjgxMi40Mi4xODcuMjY0LjIzOS42MDIuMTM2LjkxbC0zLjY2IDExLjEwMXptMy4xMi0uMjk3TDMxLjcwOSA0My4xNWEuOTkuOTkgMCAwIDEtMS4yMzIuMTQ2IDEuMDE0IDEuMDE0IDAgMCAxLS40MjMtMS4xOGw0LjU2LTEzLjgzM0gzMGExIDEgMCAwIDEtLjg0MS0uNDYzIDEuMDIgMS4wMiAwIDAgMS0uMDctLjk2Nmw1LTExLjEyYTEgMSAwIDAgMSAuOTEtLjU5M2gxMWMuMzI5IDAgLjYzNi4xNjMuODIzLjQzNS4xODcuMjczLjIzLjYyLjExNS45MzFsLTIuNDk0IDYuNzIxSDQ5YTEgMSAwIDAgMSAuOTI0LjYyNGMuMTU1LjM3OC4wNjkuODEzLS4yMTcgMS4xMDJNNDEuMDAyIDQ0LjIyYy0yLjcxIDEuODg2LTcuNjg3IDIuODgyLTEyLjQ2OCAyLjg4Mi00LjgxNiAwLTkuODM3LTEuMDEtMTIuNTMzLTIuOTI0bC4wMDEgMy44MTZjMCAxLjY2NCA0Ljc2OCAzLjk4NCAxMi41MzIgMy45ODQgNy40OTUgMCAxMi40NjgtMi43MDIgMTIuNDY4LTQuNDl6bTIuMDY0LTMuMjdjMCAuMTg3LS4wMzIuMzY3LS4wNjQuNTQ2djUuOTkzQzQzIDUxLjA3OSAzNi41MSA1NCAyOC41MzMgNTRjLTYuOTAzIDAtMTMuODcxLTEuODktMTQuNDczLTUuNWgtLjA1OUwxNCA0My40NDVWMTYuMTUxaC4wMDFjMC0zLjk5NiA3LjQ4Ny02LjE1MSAxNC41MzItNi4xNTEgMy45NCAwIDcuNzMuNjQgMTAuMzk3IDEuNzU2bC0uNzY2IDEuODY4Yy0yLjQzMi0xLjAxOS01Ljk0My0xLjYwMi05LjYzMS0xLjYwMi03Ljc2NCAwLTEyLjUzMiAyLjQwNS0xMi41MzIgNC4xMyAwIDEuNzI0IDQuNzY4IDQuMTI5IDEyLjUzMiA0LjEyOS4xOTUgMCAuMzk5IDAgLjU5Ni0uMDA3bC4wNzggMi4wMmMtLjIyNS4wMDktLjQ1LjAwOS0uNjc0LjAwOS00LjgxNyAwLTkuODM3LTEuMDEtMTIuNTMzLTIuOTI0djQuMzU4aC4wMDF2LjAxN2MuMDA1LjUzLjQ4OSAxLjE0MyAxLjM2NCAxLjcyIDEuOTgyIDEuMjg4IDUuNTUgMi4xNjggOS41MzkgMi4zNTFsLS4wOTEgMi4wMmMtNC4xMjYtLjE5LTcuNzUtMS4wNjktMTAuMDg2LTIuNDE2LS4zMS4yOTgtLjcyNiAxLjA1Ni0uNzI2IDEuNDY3IDAgMS43MjQgNC43NjggNC4xMjkgMTIuNTMyIDQuMTI5LjczOCAwIDEuNDY1LS4wMjUgMi4xNjItLjA3NWwuMTQgMi4wMTdjLS43NDMuMDU0LTEuNTE4LjA4LTIuMzAyLjA4LTQuODE3IDAtOS44MzctMS4wMDktMTIuNTMzLTIuOTI0djMuNjdoLjAwMWMuMDA1LjU0Ny40ODkgMS4xNiAxLjM2NCAxLjczNyAyLjI2OCAxLjQ3NCA2LjU0OSAyLjM5MyAxMS4xNjggMi4zOTNoLjMzdjIuMDIyaC0uMzNjLTQuNzc4IDAtOS44Ni0xLjAwOC0xMi41MzItMi41NDMtLjMyMi4yOTggMCAxLjAxIDAgMS41NDggMCAxLjcyNSA0Ljc2OCA0LjEzIDEyLjUzMiA0LjEzczEyLjUzMi0yLjQwNSAxMi41MzItNC4xM2MwLS42MS0uNi0xLjE3NC0xLjA5Mi0xLjUzOC0uNDEuMjQ3LS44Ni40ODMtMS4zNzIuN2wtLjc2OC0xLjg2OGMuNTMtLjIyMy45OS0uNDYzIDEuMzY0LS43MTEgMS4xLS43MzQgMS44MDQtMS43NzkgMS44MDQtMi4xNzVoMmMwIC45NC0uNjIxIDEuOTQ3LTEuNDE3IDIuNzc1IDEuMTkyIDEuMDQgMS40OCAyLjA3OCAxLjQ4IDIuODE3TTE3LjE0MiA0OC4zOWMuNzkxLjQwOCAxLjcxNi43NzIgMi43NTIgMS4wOGwuNTY0LTEuOTRhMTQgMTQgMCAwIDEtMi40MDYtLjk0em0yLjc1Mi0xMS4wNS41NjQtMS45NGMtLjkxNi0uMjcyLTEuNzI2LS41ODktMi40MDYtLjk0bC0uOTEgMS43OTljLjc5MS40MSAxLjcxNi43NzIgMi43NTIgMS4wOG0tMi43NTItMTMuMjEuOTEtMS44MDFjLjY4LjM1MiAxLjQ5LjY2OCAyLjQwNi45NGwtLjU2NCAxLjk0YTE2IDE2IDAgMCAxLTIuNzUyLTEuMDgiLz48L2c+PC9zdmc+" x="664" y="176" width="40" height="40"/>
+        <text class="t" x="714" y="190">DynamoDB</text>
+        <text class="s" x="714" y="207">state per stay</text>
+        <text class="s" x="714" y="222">expires after stay</text>
+        <rect class="bx" x="232" y="260" width="175" height="72" rx="6"/>
+        <image href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHRpdGxlPkljb24tQXJjaGl0ZWN0dXJlLzQ4L0FyY2hfQW1hem9uLUVsYXN0aWMtQ29udGFpbmVyLVJlZ2lzdHJ5XzQ4PC90aXRsZT48ZyBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiPjxwYXRoIGZpbGw9IiNlZDcxMDAiIGQ9Ik0wIDBoNjR2NjRIMHoiLz48cGF0aCBmaWxsPSIjZmZmIiBkPSJNMzAuNzI2IDI5LjkyMmMtLjQ0Ny4yNi0uNzI2Ljc0NS0uNzI2IDEuMjYzdjIwLjM1bC0xNS04LjY3N1YyMy4wMWwxNy4xNzItOS45MzMgMTQuOTE2IDcuMzh6bTE4Ljk3OC05LjUwMmMwLS41MTgtLjI3OC0xLS43ODMtMS4yODhsLTE2LjA0Mi03LjkzNmExLjQ1IDEuNDUgMCAwIDAtMS40NTEtLjAwMmwtMTcuNjk5IDEwLjI0Yy0uNDQ5LjI1OS0uNzI5Ljc0My0uNzI5IDEuMjYzdjIwLjQ3NmMwIC41MTguMjc5IDEuMDAxLjcyOCAxLjI2MmwxNi4wODggOS4zMDZhMS40NSAxLjQ1IDAgMCAwIDEuNDU2LjAwMWMuNDQ5LS4yNTkuNzI4LS43NDMuNzI4LTEuMjYzdi0yMC45OGwxNi45NzgtOS44MjFjLjQ0OC0uMjU5LjcyNi0uNzQuNzI2LTEuMjU4TTUwIDQyLjk0MWwtMTIuOTk2IDguNTkyVjQ0LjQxbDYuNTk5LTQuOTk0Yy4yNS0uMTkuMzk3LS40ODYuMzk3LS44VjMwLjQ4bDYtMy40NzR6bTEuMjczLTE4LjE0MmExLjQ1IDEuNDUgMCAwIDAtMS40NTYgMGwtNi45MzggNC4wMTRjLS4yNC4xMy0uODc5LjQ3NS0uODc5IDEuMjE3djguMDg3bC02LjMzNyA0Ljc5NmExLjQ3IDEuNDcgMCAwIDAtLjY1OSAxLjIyMXY4LjQxMmMwIC41Mi4yOCAxLjAwNC43MjkgMS4yNjQuMjE4LjEyNS40NjIuMTkuNzEyLjE5LjI2NCAwIC41MzctLjA3Mi43OTQtLjIyMmwxNC4wMzYtOS4yOGMuNDQ3LS4yNi43MjUtLjc0NC43MjUtMS4yNjJWMjYuMDYzYzAtLjUyLS4yNzktMS4wMDQtLjcyNy0xLjI2NCIvPjwvZz48L3N2Zz4=" x="244" y="276" width="40" height="40"/>
+        <text class="t" x="294" y="290">ECR</text>
+        <text class="s" x="294" y="307">Docker images</text>
+        <text class="s" x="294" y="322">scan on push</text>
+        <rect class="bx" x="442" y="260" width="175" height="72" rx="6"/>
+        <image href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHRpdGxlPkljb24tQXJjaGl0ZWN0dXJlLzQ4L0FyY2hfQW1hem9uLVNhZ2VNYWtlcl80ODwvdGl0bGU+PGcgZmlsbD0ibm9uZSIgZmlsbC1ydWxlPSJldmVub2RkIj48cGF0aCBmaWxsPSIjMDFhODhkIiBkPSJNMCAwaDY0djY0SDB6Ii8+PHBhdGggZmlsbD0iI2ZmZiIgZD0iTTQzIDIwYTEuMDAxIDEuMDAxIDAgMCAxLTIgMCAxLjAwMSAxLjAwMSAwIDAgMSAyIDBtLTQgOGExLjAwMSAxLjAwMSAwIDAgMSAwIDIgMS4wMDEgMS4wMDEgMCAwIDEgMC0ybTAgMTVhMS4wMDEgMS4wMDEgMCAwIDEgMiAwIDEuMDAxIDEuMDAxIDAgMCAxLTIgMG03LjA1OS0xMC4wMzJhMS4wMDEgMS4wMDEgMCAwIDEtMiAwIDEuMDAxIDEuMDAxIDAgMCAxIDIgME01MiAzNS4zNjdsLTMuOTc4LTIuMDNjLjAxNC0uMTIyLjAzNy0uMjQyLjAzNy0uMzcgMC0xLjY1My0xLjM0Ni0zLTMtMy0xLjY1NSAwLTMgMS4zNDctMyAzIDAgMS42NTYgMS4zNDUgMy4wMDEgMyAzLjAwMS44MDQgMCAxLjUzMy0uMzIyIDIuMDczLS44NGwzLjgwNiAxLjk0My0zLjQ1MiAyLjA3MkExIDEgMCAwIDAgNDcgNDB2Ni40MzRsLTkuMDQ0IDUuNDI2TDMzIDQ5LjM4MlY0NGg0LjE4NUEyLjk5IDIuOTkgMCAwIDAgNDAgNDZjMS42NTQgMCAzLTEuMzQ2IDMtM3MtMS4zNDYtMy0zLTNhMi45OSAyLjk5IDAgMCAwLTIuODE1IDJIMzNWMzJhMSAxIDAgMCAwLS40LS44bC00LTMtMS4yIDEuNiAzLjYgMi43djMuOTUxbC00IDIuNTQ1di01LjAxNWExIDEgMCAwIDAtLjU1OC0uODk2TDIzIDMxLjM4di0zLjgxNGw0LjUxNS0yLjcxQTEgMSAwIDAgMCAyOCAyNHYtNWgtMnY0LjQzNGwtNCAyLjQtNC0yLjR2LTYuODQ2bDMtMS42NjZWMjFoMnYtNy4xOWwzLjAyNC0xLjY4TDMxIDE0LjYxNiAzMS4wMDEgMjRjMCAuMzM3LjE3LjY1LjQ1MS44MzZsNC43NDggMy4xMTZBMyAzIDAgMCAwIDM2IDI5YzAgMS42NTQgMS4zNDcgMyAzIDMgMS42NTUgMCAzLTEuMzQ2IDMtM3MtMS4zNDUtMy0zLTNjLS41NDcgMC0xLjA1NC4xNTgtMS40OTYuNDE2bC00LjUwMi0yLjk1NkwzMyAxNC42MThsNC45MjgtMi40NjRMNDYgMTcuNTM0VjE5aC0xLjE4NUEyLjk5IDIuOTkgMCAwIDAgNDIgMTdjLTEuNjU0IDAtMyAxLjM0Ni0zIDNzMS4zNDYgMyAzIDNhMi45OSAyLjk5IDAgMCAwIDIuODE1LTJINDZ2M2MwIC4zNzkuMjE0LjcyNS41NTMuODk1TDUyIDI3LjYxOHpNMjYuOTc3IDUxLjg0OGwtMy4yMDMtMS43NDYgMy43NDEtMi4yNDUtMS4wMy0xLjcxNC00Ljc0NyAyLjg0OEwxNyA0Ni40MDZ2LTUuODRsNC41MTUtMi43MDktMS4wMy0xLjcxNEwxNiAzOC44MzRsLTQtMi40di0zLjg2OGw0LjUxNS0yLjcxLTEuMDMtMS43MTNMMTIgMzAuMjMzdi0yLjYxNWw0Ljk1Ni0yLjQ3OEwyMSAyNy41NjZ2My44MTZsLTMuNDQ3IDEuNzIzLjg5NCAxLjc5IDMuNTU2LTEuNzc4TDI1IDM0LjYwMnY1LjY2N2wtNC41MzcgMi44ODcgMS4wNzQgMS42ODhMMzEgMzguODIydjEwLjYxMnptMjYuNDctMjUuNzQzLTUuNDQ2LTIuNzIzVjE3YzAtLjMzNC0uMTY3LS42NDYtLjQ0NS0uODMybC05LTZhMSAxIDAgMCAwLTEuMDAyLS4wNjNsLTUuNTUgMi43NzUtNS41NTctMi43NzVhMSAxIDAgMCAwLS45MzIuMDJsLTkgNUExIDEgMCAwIDAgMTYgMTZ2Ny4zODJsLTUuNDQ3IDIuNzIzYy0uMzM5LjE3LS41NTMuNTE2LS41NTMuODk1djEwYTEgMSAwIDAgMCAuNDg1Ljg1N0wxNSA0MC41NjZWNDdhMSAxIDAgMCAwIC41MjEuODc4bDExIDZhMSAxIDAgMCAwIC45OTQtLjAyMWw0LjUzLTIuNzE3IDUuNTA5IDIuNzU1YTEgMSAwIDAgMCAuOTYyLS4wMzhsMTAtNkExIDEgMCAwIDAgNDkgNDd2LTYuNDM0bDQuNTE0LTIuNzA5QTEgMSAwIDAgMCA1NCAzN1YyN2MwLS4zOC0uMjE0LS43MjUtLjU1My0uODk1Ii8+PC9nPjwvc3ZnPg==" x="454" y="276" width="40" height="40"/>
+        <text class="t" x="504" y="290">SageMaker</text>
+        <text class="s" x="504" y="307">training job</text>
+        <text class="s" x="504" y="322">same image</text>
+        <rect class="bx" x="652" y="260" width="175" height="72" rx="6"/>
+        <image href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHRpdGxlPkljb24tQXJjaGl0ZWN0dXJlLzQ4L0FyY2hfQW1hem9uLVNhZ2VNYWtlcl80ODwvdGl0bGU+PGcgZmlsbD0ibm9uZSIgZmlsbC1ydWxlPSJldmVub2RkIj48cGF0aCBmaWxsPSIjMDFhODhkIiBkPSJNMCAwaDY0djY0SDB6Ii8+PHBhdGggZmlsbD0iI2ZmZiIgZD0iTTQzIDIwYTEuMDAxIDEuMDAxIDAgMCAxLTIgMCAxLjAwMSAxLjAwMSAwIDAgMSAyIDBtLTQgOGExLjAwMSAxLjAwMSAwIDAgMSAwIDIgMS4wMDEgMS4wMDEgMCAwIDEgMC0ybTAgMTVhMS4wMDEgMS4wMDEgMCAwIDEgMiAwIDEuMDAxIDEuMDAxIDAgMCAxLTIgMG03LjA1OS0xMC4wMzJhMS4wMDEgMS4wMDEgMCAwIDEtMiAwIDEuMDAxIDEuMDAxIDAgMCAxIDIgME01MiAzNS4zNjdsLTMuOTc4LTIuMDNjLjAxNC0uMTIyLjAzNy0uMjQyLjAzNy0uMzcgMC0xLjY1My0xLjM0Ni0zLTMtMy0xLjY1NSAwLTMgMS4zNDctMyAzIDAgMS42NTYgMS4zNDUgMy4wMDEgMyAzLjAwMS44MDQgMCAxLjUzMy0uMzIyIDIuMDczLS44NGwzLjgwNiAxLjk0My0zLjQ1MiAyLjA3MkExIDEgMCAwIDAgNDcgNDB2Ni40MzRsLTkuMDQ0IDUuNDI2TDMzIDQ5LjM4MlY0NGg0LjE4NUEyLjk5IDIuOTkgMCAwIDAgNDAgNDZjMS42NTQgMCAzLTEuMzQ2IDMtM3MtMS4zNDYtMy0zLTNhMi45OSAyLjk5IDAgMCAwLTIuODE1IDJIMzNWMzJhMSAxIDAgMCAwLS40LS44bC00LTMtMS4yIDEuNiAzLjYgMi43djMuOTUxbC00IDIuNTQ1di01LjAxNWExIDEgMCAwIDAtLjU1OC0uODk2TDIzIDMxLjM4di0zLjgxNGw0LjUxNS0yLjcxQTEgMSAwIDAgMCAyOCAyNHYtNWgtMnY0LjQzNGwtNCAyLjQtNC0yLjR2LTYuODQ2bDMtMS42NjZWMjFoMnYtNy4xOWwzLjAyNC0xLjY4TDMxIDE0LjYxNiAzMS4wMDEgMjRjMCAuMzM3LjE3LjY1LjQ1MS44MzZsNC43NDggMy4xMTZBMyAzIDAgMCAwIDM2IDI5YzAgMS42NTQgMS4zNDcgMyAzIDMgMS42NTUgMCAzLTEuMzQ2IDMtM3MtMS4zNDUtMy0zLTNjLS41NDcgMC0xLjA1NC4xNTgtMS40OTYuNDE2bC00LjUwMi0yLjk1NkwzMyAxNC42MThsNC45MjgtMi40NjRMNDYgMTcuNTM0VjE5aC0xLjE4NUEyLjk5IDIuOTkgMCAwIDAgNDIgMTdjLTEuNjU0IDAtMyAxLjM0Ni0zIDNzMS4zNDYgMyAzIDNhMi45OSAyLjk5IDAgMCAwIDIuODE1LTJINDZ2M2MwIC4zNzkuMjE0LjcyNS41NTMuODk1TDUyIDI3LjYxOHpNMjYuOTc3IDUxLjg0OGwtMy4yMDMtMS43NDYgMy43NDEtMi4yNDUtMS4wMy0xLjcxNC00Ljc0NyAyLjg0OEwxNyA0Ni40MDZ2LTUuODRsNC41MTUtMi43MDktMS4wMy0xLjcxNEwxNiAzOC44MzRsLTQtMi40di0zLjg2OGw0LjUxNS0yLjcxLTEuMDMtMS43MTNMMTIgMzAuMjMzdi0yLjYxNWw0Ljk1Ni0yLjQ3OEwyMSAyNy41NjZ2My44MTZsLTMuNDQ3IDEuNzIzLjg5NCAxLjc5IDMuNTU2LTEuNzc4TDI1IDM0LjYwMnY1LjY2N2wtNC41MzcgMi44ODcgMS4wNzQgMS42ODhMMzEgMzguODIydjEwLjYxMnptMjYuNDctMjUuNzQzLTUuNDQ2LTIuNzIzVjE3YzAtLjMzNC0uMTY3LS42NDYtLjQ0NS0uODMybC05LTZhMSAxIDAgMCAwLTEuMDAyLS4wNjNsLTUuNTUgMi43NzUtNS41NTctMi43NzVhMSAxIDAgMCAwLS45MzIuMDJsLTkgNUExIDEgMCAwIDAgMTYgMTZ2Ny4zODJsLTUuNDQ3IDIuNzIzYy0uMzM5LjE3LS41NTMuNTE2LS41NTMuODk1djEwYTEgMSAwIDAgMCAuNDg1Ljg1N0wxNSA0MC41NjZWNDdhMSAxIDAgMCAwIC41MjEuODc4bDExIDZhMSAxIDAgMCAwIC45OTQtLjAyMWw0LjUzLTIuNzE3IDUuNTA5IDIuNzU1YTEgMSAwIDAgMCAuOTYyLS4wMzhsMTAtNkExIDEgMCAwIDAgNDkgNDd2LTYuNDM0bDQuNTE0LTIuNzA5QTEgMSAwIDAgMCA1NCAzN1YyN2MwLS4zOC0uMjE0LS43MjUtLjU1My0uODk1Ii8+PC9nPjwvc3ZnPg==" x="664" y="276" width="40" height="40"/>
+        <text class="t" x="714" y="290">SageMaker</text>
+        <text class="s" x="714" y="307">managed MLflow</text>
+        <text class="s" x="714" y="322">runs + registry</text>
+        <rect class="bx" x="442" y="350" width="175" height="72" rx="6"/>
+        <image href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHRpdGxlPkljb24tQXJjaGl0ZWN0dXJlLzQ4L0FyY2hfQW1hem9uLVNpbXBsZS1TdG9yYWdlLVNlcnZpY2VfNDg8L3RpdGxlPjxnIGZpbGw9Im5vbmUiIGZpbGwtcnVsZT0iZXZlbm9kZCI+PHBhdGggZmlsbD0iIzdhYTExNiIgZD0iTTAgMGg2NHY2NEgweiIvPjxwYXRoIGZpbGw9IiNmZmYiIGQ9Im00Ny43NTkgMzMuOTQ4LjIzNC0xLjgxN2MyLjE3MyAxLjI1NCAyLjg0OSAxLjk5IDMuMDQ0IDIuMjkzLS4zMjQuMDYxLTEuMjA1LjA4NS0zLjI3OC0uNDc2TTMwLjQ5OSAyMWMtMTAuMzc0IDAtMTcuMTE3LTIuNTEyLTE3LjUtNC4zMDR2LS4xODVjLjM1LTEuMTE5IDYuMTQtNC41MSAxNy41LTQuNTEgMTEuMzQgMCAxNy4xMzMgMy4zOCAxNy41IDQuNTA0di4xMTFDNDcuNzI1IDE4LjQ0NiA0MC45NjIgMjEgMzAuNSAyMW0xNS4zMTkgMTIuMzYyYy00Ljc2NS0xLjU2NS0xMC45MDYtNC4zODMtMTMuMjI0LTUuNDc0YTIuMDkgMi4wOSAwIDAgMC0yLjA4Mi0xLjk4MkEyLjA5NyAyLjA5NyAwIDAgMCAyOC40MTggMjhjMCAxLjE1NC45NCAyLjA5NCAyLjA5NCAyLjA5NC40NTcgMCAuODc3LS4xNTIgMS4yMi0uNCAyLjQgMS4xMjggOC44ODcgNC4xMDQgMTMuODI2IDUuNjg2bC0xLjcyMSAxMy4zNDRDNDMuNTgzIDUwLjM1MiAzOC45MTkgNTIgMzAuNDk3IDUyYy04LjQyNSAwLTEzLjA5Mi0xLjY0OC0xMy4zNDItMy4yNDlsLTMuNzItMjguOTM3QzE2Ljk0NSAyMS45MTUgMjMuNzQ5IDIzIDMwLjUgMjNjNi43NSAwIDEzLjU1NC0xLjA4NSAxNy4wNjUtMy4xODV6TTUwIDE2LjVjMC0zLjA2OS04LjM0LTYuNS0xOS41LTYuNVMxMSAxMy40MzEgMTEgMTYuNXYuNTQzbDQuMTc0IDMxLjk5QzE1Ljg3NCA1My41MTYgMjYuMTIzIDU0IDMwLjQ5NyA1NGM0LjM3MiAwIDE0LjYxNi0uNDg0IDE1LjMyLTQuOTkzbDEuNjg0LTEzLjA2YzEuMjc3LjMzMiAyLjMxLjUxIDMuMTE1LjUwOC45OSAwIDEuNjU3LS4yNTIgMi4wOC0uNzU4LjM1LS40MTYuNDg5LS45NC4zODktMS40NzYtLjIyOC0xLjIyLTEuNjgyLTIuNTA5LTQuNzE1LTQuMTc3bC0uMS0uMDU1TDUwIDE3LjA0NHoiLz48L2c+PC9zdmc+" x="454" y="366" width="40" height="40"/>
+        <text class="t" x="504" y="380">S3</text>
+        <text class="s" x="504" y="397">data, DVC, KMS</text>
+        <text class="s" x="504" y="412">prediction log</text>
+        <rect class="bx" x="232" y="440" width="175" height="72" rx="6"/>
+        <image href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHRpdGxlPkljb24tQXJjaGl0ZWN0dXJlLzQ4L0FyY2hfQW1hem9uLUV2ZW50QnJpZGdlXzQ4PC90aXRsZT48ZyBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiPjxwYXRoIGZpbGw9IiNlNzE1N2IiIGQ9Ik0wIDBoNjR2NjRIMHoiLz48cGF0aCBmaWxsPSIjZmZmIiBkPSJNNDMuMjYyIDUyYy0xLjU2NiAwLTIuODQtMS4yNjQtMi44NC0yLjgxOHMxLjI3NC0yLjgxOCAyLjg0LTIuODE4IDIuODM5IDEuMjY0IDIuODM5IDIuODE4UzQ0LjgyNyA1MiA0My4yNiA1Mm0tNi43MTgtMTNIMjguNGwtNC4wNzItNyA0LjA3Mi03aDguMTQ0bDQuMDcyIDd6TTIyLjc0NiAxNy42MzZjLTEuNTY2IDAtMi44NC0xLjI2NC0yLjg0LTIuODE4UzIxLjE4IDEyIDIyLjc0NiAxMnMyLjg0IDEuMjY0IDIuODQgMi44MTgtMS4yNzUgMi44MTgtMi44NCAyLjgxOG0yMC41MTYgMjYuNzI4Yy0uNTQyIDAtMS4wNTUuMTA5LTEuNTQzLjI3MmwtMy4xMDMtNS4xOTggNC4wMzYtNi45MzhjLjE4LS4zMS4xOC0uNjkgMC0xbC00LjY1NC04Yy0uMTgtLjMxLS41MTItLjUtLjg3My0uNWgtOC4zMjRsLTIuNzc3LTQuNjUxYy45NjMtLjg4MSAxLjU3Ni0yLjEzMiAxLjU3Ni0zLjUzMSAwLTIuNjU2LTIuMTc3LTQuODE4LTQuODU0LTQuODE4cy00Ljg1NSAyLjE2Mi00Ljg1NSA0LjgxOGMwIDIuNjU3IDIuMTc3IDQuODE4IDQuODU1IDQuODE4LjU0MiAwIDEuMDU1LS4xMDkgMS41NDItLjI3MmwyLjU2NiA0LjI5NS00LjU2MSA3Ljg0MWMtLjE4LjMxLS4xOC42OSAwIDFsNC42NTMgOGMuMTguMzEuNTEyLjUuODczLjVoOS4zMDZjLjAyNiAwIC4wNS0uMDA4LjA3NS0uMDFsMi43ODMgNC42NjFjLS45NjIuODgxLTEuNTc1IDIuMTMyLTEuNTc1IDMuNTMxIDAgMi42NTYgMi4xNzcgNC44MTggNC44NTQgNC44MThzNC44NTQtMi4xNjIgNC44NTQtNC44MThjMC0yLjY1Ny0yLjE3Ny00LjgxOC00Ljg1NC00LjgxOG00LjY3Mi0xOC43MjhjLTEuNTY2IDAtMi44NC0xLjI2NC0yLjg0LTIuODE4UzQ2LjM2NyAyMCA0Ny45MzMgMjBjMS41NjQgMCAyLjgzOSAxLjI2NCAyLjgzOSAyLjgxOHMtMS4yNzUgMi44MTgtMi44NCAyLjgxOG0zLjA0NS45MDNjMS4wOTQtLjg4NCAxLjgwOS0yLjIxNCAxLjgwOS0zLjcyMSAwLTIuNjU2LTIuMTc3LTQuODE4LTQuODU0LTQuODE4YTQuOCA0LjggMCAwIDAtMS44LjM1M2wtMi43My0zLjkyMWMtLjE4OS0uMjctLjQ5OS0uNDMyLS44My0uNDMyaC05LjA2N3YyaDguNTRsMi40MSAzLjQ2NmE0Ljc4IDQuNzggMCAwIDAtMS4zNzkgMy4zNTJjMCAyLjY1NyAyLjE3OCA0LjgxOCA0Ljg1NiA0LjgxOC40MzQgMCAuODQ4LS4wNzUgMS4yNS0uMTgyTDUxLjgzIDMybC0zLjg1IDYuNjE2IDEuNzQ2IDEgNC4xMzktNy4xMTZjLjE4LS4zMS4xOC0uNjkgMC0xek0xNy43MSA0My42MzZjLTEuNTY2IDAtMi44NC0xLjI2NC0yLjg0LTIuODE4UzE2LjE0MiAzOCAxNy43MDggMzhjMS41NjQgMCAyLjgzOSAxLjI2NCAyLjgzOSAyLjgxOHMtMS4yNzUgMi44MTgtMi44NCAyLjgxOG0yLjkxMyAxLjAxMWMxLjE3LS44OCAxLjk0LTIuMjYxIDEuOTQtMy44MjkgMC0yLjY1Ni0yLjE3Ny00LjgxOC00Ljg1NC00LjgxOC0uNyAwLTEuMzY0LjE1NS0xLjk2NS40MjFMMTMuMTcgMzJsNC40NzItNy42ODktMS43NDUtMS00Ljc2MyA4LjE4OWMtLjE4LjMxLS4xOC42OSAwIDFsMi45NzQgNS4xMTRjLS43NzEuODU0LTEuMjU2IDEuOTY5LTEuMjU2IDMuMjA0IDAgMi42NTcgMi4xNzggNC44MTggNC44NTUgNC44MTguMzY4IDAgLjcyMy0uMDQ4IDEuMDY2LS4xMjVsMi44MjEgNC4wNTdjLjE4OS4yNy40OTguNDMyLjgzLjQzMmg5LjA2N3YtMmgtOC41Mzd6Ii8+PC9nPjwvc3ZnPg==" x="244" y="456" width="40" height="40"/>
+        <text class="t" x="294" y="470">EventBridge</text>
+        <text class="s" x="294" y="487">Scheduler</text>
+        <text class="s" x="294" y="502">hourly + weekly</text>
+        <rect class="bx" x="442" y="440" width="175" height="72" rx="6"/>
+        <image href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHRpdGxlPkljb24tQXJjaGl0ZWN0dXJlLzQ4L0FyY2hfQVdTLUZhcmdhdGVfNDg8L3RpdGxlPjxnIGZpbGw9Im5vbmUiIGZpbGwtcnVsZT0iZXZlbm9kZCI+PHBhdGggZmlsbD0iI2VkNzEwMCIgZD0iTTAgMGg2NHY2NEgweiIvPjxwYXRoIGZpbGw9IiNmZmYiIGQ9Ik00Mi40NjcgNDYuMzgydi0zLjc2NGwxLjk5NC0xdjMuNzY0em0tMy45ODctNC43NjQgMS45OTQgMXYzLjc2NGwtMS45OTQtMXptLTQuOTgzIDkuNzY0di0zLjc2NGwxLjk5My0xdjMuNzY0em0tMy45ODctNC43NjQgMS45OTMgMXYzLjc2NGwtMS45OTMtMXptLTQuOTg0LS4yMzZ2LTMuNzY0bDEuOTk0LTF2My43NjR6bS0zLjk4Ny00Ljc2NCAxLjk5NCAxdjMuNzY0bC0xLjk5NC0xem0yLjk5LTIuNSAxLjc1OS44ODItMS43NTguODgyTDIxLjc3IDQwem04Ljk3MSA1IDEuNzU4Ljg4Mi0xLjc1OC44ODJMMzAuNzQyIDQ1em04Ljk3LTVMNDMuMjMgNDBsLTEuNzU5Ljg4MkwzOS43MTIgNDB6bTQuNDMzLS4wMTItMy45ODctMmEuOTkuOTkgMCAwIDAtLjg5MSAwbC0zLjk4NyAyYTEgMSAwIDAgMC0uNTUxLjg5NHYzLjg4MmwtMy41NDEtMS43NzZhLjk5Ljk5IDAgMCAwLS44OTIgMGwtMy41NCAxLjc3NlY0MGExIDEgMCAwIDAtLjU1Mi0uODk0bC0zLjk4Ny0yYS45OS45OSAwIDAgMC0uODkgMGwtMy45ODggMmExIDEgMCAwIDAtLjU1Ljg5NHY2YzAgLjM3OS4yMTIuNzI1LjU1Ljg5NWwzLjk4NyAyYTEgMSAwIDAgMCAuODkxIDBsMy41NDEtMS43NzdWNTFjMCAuMzc5LjIxNC43MjUuNTUyLjg5NWwzLjk4NiAyYTEgMSAwIDAgMCAuODkyIDBsMy45ODYtMmMuMzM4LS4xNy41NTItLjUxNi41NTItLjg5NXYtMy44ODJsMy41NCAxLjc3N2ExIDEgMCAwIDAgLjg5MiAwbDMuOTg3LTJjLjMzOC0uMTcuNTUtLjUxNi41NS0uODk1di02YTEgMSAwIDAgMC0uNTUtLjg5NE01NCAyOC4wOWMwIDUuMTAzLTExLjA3NyA3Ljg1Ni0yMS41IDcuODU2UzExIDMzLjE5MyAxMSAyOC4wOWMwLTIuNDYxIDIuNjgtNC42MTYgNy41NDctNi4wNjdsLjU2OCAxLjkxN2MtMy43NzYgMS4xMjYtNi4xMjIgMi43MTYtNi4xMjIgNC4xNSAwIDIuNzY0IDguMzQzIDUuODU2IDE5LjUwNyA1Ljg1NnMxOS41MDctMy4wOTIgMTkuNTA3LTUuODU2YzAtMS40MzQtMi4zNDYtMy4wMjQtNi4xMjItNC4xNWwuNTY4LTEuOTE3QzUxLjMyIDIzLjQ3NCA1NCAyNS42MjkgNTQgMjguMDlNMzIuNSAxMi4wNjQgNDAuNTQ3IDE1IDMyLjUgMTcuOTM2IDI0LjQ1MyAxNXptOC44NjggMTYuNTg0Yy0xLjU1Ni43LTQuMTU1IDEuNTE2LTcuODcxIDEuNjQ1VjE5LjcwMWw4Ljk3LTMuMjczdjEwLjQ4NWMwIC43NTQtLjQzMSAxLjQzNS0xLjEgMS43MzVtLTE4LjgzNS0xLjczNVYxNi40MjhsOC45NyAzLjI3M3YxMC41OTJjLTMuNzE2LS4xMjktNi4zMTUtLjk0NS03Ljg3LTEuNjQ1LS42NjktLjMtMS4xLS45ODEtMS4xLTEuNzM1bS4yODMgMy41NmMxLjg3Ljg0MiA1LjA3IDEuODQ2IDkuNjg0IDEuODQ2IDQuNjE1IDAgNy44MTMtMS4wMDQgOS42ODQtMS44NDYgMS4zODMtLjYyMiAyLjI3Ny0yLjAxOSAyLjI3Ny0zLjU2VjE1YTEgMSAwIDAgMC0uNjU2LS45NGwtMTAuOTY0LTRhMSAxIDAgMCAwLS42ODIgMGwtMTAuOTY0IDRhMSAxIDAgMCAwLS42NTYuOTR2MTEuOTEzYzAgMS41NDEuODk0IDIuOTM4IDIuMjc3IDMuNTYiLz48L2c+PC9zdmc+" x="454" y="456" width="40" height="40"/>
+        <text class="t" x="504" y="470">Monitor jobs</text>
+        <text class="s" x="504" y="487">Fargate tasks</text>
+        <text class="s" x="504" y="502">PSI, calibration</text>
+        <rect class="bx" x="652" y="440" width="175" height="72" rx="6"/>
+        <image href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHRpdGxlPkljb24tQXJjaGl0ZWN0dXJlLzQ4L0FyY2hfQW1hem9uLVNpbXBsZS1Ob3RpZmljYXRpb24tU2VydmljZV80ODwvdGl0bGU+PGcgZmlsbD0ibm9uZSIgZmlsbC1ydWxlPSJldmVub2RkIj48cGF0aCBmaWxsPSIjZTcxNTdiIiBkPSJNMCAwaDY0djY0SDB6Ii8+PHBhdGggZmlsbD0iI2ZmZiIgZD0iTTE0IDMxYTEuMDAxIDEuMDAxIDAgMCAxIDAgMiAxLjAwMSAxLjAwMSAwIDAgMSAwLTJtMTkuMzk2IDIwYy04Ljg4OCAwLTE2LjU3NC02LjkxOS0xOC4yNDQtMTYuMjMyQTMgMyAwIDAgMCAxNi44MTUgMzNIMjJ2LTJoLTUuMTg1YTMgMyAwIDAgMC0xLjY2LTEuNzY4QzE2Ljc3NiAyMC40OSAyNC40NTEgMTQgMzMuMzk2IDE0YzQuMTkxIDAgNy4xOTIuODQ0IDEwLjAzMyAyLjgyMWwxLjE0Mi0xLjY0MkM0MS40MTEgMTIuOTggMzcuOTY1IDEyIDMzLjM5NiAxMmMtMTAuMDAyIDAtMTguNTcgNy4zMjItMjAuMjU1IDE3LjE0QTIuOTkgMi45OSAwIDAgMCAxMSAzMmMwIDEuMzUzLjkwNiAyLjQ4NiAyLjEzOSAyLjg1OUMxNC44OCA0NS4yNDggMjMuNDU2IDUzIDMzLjM5NiA1M2M0LjIzMiAwIDguMzMzLTEuNDA5IDEyLjE4OS00LjE4OWwtMS4xNy0xLjYyMkM0MC45MDcgNDkuNzE4IDM3LjE5OSA1MSAzMy4zOTYgNTFtLTguMzM0LTIxLjU0MWMxLjM5NS4zNzggMy4wMjkuNTQxIDQuMzcyLjU0MSAxLjI4MiAwIDIuODI2LS4xNDUgNC4xODQtLjQ3NGwtMy41MTMgNy4wMjdBMSAxIDAgMCAwIDMwIDM3djMuNTAxYTI2IDI2IDAgMCAwLS4zOTkuMzMxYy0uMzk0LjMzLTEuMTY5Ljk4MS0xLjYwMSAxLjE0MlYzN3EwLS4xOTItLjA3MS0uMzcyek0yOS40MzQgMjZjMi41OTkgMCA0LjU4MS41NjYgNS4zMzUgMS0uNzU0LjQzNC0yLjczNiAxLTUuMzM1IDEtMi42OTUgMC00LjUzMy0uNjAxLTUuMjE2LTEgLjY4My0uMzk5IDIuNTIxLTEgNS4yMTYtMU0yNyA0NGgxcS4wNjUgMCAuMTI4LS4wMDhjLjk2Ni0uMTI1IDEuOTE4LS45MjQgMi43NTgtMS42MjguMjU5LS4yMTcuNDg2LS40MTIuNjYtLjUyNi4yODMtLjE4NS40NTQtLjUuNDU0LS44Mzh2LTMuNzY0bDQuNTkyLTkuMTgzYy4yNTgtLjMwOC40MDgtLjY1Ny40MDgtMS4wNTMgMC0yLjIwMS00LjUyNS0zLTcuNTY2LTMtMi45ODkgMC03LjQzNC43OTktNy40MzQgMyAwIC4zMTcuMTAxLjYwMS4yNjguODYyTDI2IDM3LjE5MlY0M2ExIDEgMCAwIDAgMSAxbTIyLTFhMS4wMDEgMS4wMDEgMCAwIDEgMCAyIDEuMDAxIDEuMDAxIDAgMCAxIDAtMm0wLTI0YTEuMDAxIDEuMDAxIDAgMCAxIDAgMiAxLjAwMSAxLjAwMSAwIDAgMSAwLTJtMiAxMmExLjAwMSAxLjAwMSAwIDAgMSAwIDIgMS4wMDEgMS4wMDEgMCAwIDEgMC0ybS03IDJoNC4xODVBMi45OSAyLjk5IDAgMCAwIDUxIDM1YzEuNjU0IDAgMy0xLjM0NiAzLTNzLTEuMzQ2LTMtMy0zYTIuOTkgMi45OSAwIDAgMC0yLjgxNSAySDQ0VjIxaDIuMTg1QTIuOTkgMi45OSAwIDAgMCA0OSAyM2MxLjY1NCAwIDMtMS4zNDYgMy0zcy0xLjM0Ni0zLTMtM2EyLjk5IDIuOTkgMCAwIDAtMi44MTUgMkg0M2ExIDEgMCAwIDAtMSAxdjExaC01djJoNXYxMWExIDEgMCAwIDAgMSAxaDMuMTg1QTIuOTkgMi45OSAwIDAgMCA0OSA0N2MxLjY1NCAwIDMtMS4zNDYgMy0zcy0xLjM0Ni0zLTMtM2EyLjk5IDIuOTkgMCAwIDAtMi44MTUgMkg0NHoiLz48L2c+PC9zdmc+" x="664" y="456" width="40" height="40"/>
+        <text class="t" x="714" y="470">SNS</text>
+        <text class="s" x="714" y="487">email the owner</text>
+        <rect class="bx" x="862" y="440" width="175" height="72" rx="6"/>
+        <image href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHRpdGxlPkljb24tQXJjaGl0ZWN0dXJlLzQ4L0FyY2hfQW1hem9uLUNsb3VkV2F0Y2hfNDg8L3RpdGxlPjxnIGZpbGw9Im5vbmUiIGZpbGwtcnVsZT0iZXZlbm9kZCI+PHBhdGggZmlsbD0iI2U3MTU3YiIgZD0iTTAgMGg2NHY2NEgweiIvPjxwYXRoIGZpbGw9IiNmZmYiIGQ9Ik00Mi4xODQgMzkuMzgxYTQuMDk1IDQuMDk1IDAgMCAwLTguMTg5IDAgNC4wOTUgNC4wOTUgMCAwIDAgOC4xODkgMG0yIDBjMCAzLjM1My0yLjczNCA2LjA4MS02LjA5NSA2LjA4MXMtNi4wOTQtMi43MjgtNi4wOTQtNi4wOGMwLTMuMzU0IDIuNzM0LTYuMDgyIDYuMDk0LTYuMDgyczYuMDk1IDIuNzI4IDYuMDk1IDYuMDgxbTYuNTU5IDEwLjIzNS00Ljg5Ny00LjRhMTAgMTAgMCAwIDEtMS4wNjEgMS4xOWw0Ljg4NiA0LjM5N2EuODA2LjgwNiAwIDAgMCAxLjEzMS0uMDU5LjguOCAwIDAgMC0uMDU5LTEuMTI4bS0xMi42NTQtMi41MjRjNC4yNjIgMCA3LjcyOS0zLjQ2IDcuNzI5LTcuNzEgMC00LjI1Mi0zLjQ2Ny03LjcxMS03LjcyOS03LjcxMS00LjI2IDAtNy43MjcgMy40NTktNy43MjcgNy43MXMzLjQ2NyA3LjcxIDcuNzI3IDcuNzFtMTMuOTkyIDEuMDQyYTIuNzk2IDIuNzk2IDAgMCAxIC4yMDcgMy45NDZjLS41NTMuNjEtMS4zMTcuOTItMi4wODMuOTJhMi44IDIuOCAwIDAgMS0xLjg3Mi0uNzEzbC01LjE2MS00LjY0NmE5LjY3IDkuNjcgMCAwIDEtNS4wODMgMS40NDZjLTUuMzY0IDAtOS43MjctNC4zNTQtOS43MjctOS43MDZzNC4zNjMtOS43MDYgOS43MjctOS43MDZjNS4zNjUgMCA5LjcyOSA0LjM1NCA5LjcyOSA5LjcwNmE5LjYgOS42IDAgMCAxLS45MjEgNC4wOTV6TTE3LjY5NyAyMy41MzhjMCAuNDAxLjAyMy44LjA3IDEuMTg1YS45OTcuOTk3IDAgMCAxLS44MDYgMS4xMDFDMTUuMDg0IDI2LjMwOCAxMiAyNy43NzIgMTIgMzIuMTU3YzAgMy4zMjMgMS44MzYgNS4xNTcgMy4zNzcgNi4xMS42NzIuNDIzIDEuMjYzLjYzOCAxLjc2MS42NDNoOC45ODl2MS45OTZoLTljLS44ODQtLjAxLTEuODI3LS4zMjktMi44MS0uOTQ3QzEyLjcwOCAzOC45NjQgMTAgMzYuNjIgMTAgMzIuMTU3YzAtNS4yNyAzLjUyNi03LjI5MyA1LjcxLTguMDRhMTQgMTQgMCAwIDEtLjAxMy0uNTc5YzAtNC4zNzggMi45NzYtOC45MTYgNi45MjQtMTAuNTYgNC42MTEtMS45MjcgOS40OTgtLjk3MSAxMy4wNjYgMi41NTYgMS4wNDcgMS4wMzMgMS45MTcgMi4yNzQgMi41OTggMy43MDJhNS4zIDUuMyAwIDAgMSAzLjE3NC0xLjA2MWMyLjQxNSAwIDUuMTI4IDEuNzkzIDUuNjYzIDUuNzE1QzUwLjU4IDI0LjcyMiA1NCAyNy4yNzggNTQgMzIuMjE3YzAgMi44OS0xLjEzNiA1LjI0LTMuMjg3IDYuNzkybC0xLjE3Mi0xLjYxNkM1MS4xNzMgMzYuMjE0IDUyIDM0LjQ3MyA1MiAzMi4yMTdjMC00Ljk3OC00LjE4OS02LjIxNy01Ljk5LTYuNTE5YS45OTYuOTk2IDAgMCAxLS44MjQtMS4xMjdjLS4yNTUtMy4wNC0yLjA0NS00LjQwMS0zLjcyNy00LjQwMS0xLjA1NyAwLTIuMDUuNTE2LTIuNzI1IDEuNDE2YS45OTkuOTk5IDAgMCAxLTEuNzQxLS4yNmMtLjYzNC0xLjc1Mi0xLjU0Ny0zLjIyMy0yLjcxMi00LjM3NS0xLjQzLTEuNDExLTUuMzQ4LTQuNDQ0LTEwLjg5LTIuMTMyLTMuMTkzIDEuMzMtNS42OTQgNS4xNi01LjY5NCA4LjcyIi8+PC9nPjwvc3ZnPg==" x="874" y="456" width="40" height="40"/>
+        <text class="t" x="924" y="470">CloudWatch</text>
+        <text class="s" x="924" y="487">logs, metrics</text>
+        <text class="s" x="924" y="502">alarms</text>
+        <rect class="bx" x="232" y="560" width="175" height="72" rx="6"/>
+        <image href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHRpdGxlPkljb24tQXJjaGl0ZWN0dXJlLzQ4L0FyY2hfQVdTLUlkZW50aXR5LWFuZC1BY2Nlc3MtTWFuYWdlbWVudF80ODwvdGl0bGU+PGcgZmlsbD0ibm9uZSIgZmlsbC1ydWxlPSJldmVub2RkIj48cGF0aCBmaWxsPSIjZGQzNDRjIiBkPSJNMCAwaDY0djY0SDB6Ii8+PHBhdGggZmlsbD0iI2ZmZiIgZD0iTTEyIDQ3aDQwVjE4SDEyem00Mi0zMHYzMWExIDEgMCAwIDEtMSAxSDExYTEgMSAwIDAgMS0xLTFWMTdhMSAxIDAgMCAxIDEtMWg0MmExIDEgMCAwIDEgMSAxTTM1IDM5aDEydi0ySDM1em0xMC00aDR2LTJoLTR6bS0xMCAwaDZ2LTJoLTZ6bS0xMi41IDIuNWEuNS41IDAgMSAwIDEuMDAyLS4wMDIuNS41IDAgMCAwLTEuMDAyLjAwMm0zIDBhMi41IDIuNSAwIDAgMS0xLjUgMi4yODhWNDJoLTJ2LTIuMjEyYTIuNSAyLjUgMCAwIDEtMS41LTIuMjg4YzAtMS4zNzggMS4xMjEtMi41IDIuNS0yLjVzMi41IDEuMTIyIDIuNSAyLjVNMTYgNDIuOTk1IDI5Ljk5NSA0M2wuMDAxLTJIMjd2LTJoMi45OTdsLjAwMS0ySDI3di0yaDIuOTk5TDMwIDMzLjAwNSAxNi4wMDUgMzN6bTItMTEuOTk0IDEwLjAwMS4wMDMuMDAxLTUuMDA0YzAtMS4wMjQtLjgwMi0xLjcyNy0xLjI4LTIuMDU1LS44NzUtLjYtMi41NDgtLjk0NS0zLjcyLS45NDVIMjNjLTIuMTI3IDAtNC45OTcgMS4yMzItNC45OTggM3ptLTMuNzA3IDEzLjdhMSAxIDAgMCAxLS4yOTMtLjcwN0wxNC4wMDUgMzJhMSAxIDAgMCAxIDEtMUgxNmwuMDAyLTVjLjAwMS0zLjA4OSAzLjg3NC01IDYuOTk4LTVoLjAwMmMxLjU2NSAwIDMuNjUxLjQ3MyA0Ljg1MiAxLjI5NSAxLjM4NS45NTEgMi4xNDkgMi4yNjcgMi4xNDggMy43MDVsLS4wMDEgNS4wMDUuOTk5LjAwMWExIDEgMCAwIDEgMSAxTDMxLjk5NSA0NGExIDEgMCAwIDEtMSAxTDE1IDQ0Ljk5NGExIDEgMCAwIDEtLjcwNy0uMjkzTTQ3IDMwaDJ2LTJoLTJ6bS0xMiAwaDl2LTJoLTl6Ii8+PC9nPjwvc3ZnPg==" x="244" y="576" width="40" height="40"/>
+        <text class="t" x="294" y="590">IAM</text>
+        <text class="s" x="294" y="607">least privilege</text>
+        <rect class="bx" x="442" y="560" width="175" height="72" rx="6"/>
+        <image href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHRpdGxlPkljb24tQXJjaGl0ZWN0dXJlLzQ4L0FyY2hfQVdTLUtleS1NYW5hZ2VtZW50LVNlcnZpY2VfNDg8L3RpdGxlPjxnIGZpbGw9Im5vbmUiIGZpbGwtcnVsZT0iZXZlbm9kZCI+PHBhdGggZmlsbD0iI2RkMzQ0YyIgZD0iTTAgMGg2NHY2NEgweiIvPjxwYXRoIGZpbGw9IiNmZmYiIGQ9Ik00Mi44NCA0MS45OTdoNnYtMmgtNnptLTggMGg2di0yaC02em0tOCAwaDZ2LTJoLTZ6bTEwLTYuNWExLjUwMSAxLjUwMSAwIDEgMSAxLjUgMS41Yy0uODI2IDAtMS41LS42NzMtMS41LTEuNW01IDBjMC0xLjkzLTEuNTctMy41LTMuNS0zLjUtMS45MjggMC0zLjUgMS41Ny0zLjUgMy41czEuNTcyIDMuNSAzLjUgMy41YzEuOTMgMCAzLjUtMS41NyAzLjUtMy41bS0xMS41IDEuNWMtLjgyNiAwLTEuNS0uNjczLTEuNS0xLjVzLjY3NC0xLjUgMS41LTEuNWExLjUwMSAxLjUwMSAwIDAgMSAwIDNtMC01Yy0xLjkyOCAwLTMuNSAxLjU3LTMuNSAzLjVzMS41NzIgMy41IDMuNSAzLjVjMS45MyAwIDMuNS0xLjU3IDMuNS0zLjVzLTEuNTctMy41LTMuNS0zLjVtMjMuNS02djIwYTEgMSAwIDAgMS0xIDFoLTI2di0yaDI1di0xOGgtMTl2LTJoMjBhMSAxIDAgMCAxIDEgMW0tMzIuOTM2LTIuMTA1YTEuOTggMS45OCAwIDAgMS0xLjk4LTEuOThjMC0xLjA5Ljg4OS0xLjk3OCAxLjk4LTEuOTc4YTEuOTggMS45OCAwIDAgMSAxLjk3OCAxLjk3OSAxLjk4IDEuOTggMCAwIDEtMS45NzggMS45NzltMC01Ljk1OGEzLjk4NCAzLjk4NCAwIDAgMC0zLjk4IDMuOTc5IDMuOTg0IDMuOTg0IDAgMCAwIDMuOTggMy45NzkgMy45ODMgMy45ODMgMCAwIDAgMy45NzgtMy45OCAzLjk4MyAzLjk4MyAwIDAgMC0zLjk3OC0zLjk3OG0yLjYzIDEyLjExMmExIDEgMCAwIDAtLjY5My45NXYxOC41OGwtMS45NCAxLjktMi4wNi0yLjgwN3YtMi42M2ExIDEgMCAwIDAtLjM1MS0uNzYxbC0yLjEwNi0xLjc5MiAyLjEwNi0xLjc5MWMuMjIzLS4xOS4zNS0uNDcuMzUtLjc2MlYzOS4yM2MwLS4yOTMtLjEyNy0uNTcyLS4zNS0uNzYybC0yLjEwNi0xLjc5MSAyLjEwNi0xLjc5MmMuMjIzLS4xOS4zNS0uNDcuMzUtLjc2MnYtMy4xMjdhMSAxIDAgMCAwLS42OTctLjk1M2MtNC4zOC0xLjM4OC02Ljg4Ni01LjY1My01Ljk1OC0xMC4xNDIuNjctMy4yNDYgMy4xNjYtNS44NDggNi4zNTktNi42MzEgMi43MTgtLjY2OCA1LjUwOS0uMDg1IDcuNjUyIDEuNTk2YTguNzQgOC43NCAwIDAgMSAzLjM2OSA2LjkxNyA4LjY3IDguNjcgMCAwIDEtNi4wMzEgOC4yNjJtOC4wMy04LjI2MmExMC43MyAxMC43MyAwIDAgMC00LjEzNC04LjQ5MWMtMi42MjgtMi4wNjItNi4wNC0yLjc4LTkuMzYzLTEuOTY0LTMuOTM3Ljk2NS03LjAxNSA0LjE3LTcuODQxIDguMTY4YTEwLjc1IDEwLjc1IDAgMCAwIDYuNjE1IDEyLjIwNnYxLjk2bC0yLjY0OCAyLjI1M2ExLjAwMiAxLjAwMiAwIDAgMCAwIDEuNTIzbDIuNjQ4IDIuMjU0di43NzhsLTIuNjQ4IDIuMjU0YTEgMSAwIDAgMCAwIDEuNTIzTDE2Ljg0IDQ2LjV2Mi40OTZjMCAuMjEzLjA2OS40Mi4xOTUuNTkybDIuOTM2IDRhMSAxIDAgMCAwIC44MDYuNDA4IDEgMSAwIDAgMCAuNjk5LS4yODZsMy4wNjQtM2ExIDEgMCAwIDAgLjMtLjcxNHYtMTguM2ExMC42NiAxMC42NiAwIDAgMCA2LjcyNC05LjkxMyIvPjwvZz48L3N2Zz4=" x="454" y="576" width="40" height="40"/>
+        <text class="t" x="504" y="590">KMS</text>
+        <text class="s" x="504" y="607">encryption keys</text>
+        <rect class="bx" x="652" y="560" width="175" height="72" rx="6"/>
+        <image href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHRpdGxlPkljb24tQXJjaGl0ZWN0dXJlLzQ4L0FyY2hfQVdTLVNlY3JldHMtTWFuYWdlcl80ODwvdGl0bGU+PGcgZmlsbD0ibm9uZSIgZmlsbC1ydWxlPSJldmVub2RkIj48cGF0aCBmaWxsPSIjZGQzNDRjIiBkPSJNMCAwaDY0djY0SDB6Ii8+PHBhdGggZmlsbD0iI2ZmZiIgZD0iTTMxLjI0IDM0LjY0YS43Ni43NiAwIDAgMCAxLjUyIDAgLjc2Ljc2IDAgMCAwLTEuNTIgMG0tMiAwQTIuNzYzIDIuNzYzIDAgMCAxIDMyIDMxLjg4YTIuNzY0IDIuNzY0IDAgMCAxIDIuNzYgMi43NkEyLjc2IDIuNzYgMCAwIDEgMzMgMzcuMjA1VjQwaC0ydi0yLjc5NWEyLjc2IDIuNzYgMCAwIDEtMS43Ni0yLjU2NU0zOSAzMUgyNXYxMGgxNHYtMmgtMnYtMmgydi0yaC0ydi0yaDJ6bS0xMi0yaDkuOTk5TDM3IDI1YzAtLjg2NS0uNTc2LTEuODU5LTEuNTQzLTIuNjU5LTEuMDE0LS44NC0yLjMwNS0xLjM0MS0zLjQ1NC0xLjM0MWgtLjAwMmMtMi4zODMgMC01IDIuMDkzLTUuMDAxIDR6bTEyLTQtLjAwMSA0SDQwYTEgMSAwIDAgMSAxIDF2MTJhMSAxIDAgMCAxLTEgMUgyNGExIDEgMCAwIDEtMS0xVjMwYTEgMSAwIDAgMSAxLTFoMXYtNGMuMDAxLTMuMDI5IDMuNDY5LTYgNy4wMDEtNmguMDAyYzEuNjI1IDAgMy4zNDguNjU3IDQuNzI5IDEuODAxQzM4LjE3NCAyMS45OTQgMzkuMDAxIDIzLjUyNSAzOSAyNU0xNS40ODkgNDMuOTVsMS42MjEtMS4xNzNBMTguMiAxOC4yIDAgMCAxIDEzLjY3NiAzM0gxNnYtMmgtMi4zMjJhMTguMiAxOC4yIDAgMCAxIDMuNDMyLTkuNzE5bC0xLjYyMS0xLjE3M0EyMC4xOCAyMC4xOCAwIDAgMCAxMS42NzggMzFIMTB2MmgxLjY3NmMuMTg1IDMuOTYyIDEuNDg0IDcuNzMxIDMuODEzIDEwLjk1bTI3LjI1OCAyLjk2OEExOC4yIDE4LjIgMCAwIDEgMzMgNTAuMzVWNDhoLTJ2Mi4zNWExOC4yIDE4LjIgMCAwIDEtOS43NS0zLjQzMmwtMS4xNzIgMS42MkEyMC4xNyAyMC4xNyAwIDAgMCAzMSA1Mi4zNVY1NGgydi0xLjY1YzMuOTUxLS4xOSA3LjcwOS0xLjQ4OCAxMC45MTktMy44MTJ6TTIxLjI1IDE3LjE0QTE4LjIgMTguMiAwIDAgMSAzMSAxMy43MDdWMTZoMnYtMi4yOTNhMTguMiAxOC4yIDAgMCAxIDkuNzQ3IDMuNDMzbDEuMTcyLTEuNjJBMjAuMTYgMjAuMTYgMCAwIDAgMzMgMTEuNzA3VjEwaC0ydjEuNzA3YTIwLjE3IDIwLjE3IDAgMCAwLTEwLjkyMiAzLjgxM3pNNTIuMzE5IDMxYTIwLjE3IDIwLjE3IDAgMCAwLTMuODEtMTAuODkybC0xLjYyMiAxLjE3M0ExOC4xNiAxOC4xNiAwIDAgMSA1MC4zMTkgMzFINDh2MmgyLjMyMmExOC4yIDE4LjIgMCAwIDEtMy40MzUgOS43NzdsMS42MjIgMS4xNzNjMi4zMjktMy4yMTkgMy42MjctNi45ODggMy44MTMtMTAuOTVINTR2LTJ6bS03LjI5My0xMC41ODQgNi4xNTktNi4xNi0xLjQxNC0xLjQxNC02LjE1OSA2LjE2ek0xOC45NzEgNDMuNjQybC02LjE2IDYuMTYgMS40MTQgMS40MTQgNi4xNjEtNi4xNnptNC4yNzUtMjEuODA5LTExLjY2LTExLjY2LTEuNDE0IDEuNDE0IDExLjY2IDExLjY2ek00My4zMDMgNDEuODlsMTAuNTIzIDEwLjUyMy0xLjQxNCAxLjQxNC0xMC41MjQtMTAuNTIzeiIvPjwvZz48L3N2Zz4=" x="664" y="576" width="40" height="40"/>
+        <text class="t" x="714" y="590">Secrets</text>
+        <text class="s" x="714" y="607">Secrets Manager</text>
+        <text class="s" x="714" y="622">OAuth secrets</text>
+        <rect class="bx" x="862" y="560" width="175" height="72" rx="6"/>
+        <image href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHRpdGxlPkljb24tQXJjaGl0ZWN0dXJlLzQ4L0FyY2hfQVdTLUNsb3VkVHJhaWxfNDg8L3RpdGxlPjxnIGZpbGw9Im5vbmUiIGZpbGwtcnVsZT0iZXZlbm9kZCI+PHBhdGggZmlsbD0iI2U3MTU3YiIgZD0iTTAgMGg2NHY2NEgweiIvPjxwYXRoIGZpbGw9IiNmZmYiIGQ9Ik0yMCA0MS45NzRoM1YzOS45NmgtM3ptMi00LjAyNmg2di0yLjAxM2gtNnptMjQuOTYtNy44ODRjLS4yMjYtMi4zMzUtMS40MDQtNC4wNS0zLjI0OC00LjY3Mi0xLjQ3NC0uNDk1LTMuMDgzLS4xOTMtNC4zNjEuNzQ0LS42ODUtMS40NDMtMS42NjMtMy4wMjQtMi42NDktNC4wMDMtMy4yMy0zLjIwOC02Ljk2MS0zLjk1OC0xMS4wODYtMi4yMjUtMy4zNTcgMS40MDQtNi4yMjcgNS41MDItNi41OCA5LjIzMi0xLjg0Ni42NTQtNC4wMjggMi4xMDEtNC45NjIgNC40MDFsMS44NTIuNzYxYy43MjctMS43OSAyLjY5NC0zLjAxMyA0LjMyMS0zLjQzMS40NDMtLjExNC43NTMtLjUxNi43NTMtLjk3NSAwLTMuMDc2IDIuNTY2LTYuOTUgNS4zODUtOC4xMyAzLjQwNC0xLjQzIDYuMjM4LS44NTcgOC45MTMgMS44IDEuMDYxIDEuMDUzIDIuMjM3IDMuMTk1IDIuNzYyIDQuNjU4YTEgMSAwIDAgMCAuNzkyLjY1NC45OC45OCAwIDAgMCAuOTQ3LS4zOWMuODE3LTEuMDk0IDIuMTMtMS41NyAzLjI3OS0xLjE4NiAxLjIyMi40MSAxLjkyMiAxLjcyMyAxLjkyMiAzLjYgMCAuNDkyLjM1NC45MTIuODM2Ljk5MiA0LjA5LjY4NSA2LjE2NCAyLjcyMSA2LjE2NCA2LjA1NCAwIDUuODMzLTUuMzg5IDYuMDM1LTYgNi4wMzlIMjlWNDZoMTdjMi43NjcgMCA4LTEuNjgzIDgtOC4wNTIgMC00LjEwNi0yLjQ5MS02Ljg4Mi03LjA0LTcuODg0TTIyIDQ2aDR2LTIuMDEzaC00em0zLTQuMDI2aDExVjM5Ljk2SDI1em0tMTQgMGg3VjM5Ljk2aC03em0yLTQuMDI2aDZ2LTIuMDEzaC02ek0xNCA0Nmg2di0yLjAxM2gtNnptLTQgMGgydi0yLjAxM2gtMnoiLz48L2c+PC9zdmc+" x="874" y="576" width="40" height="40"/>
+        <text class="t" x="924" y="590">CloudTrail</text>
+        <text class="s" x="924" y="607">audit log</text>
+        
+        <path class="e" d="M190 106H230" marker-start="url(#m7)" marker-end="url(#m7)"/>
+        <text class="s" x="105" y="162" text-anchor="middle">7 rows in, scores out</text>
+        <path class="e" d="M407 106H440" marker-end="url(#m7)"/>
+        <path class="e" d="M617 106H650" marker-end="url(#m7)"/>
+        <path class="e" d="M827 106H860" marker-end="url(#m7)"/>
+        <path class="e" d="M949 142V196H829" marker-start="url(#m7)" marker-end="url(#m7)"/>
+        <text class="lab" x="889" y="190" text-anchor="middle">state</text>
+        <path class="e" d="M190 296H230" marker-end="url(#m7)"/>
+        <text class="s" x="105" y="352" text-anchor="middle">push image</text>
+        <path class="e" d="M407 296H440" marker-end="url(#m7)"/><text class="lab" x="424" y="288" text-anchor="middle">image</text>
+        <path class="e" d="M617 296H650" marker-end="url(#m7)"/><text class="lab" x="634" y="288" text-anchor="middle">logs</text>
+        <path class="e" d="M529 350V334" marker-end="url(#m7)"/><text class="lab" x="535" y="346">data</text>
+        <path class="e" d="M827 296H1000V144" marker-end="url(#m7)"/><text class="lab" x="994" y="232" text-anchor="end">approved model</text>
+        <path class="e acc" d="M300 258V246H218V54H949V68" marker-end="url(#m7a)"/>
+        <text class="acc-t" x="600" y="48" text-anchor="middle">deploy approved image (CD)</text>
+        <path class="e" d="M1037 120H1052V476H1039" marker-end="url(#m7)"/>
+        <text class="lab" x="1046" y="404" text-anchor="end">logs, metrics</text>
+        <path class="e" d="M407 476H440" marker-end="url(#m7)"/><text class="lab" x="424" y="468" text-anchor="middle">starts</text>
+        <path class="e" d="M617 476H650" marker-end="url(#m7)"/><text class="lab" x="634" y="468" text-anchor="middle">breach</text>
+        <path class="e" d="M862 476H829" marker-end="url(#m7)"/><text class="lab" x="846" y="468" text-anchor="middle">alarm</text>
+        <g class="m" text-anchor="end"><text x="1046" y="64">SERVE</text><text x="1046" y="254">BUILD</text><text x="1046" y="434">WATCH</text><text x="1046" y="554">PROTECT</text></g>
+        <text class="m" x="1046" y="652" text-anchor="end">AWS account · ap-southeast-1 (Singapore) · private VPC</text>
+      </svg>
+      </div>
+      <figcaption>Serve, along the top: the hospital's integration engine sends rows over a site-to-site VPN to a private API Gateway, which checks the OAuth2 token and forwards through an internal load balancer to the scoring API on Fargate. The API keeps each stay's state in DynamoDB. For the course, a replay of hospital B plays the hospital, which makes the B evaluation a simulated silent-mode trial. Icons: AWS Architecture Icons.</figcaption>
+    </figure>
+
+    <h3>How a model gets from code to production</h3>
+    <p>Code and models are versioned separately. The Docker image is tagged with the git commit; the model is an MLflow version. The service is configured with one of each, so either can be rolled back on its own. Two human checks sit in the loop: before a model is approved and before it goes to production. Nothing retrains or redeploys automatically.</p>
+    <figure>
+      <div class="scroll">
+      <svg viewBox="0 0 960 296" role="img" aria-label="MLOps loop. A pull request runs CI checks; data is versioned with DVC; a training run is logged to MLflow and a candidate model is registered. The candidate is evaluated on the internal test and the hospital B replay, approved by the team with a model card, deployed to staging for smoke, parity and latency tests, then promoted to production. Monitoring alarms lead to a team review and a manual retrain.">
+        <defs>
+          <marker id="m8" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah" d="M0 0L10 5L0 10z"/></marker>
+          <marker id="m8a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah acc" d="M0 0L10 5L0 10z"/></marker>
+        </defs>
+        <rect class="bx" x="20" y="40" width="150" height="64" rx="6"/><text class="t" x="32" y="64">Pull request</text><text class="s" x="32" y="82">code or config</text>
+        <rect class="bx" x="210" y="40" width="150" height="64" rx="6"/><text class="t" x="222" y="64">CI checks</text><text class="s" x="222" y="82">tests, leakage, demo</text>
+        <rect class="bx" x="400" y="40" width="150" height="64" rx="6"/><text class="t" x="412" y="64">Data version</text><text class="s" x="412" y="82">DVC → S3</text>
+        <rect class="bx" x="590" y="40" width="150" height="64" rx="6"/><text class="t" x="602" y="64">Training run</text><text class="s" x="602" y="82">logged to MLflow</text>
+        <rect class="bx" x="780" y="40" width="160" height="64" rx="6"/><text class="t" x="792" y="64">Candidate model</text><text class="s" x="792" y="82">registered, frozen</text>
+        <path class="e" d="M170 72H208" marker-end="url(#m8)"/>
+        <path class="e" d="M360 72H398" marker-end="url(#m8)"/>
+        <path class="e" d="M550 72H588" marker-end="url(#m8)"/>
+        <path class="e" d="M740 72H778" marker-end="url(#m8)"/>
+        <path class="e" d="M860 104V198" marker-end="url(#m8)"/>
+        <g class="m"><text x="222" y="120">L04</text><text x="412" y="120">E02</text><text x="602" y="120">L01</text><text x="792" y="120">L01</text></g>
+
+        <rect class="bx" x="780" y="200" width="160" height="64" rx="6"/><text class="t" x="792" y="224">Evaluate</text><text class="s" x="792" y="242">internal test, B replay</text>
+        <rect class="bx acc" x="590" y="200" width="150" height="64" rx="6"/><text class="t" x="602" y="224">Approve</text><text class="s" x="602" y="242">team + model card</text>
+        <rect class="bx" x="400" y="200" width="150" height="64" rx="6"/><text class="t" x="412" y="224">Staging</text><text class="s" x="412" y="242">smoke, parity, latency</text>
+        <rect class="bx acc" x="210" y="200" width="150" height="64" rx="6"/><text class="t" x="222" y="224">Production</text><text class="s" x="222" y="242">alias moved, rollback</text>
+        <rect class="bx" x="20" y="200" width="150" height="64" rx="6"/><text class="t" x="32" y="224">Monitor</text><text class="s" x="32" y="242">fast + slow checks</text>
+        <path class="e" d="M780 232H742" marker-end="url(#m8)"/>
+        <path class="e acc" d="M590 232H552" marker-end="url(#m8a)"/>
+        <path class="e" d="M400 232H362" marker-end="url(#m8)"/>
+        <path class="e acc" d="M210 232H172" marker-end="url(#m8a)"/>
+        <g class="m"><text x="792" y="280">M01 · M04</text><text x="602" y="280">whole team</text><text x="412" y="280">L03 · L05</text><text x="222" y="280">L06</text><text x="32" y="280">M02</text></g>
+
+        <path class="e plan" d="M95 200V152H475V106" marker-end="url(#m8)"/>
+        <text class="lab" x="285" y="146" text-anchor="middle">alarm → team review → retrain by hand</text>
+      </svg>
+      </div>
+      <figcaption>Highlighted boxes are the two human gates. Staging runs the same API with a synthetic stay and checks three things: the service answers, its output matches batch replay exactly, and latency is within the agreed target. Rollback means pointing the production alias back to the previous model version, or redeploying the previous image.</figcaption>
+    </figure>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Need</th><th>AWS choice</th><th>Why, and the alternative</th><th>Task</th></tr></thead>
+        <tbody>
+          <tr><td>Hospital link</td><td>Site-to-Site VPN + private API Gateway</td><td>Only the hospital network reaches the API. API Gateway checks OAuth2 client-credential tokens with a JWT authorizer.</td><td>L02 · L06</td></tr>
+          <tr><td>Container images</td><td>ECR, scan on push</td><td>One image for training, the API and the monitoring jobs, tagged by git commit.</td><td>L03</td></tr>
+          <tr><td>CI and deploys</td><td>GitHub Actions + OIDC role</td><td>Tests on every PR; images pushed and deploys run with short-lived credentials only.</td><td>L04</td></tr>
+          <tr><td>Data and versions</td><td>S3 (KMS, versioning, public access blocked)</td><td>Holds Parquet, the DVC remote, MLflow artifacts and the prediction log. Confirm PhysioNet licence terms before uploading.</td><td>E02</td></tr>
+          <tr><td>Training</td><td>SageMaker training job</td><td>Runs the ECR image on demand; the full dataset fits in memory. A Fargate task is the cheaper alternative.</td><td>L01</td></tr>
+          <tr><td>Tracking and registry</td><td>SageMaker managed MLflow</td><td>Logs data and split hashes, settings, metrics and the bundle. The registry alias decides which model is live. Self-hosting on a small EC2 is the alternative.</td><td>L01</td></tr>
+          <tr><td>Scoring API</td><td>ECS Fargate behind an internal load balancer</td><td>Runs the FastAPI container unchanged, with no servers to manage. Lambda is cheaper for hourly bursts but adds cold starts; a SageMaker endpoint is more managed but costs more.</td><td>L02</td></tr>
+          <tr><td>State per stay</td><td>DynamoDB with expiry</td><td>Holds each stay's carry-forward state and last result; entries expire after discharge.</td><td>L02</td></tr>
+          <tr><td>Monitoring jobs</td><td>EventBridge Scheduler + Fargate tasks</td><td>Hourly: input drift (PSI) and alert rate. Weekly, once labels settle: utility, calibration, and gaps by sex and age band.</td><td>M02 · K06</td></tr>
+          <tr><td>Alarms</td><td>CloudWatch + SNS</td><td>Errors, latency, missing inputs and job breaches email the owning teammate.</td><td>M02 · L05</td></tr>
+          <tr><td>Secrets and audit</td><td>IAM, KMS, Secrets Manager, CloudTrail</td><td>Least-privilege role per component, encryption everywhere, OAuth client secrets, and a record of every action.</td><td>L06</td></tr>
+          <tr><td>Infrastructure</td><td>Terraform in <code>infra/</code></td><td>Everything is created and destroyed from code, so a demo can be torn down the same day. Add an AWS Budgets alert.</td><td>L06</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="two">
+      <div class="note">
+        <h3>Build order for leo's tasks</h3>
+        <ul>
+          <li>L01: MLflow locally first; log one real training run with data and split hashes.</li>
+          <li>L02: FastAPI with the request and response from section 5, the DynamoDB state, OAuth2, and the parity test.</li>
+          <li>L03: Docker image, non-root user, no data or model inside the image.</li>
+          <li>L04: GitHub Actions running the tests and the 23 s synthetic demo on every PR.</li>
+          <li>L05: latency at p50, p95 and p99 for 7-row and full-history requests.</li>
+          <li>L06: this design, plus <code>docker compose</code> (API, MLflow, a local DynamoDB, the B replay) as the working local demo.</li>
+        </ul>
+      </div>
+      <div class="note flag">
+        <h3>Before anything goes to AWS</h3>
+        <ul>
+          <li>Owner approval for every resource and upload.</li>
+          <li>No public endpoint; the API is reachable only over the VPN.</li>
+          <li>A budget alarm, and teardown after each demo.</li>
+          <li>Slides label the cloud part as a design unless it was actually run.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <span>Sources: <code>src/sepsis_warning/data.py</code>, <code>features.py</code>, <code>modeling.py</code>, <code>policy.py</code>, <code>cli.py</code>; PR #48 (<code>splits.py</code>, <code>baselines.py</code>); <code>TEAM-TASKS.md</code>.</span>
+    <span>Split counts use the full PhysioNet 2019 training set (seed 42). Calibration, validation and internal-test septic counts are approximate.</span>
+  </footer>
+</main>
+</body>
+</html>
