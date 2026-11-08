@@ -1,0 +1,161 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Modular, not-yet-deployed research scoring service infrastructure.
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: sepsis-research
+    AllowedPattern: "^[a-z][a-z0-9-]{1,19}$"
+    Description: Lowercase prefix used to name resources.
+  VpcCidr:
+    Type: String
+    Default: 10.40.0.0/16
+  PublicSubnetACidr:
+    Type: String
+    Default: 10.40.1.0/24
+  PublicSubnetBCidr:
+    Type: String
+    Default: 10.40.2.0/24
+  PrivateSubnetACidr:
+    Type: String
+    Default: 10.40.11.0/24
+  PrivateSubnetBCidr:
+    Type: String
+    Default: 10.40.12.0/24
+  AllowedSourceCidr:
+    Type: String
+    Default: 0.0.0.0/0
+    Description: IPv4 CIDR permitted to reach the public load balancer. Narrow before deployment.
+  ScoringImageUri:
+    Type: String
+    Default: ""
+    Description: Immutable image URI in the ECR repository created by this stack; required when the service is enabled.
+  DeployScoringService:
+    Type: String
+    Default: "false"
+    AllowedValues:
+      - "false"
+      - "true"
+    Description: Enable only after an image has been pushed to the ECR repository.
+  CertificateArn:
+    Type: String
+    Default: ""
+    Description: Optional ACM certificate ARN for HTTPS on the public load balancer.
+  ApiHostname:
+    Type: String
+    Default: ""
+    Description: DNS hostname covered by CertificateArn; create its DNS alias to the load balancer.
+  DesiredCount:
+    Type: Number
+    Default: 1
+    MinValue: 1
+    MaxValue: 4
+  AlertEmail:
+    Type: String
+    Default: ""
+    Description: Optional email recipient for CloudWatch alarm notifications.
+  MonthlyBudgetUsd:
+    Type: Number
+    Default: 0
+    MinValue: 0
+    Description: Optional AWS Budget threshold in USD; zero disables budget creation.
+  BudgetEmail:
+    Type: String
+    Default: ""
+    Description: Email recipient required to create the optional budget.
+
+Rules:
+  ScoringImageRequiredWhenEnabled:
+    RuleCondition: !Equals [!Ref DeployScoringService, "true"]
+    Assertions:
+      - Assert: !Not [!Equals [!Ref ScoringImageUri, ""]]
+        AssertDescription: ScoringImageUri is required when DeployScoringService is true.
+  CertificateRequiresHostname:
+    RuleCondition: !Not [!Equals [!Ref CertificateArn, ""]]
+    Assertions:
+      - Assert: !Not [!Equals [!Ref ApiHostname, ""]]
+        AssertDescription: ApiHostname must be set when CertificateArn is provided.
+
+Conditions:
+  CreateScoringService: !Equals [!Ref DeployScoringService, "true"]
+
+Resources:
+  Network:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: network.yaml
+      Parameters:
+        EnvironmentName: !Ref EnvironmentName
+        VpcCidr: !Ref VpcCidr
+        PublicSubnetACidr: !Ref PublicSubnetACidr
+        PublicSubnetBCidr: !Ref PublicSubnetBCidr
+        PrivateSubnetACidr: !Ref PrivateSubnetACidr
+        PrivateSubnetBCidr: !Ref PrivateSubnetBCidr
+      Tags:
+        - Key: Project
+          Value: sepsis-warning-research
+
+  Artifacts:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: artifacts.yaml
+      Parameters:
+        EnvironmentName: !Ref EnvironmentName
+      Tags:
+        - Key: Project
+          Value: sepsis-warning-research
+
+  Service:
+    Type: AWS::CloudFormation::Stack
+    Condition: CreateScoringService
+    Properties:
+      TemplateURL: service.yaml
+      Parameters:
+        EnvironmentName: !Ref EnvironmentName
+        VpcId: !GetAtt Network.Outputs.VpcId
+        PublicSubnetIds: !GetAtt Network.Outputs.PublicSubnetIds
+        PrivateSubnetIds: !GetAtt Network.Outputs.PrivateSubnetIds
+        AllowedSourceCidr: !Ref AllowedSourceCidr
+        ScoringImageUri: !Ref ScoringImageUri
+        CertificateArn: !Ref CertificateArn
+        ApiHostname: !Ref ApiHostname
+        DesiredCount: !Ref DesiredCount
+        ArtifactBucketName: !GetAtt Artifacts.Outputs.ArtifactBucketName
+        ArtifactBucketArn: !GetAtt Artifacts.Outputs.ArtifactBucketArn
+        ArtifactKeyArn: !GetAtt Artifacts.Outputs.ArtifactKeyArn
+        EcrRepositoryArn: !GetAtt Artifacts.Outputs.EcrRepositoryArn
+        StateTableName: !GetAtt Artifacts.Outputs.StateTableName
+        StateTableArn: !GetAtt Artifacts.Outputs.StateTableArn
+      Tags:
+        - Key: Project
+          Value: sepsis-warning-research
+
+  Monitoring:
+    Type: AWS::CloudFormation::Stack
+    Condition: CreateScoringService
+    Properties:
+      TemplateURL: monitoring.yaml
+      Parameters:
+        EnvironmentName: !Ref EnvironmentName
+        ClusterName: !GetAtt Service.Outputs.ClusterName
+        ServiceName: !GetAtt Service.Outputs.ServiceName
+        LoadBalancerFullName: !GetAtt Service.Outputs.LoadBalancerFullName
+        TargetGroupFullName: !GetAtt Service.Outputs.TargetGroupFullName
+        AlertEmail: !Ref AlertEmail
+        MonthlyBudgetUsd: !Ref MonthlyBudgetUsd
+        BudgetEmail: !Ref BudgetEmail
+      Tags:
+        - Key: Project
+          Value: sepsis-warning-research
+
+Outputs:
+  ApiBaseUrl:
+    Condition: CreateScoringService
+    Description: Public scoring API endpoint. Unauthenticated; synthetic use only.
+    Value: !GetAtt Service.Outputs.ApiBaseUrl
+  ArtifactBucketName:
+    Value: !GetAtt Artifacts.Outputs.ArtifactBucketName
+  EcrRepositoryUri:
+    Value: !GetAtt Artifacts.Outputs.EcrRepositoryUri
+  StateTableName:
+    Value: !GetAtt Artifacts.Outputs.StateTableName

@@ -615,7 +615,8 @@ footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--line)
   <!-- 6. AWS + MLOPS -->
   <section>
     <h2><span class="n">6</span>Deploying on AWS and running MLOps</h2>
-    <p>This is the design for tasks L01–L06, matching slide 18 of the deck. Nothing is provisioned yet; the project rules require owner review before anything is created or uploaded. Each box shows the AWS service it uses. The same Docker image runs training and serving, everything stays in private networking in the Singapore region, and no long-lived AWS keys exist.</p>
+    <p>This section shows the long-term direction for tasks L01–L06. Nothing is provisioned. The diagram is a target architecture, not the current implementation plan; the first CloudFormation phase is intentionally smaller.</p>
+    <p><strong>Initial CloudFormation scope:</strong> a public Application Load Balancer forwards to ECS Fargate tasks in private subnets, with encrypted artifact/state resources and basic alarms. It has no API Gateway, VPN, or authentication. Until authentication and other release gates are implemented, any deployed endpoint is for synthetic research traffic only.</p>
     <figure>
       <div class="scroll">
       <svg viewBox="0 0 1080 672" role="img" aria-label="AWS architecture with service icons. Serve: the hospital's integration engine reaches a private API Gateway over a site-to-site VPN; requests pass an internal load balancer to the scoring API on ECS Fargate, which keeps each stay's state in DynamoDB. Build: GitHub Actions pushes images to ECR; a SageMaker training job runs that image on data in S3 and logs to SageMaker managed MLflow, whose approved model the API loads; approved images are deployed to the API. Watch: EventBridge Scheduler starts monitoring jobs on Fargate; they and CloudWatch alarms notify the owner through SNS. Protect: IAM, KMS, Secrets Manager and CloudTrail apply to every service.">
@@ -783,7 +784,7 @@ footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--line)
       <table>
         <thead><tr><th>Need</th><th>AWS choice</th><th>Why, and the alternative</th><th>Task</th></tr></thead>
         <tbody>
-          <tr><td>Hospital link</td><td>Site-to-Site VPN + private API Gateway</td><td>Only the hospital network reaches the API. API Gateway checks OAuth2 client-credential tokens with a JWT authorizer.</td><td>L02 · L06</td></tr>
+          <tr><td>Initial API access</td><td>Internet-facing ALB + private ECS tasks</td><td>Public endpoint with no authentication in the first phase; optional ACM HTTPS and source-CIDR restriction. Synthetic research requests only. Add authentication before any non-synthetic use.</td><td>L02 · L06</td></tr>
           <tr><td>Container images</td><td>ECR, scan on push</td><td>One image for training, the API and the monitoring jobs, tagged by git commit.</td><td>L03</td></tr>
           <tr><td>CI and deploys</td><td>GitHub Actions + OIDC role</td><td>Tests on every PR; images pushed and deploys run with short-lived credentials only.</td><td>L04</td></tr>
           <tr><td>Data and versions</td><td>S3 (KMS, versioning, public access blocked)</td><td>Holds Parquet, the DVC remote, MLflow artifacts and the prediction log. Confirm PhysioNet licence terms before uploading.</td><td>E02</td></tr>
@@ -794,7 +795,7 @@ footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--line)
           <tr><td>Monitoring jobs</td><td>EventBridge Scheduler + Fargate tasks</td><td>Hourly: input drift (PSI) and alert rate. Weekly, once labels settle: utility, calibration, and gaps by sex and age band.</td><td>M02 · K06</td></tr>
           <tr><td>Alarms</td><td>CloudWatch + SNS</td><td>Errors, latency, missing inputs and job breaches email the owning teammate.</td><td>M02 · L05</td></tr>
           <tr><td>Secrets and audit</td><td>IAM, KMS, Secrets Manager, CloudTrail</td><td>Least-privilege role per component, encryption everywhere, OAuth client secrets, and a record of every action.</td><td>L06</td></tr>
-          <tr><td>Infrastructure</td><td>Terraform in <code>infra/</code></td><td>Everything is created and destroyed from code, so a demo can be torn down the same day. Add an AWS Budgets alert.</td><td>L06</td></tr>
+          <tr><td>Infrastructure</td><td>Nested CloudFormation stacks in <code>infra/cloudformation/</code></td><td>Network, artifacts, service, and monitoring are separate templates. Lint locally; do not package, upload, or deploy before approval.</td><td>L06</td></tr>
         </tbody>
       </table>
     </div>
@@ -808,15 +809,15 @@ footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--line)
           <li>L03: Docker image, non-root user, no data or model inside the image.</li>
           <li>L04: GitHub Actions running the tests and the 23 s synthetic demo on every PR.</li>
           <li>L05: latency at p50, p95 and p99 for 7-row and full-history requests.</li>
-          <li>L06: this design, plus <code>docker compose</code> (API, MLflow, a local DynamoDB, the B replay) as the working local demo.</li>
+          <li>L06: modular CloudFormation for the first public-ALB/private-Fargate phase; lint only until deployment is approved.</li>
         </ul>
       </div>
       <div class="note flag">
         <h3>Before anything goes to AWS</h3>
         <ul>
           <li>Owner approval for every resource and upload.</li>
-          <li>No public endpoint; the API is reachable only over the VPN.</li>
-          <li>A budget alarm, and teardown after each demo.</li>
+          <li>The initial API is public and unauthenticated: synthetic requests only; add authentication before non-synthetic use.</li>
+          <li>Use HTTPS and a narrow source CIDR before any deployment; configure a budget alert and review retained resources before teardown.</li>
           <li>Slides label the cloud part as a design unless it was actually run.</li>
         </ul>
       </div>

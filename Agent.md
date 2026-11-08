@@ -36,7 +36,7 @@
 
 - Do not commit secrets, credentials, tokens, or API keys.
 - Do not modify generated or vendored files by hand.
-- Do not change CI/CD configuration without owner review. If approved GitHub Actions set up Python or another language, use `lmigtech/internal-actions/actions/setup-*` first.
+- Do not change CI/CD configuration without owner review. If approved GitHub Actions set up Python or another language.
 - Treat raw patient files as read-only. Never commit or upload patient data, model files, patient-level predictions, replay reports, or notebook trajectory outputs. Keep data under ignored `data/` and experiment outputs under ignored `artifacts/`; Git ignores do not prevent cloud synchronization.
 - Do not overwrite existing datasets, Parquet files, experiment outputs, or split evidence. Choose a new output destination rather than deleting existing work.
 - Get approval before adding dependencies, changing storage/data contracts, split strategies, calibration/alert-policy design, or introducing deployment infrastructure. Task assignments do not approve unspecified implementation choices.

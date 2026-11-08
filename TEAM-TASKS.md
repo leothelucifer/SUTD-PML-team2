@@ -79,7 +79,7 @@
 | L03 | Docker image | Not started | - | - | - |
 | L04 | CI/CD with GitHub Actions | Not started | - | - | - |
 | L05 | Latency tests | Not started | - | - | - |
-| L06 | AWS deployment design | Not started | - | - | - |
+| L06 | AWS deployment design | In progress | - | 2026-11-08 | Modular CloudFormation prototype in `infra/cloudformation/`; static validation only, no AWS deployment. Initial scope: public ALB, private Fargate tasks, no API Gateway/auth. |
 | L07 | Prepare slides 13, 14 | Not started | - | - | - |
 
 ### Person 6 - Mashie
@@ -157,7 +157,7 @@ Record verification evidence in the status tables above.
 | L03 | Package the approved service as a reproducible Docker image. | Build and smoke-test with synthetic requests as a non-root user. Keep patient data, credentials, and local models out of image layers; document private runtime artifact loading and resource configuration. |
 | L04 | Add reviewed GitHub Actions for focused tests and approved build checks; keep deployment separate until authorized. | Workflows run on synthetic fixtures, use least-privilege permissions, and never expose patient data or secrets. Use internal language setup actions first. Verify the configured checks actually execute; do not add unattended clinical deployment. |
 | L05 | Measure end-to-end service latency for agreed request sizes and concurrency. | Report p50/p95/p99, throughput, failures, cold/warm behavior, hardware, and workload. Include feature computation and artifact loading where applicable. Agree a numeric target before treating it as a pass/fail gate. |
-| L06 | Produce an AWS deployment design, not an unapproved deployment. | Document service choice, private networking, access controls, encryption, artifact/data locations, monitoring, rollback, cost, and educational-use limits. Obtain owner review before provisioning or uploading anything. |
+| L06 | Produce a modular, statically validated CloudFormation design; do not deploy it before project readiness and owner approval. | Separate networking, artifact/state, service, and monitoring templates. Document the public unauthenticated research-demo boundary, private task networking, encryption, data locations, monitoring, rollback, cost, and validation limits. Obtain owner review before provisioning or uploading anything. |
 | L07 | Prepare slides 13, 14 covering tracking, serving, and deployment design. | Clearly separate working local capabilities from proposed cloud architecture. Include reproducibility and latency evidence without credentials or patient data. Obtain team review. |
 
 ### Mashie - replay, monitoring, explanations, and reporting
