@@ -54,7 +54,7 @@ early detection, 190 / 244 = 0.78). Stays positive from their first row are left
 out because their onset is unknown. The stays not warned usually reached only
 one sign, even though 83% had a white-cell result.
 
-## Early in the stay and by group
+## By time in the ICU
 
 | ICU hour | Stays | Precision | Recall | Specificity | Share of hours flagged |
 |---|---|---|---|---|---|
@@ -65,17 +65,3 @@ one sign, even though 83% had a white-cell result.
 
 Recall is lowest in the first 6 hours, when few readings exist. Precision is
 highest after hour 48, where septic-labelled hours are far more common.
-
-| Group | Stays | Septic stays | Precision | Recall | Specificity |
-|---|---|---|---|---|---|
-| Age under 45 | 432 | 41 | 0.032 | 0.551 | 0.583 |
-| Age 45-64 | 1,134 | 87 | 0.031 | 0.563 | 0.659 |
-| Age 65-79 | 1,054 | 98 | 0.036 | 0.527 | 0.667 |
-| Age 80+ | 431 | 42 | 0.035 | 0.482 | 0.681 |
-| Female | 1,299 | 119 | 0.036 | 0.588 | 0.640 |
-| Male | 1,752 | 149 | 0.031 | 0.493 | 0.666 |
-
-Recall is lower for men (0.49 against 0.59) and for patients aged 80 or older.
-These are hourly rates without uncertainty intervals and rest on 41 to 149 septic
-stays per group, so treat them as questions for the bias audit, not conclusions.
-"Age" is capped in the source data: anyone 90 or older is recorded as 100.

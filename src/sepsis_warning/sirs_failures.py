@@ -10,7 +10,6 @@ import pandas as pd
 
 from .baselines import BASELINE_THRESHOLD, SIRS_ALERT_COUNT, SIRS_COLUMNS, SIRS_CRITERIA, baseline_table, sirs_criteria
 from .data import Patient
-from .hospital_comparison import AGE_BINS, AGE_LABELS
 from .policy import apply_policy
 
 MIN_CELL = 10
@@ -33,8 +32,6 @@ def hourly_table(patients: list[Patient]) -> pd.DataFrame:
         met["stay"] = patient.patient_id
         met["hour"] = frame["ICULOS"].to_numpy()
         met["label"] = frame["SepsisLabel"].to_numpy(dtype=int)
-        met["age"] = frame["Age"].to_numpy()
-        met["gender"] = frame["Gender"].to_numpy()
         chunks.append(met)
     table = pd.concat(chunks, ignore_index=True)
     table["count"] = table[NAMES].sum(axis=1)
@@ -89,22 +86,6 @@ def by_hour_of_stay(hours: pd.DataFrame) -> pd.DataFrame:
     return _hide_small(pd.DataFrame(rows))
 
 
-def by_group(hours: pd.DataFrame) -> pd.DataFrame:
-    """Performance by age band and recorded gender (blank age or gender is left out)."""
-    groups = {}
-    ages = pd.cut(hours["age"], AGE_BINS, labels=AGE_LABELS, right=False)
-    for label in AGE_LABELS:
-        groups[("age", label)] = hours[ages == label]
-    for code, label in [(0, "female"), (1, "male")]:
-        groups[("gender", label)] = hours[hours["gender"] == code]
-    rows = []
-    for (kind, label), group in groups.items():
-        septic_stays = group.loc[group["label"] == 1, "stay"].nunique()
-        rows.append({"group": kind, "value": label, "stays": group["stay"].nunique(),
-                     "septic_stays": septic_stays, "hours": len(group), **_rates(group)})
-    return _hide_small(pd.DataFrame(rows), "septic_stays")
-
-
 def missed_stays(patients: list[Patient], cooldown: int = 6) -> pd.DataFrame:
     """Septic stays warned in the 12 h before onset vs not warned, same rule as early detection."""
     scored = apply_policy(baseline_table(patients, "sirs"), BASELINE_THRESHOLD, cooldown)
@@ -154,6 +135,5 @@ def failure_tables(patients: list[Patient], cooldown: int = 6) -> dict[str, pd.D
         "false_alarm_causes": false_alarm_causes(hours),
         "caught_vs_missed_hours": caught_vs_missed(hours),
         "by_hour_of_stay": by_hour_of_stay(hours),
-        "by_group": by_group(hours),
         "warned_vs_not_warned_stays": missed_stays(patients, cooldown),
     }

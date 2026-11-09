@@ -92,7 +92,12 @@ python scripts/download_data.py --limit 0 --output data/physionet
 python -m sepsis_warning prepare --data data/physionet --output data/physionet/combined.parquet
 python -m sepsis_warning split --data data/physionet/combined.parquet --output data/physionet/splits.csv
 python -m sepsis_warning baseline --data data/physionet/combined.parquet --output artifacts/baseline
-python -m sepsis_warning train --data data/physionet/combined.parquet --output artifacts/real
+```
+
+To train the models, which read the `.psv` folder:
+
+```bash
+python -m sepsis_warning train --data data/physionet --output artifacts/real
 ```
 
 Check `split` against the stay counts in [Patient split](#patient-split). For the
@@ -128,11 +133,10 @@ python -m sepsis_warning baseline --data data/physionet/combined.parquet --outpu
 
 Writes `artifacts/baseline/baseline_metrics.csv`: one row per baseline per
 split (`validation`, `internal_test`, `external_test` = hospital B). With a
-Parquet `--data`, `train` and `baseline` use the saved `splits.csv` next to it
-(or `--splits <path>`), so everyone scores the same stays and model rows can be
-added to the same table later. A folder of `.psv` files as `--data` still works:
-it reads every record and re-splits with `--seed`, which gives the same split
-but takes longer.
+Parquet `--data`, `baseline` uses the saved `splits.csv` next to it (or
+`--splits <path>`). A folder of `.psv` files as `--data` still works: it reads
+every record and re-splits with `--seed`, which gives the same stays as `train`,
+so model rows can be added to the same table later.
 
 | Baseline | Rule |
 |---|---|

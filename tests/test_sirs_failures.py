@@ -8,7 +8,7 @@ import pandas as pd
 from sepsis_warning.baselines import SIRS_COLUMNS
 from sepsis_warning.data import Patient
 from sepsis_warning.sirs_failures import (
-    MIN_CELL, by_group, by_hour_of_stay, caught_vs_missed, failure_tables, false_alarm_causes, hourly_table, missed_stays,
+    MIN_CELL, by_hour_of_stay, caught_vs_missed, failure_tables, false_alarm_causes, hourly_table, missed_stays,
 )
 
 
@@ -51,8 +51,7 @@ class Failures(unittest.TestCase):
     def test_small_groups_are_blanked(self):
         few = [stay(f"s{i}", [100.0] * 8, resp=[25.0] * 8) for i in range(MIN_CELL - 1)]
         hours = hourly_table(few)
-        self.assertTrue(by_hour_of_stay(hours)["recall"].isna().all())
-        self.assertTrue(by_group(hours)["precision"].isna().all())
+        self.assertTrue(by_hour_of_stay(hours)["alert_rate"].isna().all())
 
     def test_large_enough_groups_show_rates(self):
         many = [stay(f"s{i}", [100.0] * 8, resp=[25.0] * 8) for i in range(MIN_CELL)]
