@@ -24,6 +24,7 @@ from .monitoring import REPLAY_SPLITS, MonitoringConfig, replay_monitoring, setu
 from .policy import apply_policy, summarize, tune_threshold
 from .prepare import prepare_parquet, write_summary
 from .report import write_report
+from .sirs_failures import failure_tables
 from .splits import _sha256, load_split_patients, write_splits
 
 
@@ -194,6 +195,16 @@ def run_baselines(args):
     return result
 
 
+def run_sirs_failures(args):
+    """Aggregate SIRS failure patterns. Validation split only, by design."""
+    cohorts, _ = load_cohorts(args)
+    args.output.mkdir(parents=True, exist_ok=True)
+    for name, table in failure_tables(cohorts["validation"], args.cooldown).items():
+        table.to_csv(args.output / f"{name}.csv", index=False)
+        print(f"\n{name}\n{table.round(3).to_string(index=False)}", flush=True)
+    print(f"\nTables: {args.output.resolve()}", flush=True)
+
+
 DATA_HELP = "combined.parquet (uses the saved split), or a folder of training_setA/B (re-splits with --seed)"
 SPLITS_HELP = "Saved split for a Parquet --data; defaults to splits.csv next to it"
 
@@ -243,6 +254,14 @@ def main():
     baseline.add_argument("--seed", type=int, default=42)
     baseline.add_argument("--cooldown", type=int, default=6)
     baseline.add_argument("--figures", type=Path, default=Path("reports/figures"))
+    failures = sub.add_parser(
+        "sirs-failures", help="Aggregate patterns of where SIRS fails (validation split only)"
+    )
+    failures.add_argument("--data", type=Path, default=Path("data/physionet/combined.parquet"), help=DATA_HELP)
+    failures.add_argument("--splits", type=Path, help=SPLITS_HELP)
+    failures.add_argument("--output", type=Path, default=Path("artifacts/baseline/failures"))
+    failures.add_argument("--seed", type=int, default=42)
+    failures.add_argument("--cooldown", type=int, default=6)
     split = sub.add_parser("split", help="Save the patient split once as splits.csv")
     split.add_argument("--data", type=Path, default=Path("data/physionet/combined.parquet"))
     split.add_argument("--output", type=Path, default=Path("data/physionet/splits.csv"))
@@ -308,6 +327,10 @@ def main():
             if args.cooldown < 0:
                 raise ValueError("cooldown must be nonnegative")
             run_baselines(args)
+        elif args.command == "sirs-failures":
+            if args.cooldown < 0:
+                raise ValueError("cooldown must be nonnegative")
+            run_sirs_failures(args)
         elif args.command == "split":
             if not args.data.exists():
                 raise ValueError(f"{args.data} not found; run `prepare` first")
