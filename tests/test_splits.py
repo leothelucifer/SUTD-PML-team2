@@ -44,6 +44,7 @@ class Splits(unittest.TestCase):
         summary = write_splits(self.parquet, first, 42)
         write_splits(self.parquet, second, 42)
         self.assertEqual(first.read_bytes(), second.read_bytes())
+        self.assertNotIn(b"\r", first.read_bytes(), "line endings must not depend on the operating system")
         # Same assignment as splitting the .psv-loaded patients directly.
         self.assertEqual(load_splits(first), assignment(split_patients(self.patients, 42)))
         saved = json.loads((self.root / "s1.csv.summary.json").read_text())

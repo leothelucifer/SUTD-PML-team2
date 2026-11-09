@@ -37,7 +37,8 @@ def split_table(parquet: Path, seed: int) -> pd.DataFrame:
 def write_splits(parquet: Path, output: Path, seed: int) -> dict:
     table = split_table(parquet, seed)
     output.parent.mkdir(parents=True, exist_ok=True)
-    table.to_csv(output, index=False)
+    # Fixed line endings: the CSV's hash must match on Windows, macOS and Linux.
+    table.to_csv(output, index=False, lineterminator="\n")
     counts = table.groupby("split", observed=True).agg(stays=("patient_id", "size"), septic=("septic", "sum"))
     summary = {
         "seed": seed,
