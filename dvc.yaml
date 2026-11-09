@@ -1,0 +1,23 @@
+# E02: records which raw files, code and outputs belong together.
+# Patient data is never committed. Only this file and dvc.lock (sizes and hashes)
+# go in Git. Restore steps are in docs/data-versioning.md.
+stages:
+  prepare:
+    cmd: python -m sepsis_warning prepare --data data/physionet --output data/physionet/combined.parquet
+    deps:
+      - data/physionet/training_setA
+      - data/physionet/training_setB
+      - src/sepsis_warning/prepare.py
+      - src/sepsis_warning/data.py
+    outs:
+      - data/physionet/combined.parquet
+      - data/physionet/combined.parquet.summary.json
+  split:
+    cmd: python -m sepsis_warning split --data data/physionet/combined.parquet --output data/physionet/splits.csv
+    deps:
+      - data/physionet/combined.parquet
+      - src/sepsis_warning/splits.py
+      - src/sepsis_warning/data.py
+    outs:
+      - data/physionet/splits.csv
+      - data/physionet/splits.csv.summary.json
