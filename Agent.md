@@ -10,7 +10,7 @@
 - Use `uv pip install --python .venv/bin/python -e .` for editable installation when uv is available. Dependencies are declared in [pyproject.toml](pyproject.toml); no dependency lockfile exists.
 - Downloaded data belongs under project-root `data/physionet/`, not a hardcoded personal path or an external project's dataset. Run data commands from the project root and use their documented `--data`/`--output` arguments.
 - `python -m sepsis_warning prepare` creates combined Parquet, but training and replay still read per-record PSV files. The [notebook](src/notebooks/data_check.ipynb) reads Parquet and locates the checkout before importing the local package.
-- The current stack is NumPy, pandas, SciPy, scikit-learn, Joblib, PyArrow, Matplotlib, and unittest. DVC, Pandera, LightGBM, MLflow, FastAPI, Docker, and deployment work in the task tracker are planned, not installed or implemented by default.
+- The current stack is NumPy, pandas, SciPy, scikit-learn, Joblib, PyArrow, Matplotlib, and unittest. MLflow (`tracking` extra) and FastAPI/uvicorn (`serve` extra) are optional installs; `httpx` (`test` extra) runs the API tests. DVC, Pandera, LightGBM, Docker, and deployment work in the task tracker are planned, not installed or implemented by default.
 
 ## Definition of done
 
@@ -20,7 +20,7 @@
 - For feature changes, verify prefix invariance, future-measurement corruption, record-local imputation, and exclusion of labels/metadata. For policy changes, verify cooldown resets, hourly decision versus notification accounting, utility, and censored lead-time handling.
 - Verify data preparation preserves original values, missingness, labels, source provenance, and record/hour counts. Never use a synthetic fixture to claim real-cohort performance.
 - Verify notebook execution with the selected kernel, not just terminal Python. Clear saved outputs before sharing or committing.
-- No lint, build, or CI quality gate is currently configured. Do not invent commands or claim these checks passed.
+- GitHub Actions ([.github/workflows/tests.yml](.github/workflows/tests.yml)) runs the unit tests, the causal-feature script and the synthetic demo on pull requests. There is no lint step. Do not claim checks passed without looking at the run.
 
 ## Conventions
 

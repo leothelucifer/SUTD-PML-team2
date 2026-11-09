@@ -264,6 +264,38 @@ per-window CSVs, `monitoring_overview.png`). Fast (unlabeled) alarms are a
 prompt to investigate, not proof of performance loss. The synthetic smoke run
 and the meaning of every check are in [docs/monitoring-plan.md](docs/monitoring-plan.md).
 
+## Run tracking and the research API (L01, L02)
+
+Every `train` and `demo` run writes `run_metadata.json`: seed, feature-contract
+hash, git commit and package versions. Pass the split summary so the split's
+seed and hashes are logged too; a different seed is refused.
+
+```bash
+python -m sepsis_warning train --data data/physionet --output artifacts/run-001 \
+  --splits-summary data/physionet/splits.csv.summary.json \
+  --mlflow-uri file:artifacts/mlruns          # optional: pip install -e ".[tracking]"
+```
+
+MLflow gets only aggregate files (`config.json`, `metrics.json`,
+`validation_models.csv`, `run_metadata.json`). Predictions, manifests, replay
+reports and `model.joblib` stay local. Only local stores are accepted. Add
+`--dvc-lock dvc.lock` once DVC is merged.
+
+```bash
+pip install -e ".[serve]"
+python -m sepsis_warning serve --model artifacts/demo/model.joblib   # 127.0.0.1:8000
+curl -s localhost:8000/health
+curl -s localhost:8000/score -H 'content-type: application/json' \
+  -d '{"patient_id": "demo-1", "hours": [{"ICULOS": 1, "HR": 92}, {"ICULOS": 2, "HR": 101, "Temp": 38.4}]}'
+```
+
+Each request sends one stay's full history from its first ICU hour; the server
+keeps no state between requests. Missing fields mean "not measured". Labels,
+unit codes and hospital IDs are rejected (422). A bundle that does not fit the
+current feature code is refused at start-up or with 409. There is no
+authentication, so the command refuses non-local hosts unless
+`--allow-non-local-host` is passed. Scores are research output, not clinical advice.
+
 ## Files and artifacts
 
 ```text
