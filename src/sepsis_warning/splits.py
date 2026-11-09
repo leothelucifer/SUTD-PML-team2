@@ -57,6 +57,33 @@ def load_splits(path: Path) -> dict[str, str]:
     return dict(zip(table["hospital"] + ":" + table["patient_id"], table["split"]))
 
 
+def load_split_patients(parquet: Path, splits: Path) -> dict[str, list[Patient]]:
+    """Rebuild the saved cohorts from combined.parquet and splits.csv.
+
+    Nothing is re-split or re-read from the .psv files. Every stay must appear
+    in both files, so a Parquet and a splits.csv that don't belong together fail.
+    """
+    assignment = load_splits(splits)
+    unknown = set(assignment.values()) - set(SPLIT_ORDER)
+    if unknown:
+        raise ValueError(f"{splits}: unknown split names {sorted(unknown)}")
+    frame = pd.read_parquet(parquet).astype({"ICULOS": int, "SepsisLabel": int})
+    cohorts: dict[str, list[Patient]] = {name: [] for name in SPLIT_ORDER}
+    seen = set()
+    for (hospital, pid), stay in frame.groupby(["hospital", "patient_id"], sort=True):
+        key = f"{hospital}:{pid}"
+        if key not in assignment:
+            raise ValueError(f"{key} is in {parquet} but not in {splits}")
+        seen.add(key)
+        cohorts[assignment[key]].append(
+            Patient(key, hospital, stay.drop(columns=["hospital", "patient_id"]).reset_index(drop=True))
+        )
+    missing = set(assignment) - seen
+    if missing:
+        raise ValueError(f"{len(missing)} stays in {splits} are not in {parquet}, e.g. {sorted(missing)[0]}")
+    return cohorts
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with open(path, "rb") as handle:

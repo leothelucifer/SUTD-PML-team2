@@ -97,13 +97,16 @@ Raw data and generated artifacts are excluded by `.gitignore`.
 ## SIRS baseline (the score every model must beat)
 
 ```bash
-python -m sepsis_warning baseline --data data/physionet --output artifacts/baseline
+python -m sepsis_warning baseline --data data/physionet/combined.parquet --output artifacts/baseline
 ```
 
 Writes `artifacts/baseline/baseline_metrics.csv`: one row per baseline per
-split (`validation`, `internal_test`, `external_test` = hospital B). It uses the
-same patient split (`--seed 42`) as `train`, so model rows can be added to the
-same table later.
+split (`validation`, `internal_test`, `external_test` = hospital B). With a
+Parquet `--data`, `train` and `baseline` use the saved `splits.csv` next to it
+(or `--splits <path>`), so everyone scores the same stays and model rows can be
+added to the same table later. A folder of `.psv` files as `--data` still works:
+it reads every record and re-splits with `--seed`, which gives the same split
+but takes longer.
 
 | Baseline | Rule |
 |---|---|

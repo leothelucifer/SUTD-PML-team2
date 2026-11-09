@@ -24,33 +24,53 @@ from .monitoring import REPLAY_SPLITS, MonitoringConfig, replay_monitoring, setu
 from .policy import apply_policy, summarize, tune_threshold
 from .prepare import prepare_parquet, write_summary
 from .report import write_report
-from .splits import write_splits
+from .splits import _sha256, load_split_patients, write_splits
 
 
 def write_json(path, value):
     Path(path).write_text(json.dumps(value, indent=2, allow_nan=False) + "\n")
 
 
+def load_cohorts(args):
+    """Return (cohorts, synthetic) for `train` and `baseline`.
+
+    A Parquet file as --data uses the saved splits.csv. A folder of .psv files
+    still reads every record and re-splits with --seed.
+    """
+    if args.data.is_file():
+        splits_path = args.splits or args.data.with_name("splits.csv")
+        if not splits_path.exists():
+            raise ValueError(f"{splits_path} not found; run `split` first")
+        cohorts = load_split_patients(args.data, splits_path)
+        ids = [p.patient_id for cohort in cohorts.values() for p in cohort]
+        flagged = sum("synthetic_" in patient_id for patient_id in ids)
+        if flagged not in (0, len(ids)):
+            raise ValueError(f"{args.data} mixes synthetic and real records")
+        synthetic = bool(flagged)
+    else:
+        synthetic = (args.data / "SYNTHETIC.json").exists()
+        patients = load_patients(args.data)
+        if not synthetic and any("synthetic_" in p.patient_id for p in patients):
+            raise ValueError("Synthetic filenames found without SYNTHETIC.json marker")
+        cohorts = split_patients(patients, args.seed)
+    print("Data mode:", "SYNTHETIC SOFTWARE FIXTURE" if synthetic else "PhysioNet records", flush=True)
+    return cohorts, synthetic
+
+
 def run_experiment(args):
     if args.output.exists() and any(args.output.iterdir()):
         raise ValueError(f"{args.output} is not empty; use a new output directory")
     args.output.mkdir(parents=True, exist_ok=True)
-    synthetic = (args.data / "SYNTHETIC.json").exists()
-    print("Data mode:", "SYNTHETIC SOFTWARE FIXTURE" if synthetic else "PhysioNet records", flush=True)
-    patients = load_patients(args.data)
-    if not synthetic and any("synthetic_" in p.patient_id for p in patients):
-        raise ValueError("Synthetic filenames found without SYNTHETIC.json marker")
-    splits = split_patients(patients, args.seed)
+    splits, synthetic = load_cohorts(args)
     manifest = []
     for name, cohort in splits.items():
         print(f"{name}: {len(cohort)} patients", flush=True)
         for patient in cohort:
-            path = args.data / f"training_set{patient.hospital}" / f"{patient.patient_id.split(':', 1)[1]}.psv"
-            manifest.append({
-                "patient_id": patient.patient_id, "hospital": patient.hospital,
-                "split": name, "septic": patient.septic,
-                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
-            })
+            row = {"patient_id": patient.patient_id, "hospital": patient.hospital, "split": name, "septic": patient.septic}
+            if args.data.is_dir():
+                path = args.data / f"training_set{patient.hospital}" / f"{patient.patient_id.split(':', 1)[1]}.psv"
+                row["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+            manifest.append(row)
     pd.DataFrame(manifest).to_csv(args.output / "split_manifest.csv", index=False)
     # Only source training/calibration/validation features are built before
     # selecting the model and threshold. Test outcomes never guide selection.
@@ -99,6 +119,7 @@ def run_experiment(args):
     config = {
         "seed": args.seed, "window_hours": args.window, "budget": args.budget,
         "cooldown_hours": args.cooldown, "data_root": str(args.data.resolve()),
+        "data_file_sha256": _sha256(args.data) if args.data.is_file() else None,
         "python": platform.python_version(), "platform": platform.platform(),
         "packages": {p: importlib.metadata.version(p) for p in ["numpy", "pandas", "scipy", "scikit-learn", "joblib"]},
         "synthetic": synthetic, "feature_columns": columns,
@@ -133,13 +154,8 @@ SWEEP_COLUMNS = [
 
 def run_baselines(args):
     """Score SIRS and always-no on validation, internal test and hospital B."""
-    synthetic = (args.data / "SYNTHETIC.json").exists()
-    print("Data mode:", "SYNTHETIC SOFTWARE FIXTURE" if synthetic else "PhysioNet records", flush=True)
-    patients = load_patients(args.data)
-    if not synthetic and any("synthetic_" in p.patient_id for p in patients):
-        raise ValueError("Synthetic filenames found without SYNTHETIC.json marker")
-    # Same seed and split function as `train`, so rows line up with the models.
-    splits = split_patients(patients, args.seed)
+    # Same loader as `train`, so rows line up with the models.
+    splits, _ = load_cohorts(args)
     rows = []
     for split in BASELINE_SPLITS:
         for name in BASELINES:
@@ -170,7 +186,7 @@ def run_baselines(args):
     args.figures.mkdir(parents=True, exist_ok=True)
     plot_sirs_threshold_tradeoff(
         sweep, float(validation["label"].mean()), 0.2, args.figures / "08_sirs_threshold_tradeoff.png",
-        "python -m sepsis_warning baseline --data data/physionet --output artifacts/baseline",
+        f"python -m sepsis_warning baseline --data {args.data.as_posix()} --output artifacts/baseline",
     )
     print(sweep[["alert_at_criteria", "hourly_precision", "hourly_recall", "hourly_f1",
                  "hourly_specificity", "false_alert_events_per_nonseptic_patient_day"]].round(3).to_string(index=False))
@@ -178,14 +194,21 @@ def run_baselines(args):
     return result
 
 
+DATA_HELP = "combined.parquet (uses the saved split), or a folder of training_setA/B (re-splits with --seed)"
+SPLITS_HELP = "Saved split for a Parquet --data; defaults to splits.csv next to it"
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
     demo = sub.add_parser("demo", help="Generate an explicitly synthetic fixture and run it")
     demo.add_argument("--data", type=Path, default=Path("data/synthetic"))
-    for command in [demo, sub.add_parser("train", help="Run on downloaded training_setA/B")]:
+    for command in [demo, sub.add_parser("train", help="Run on combined.parquet + splits.csv, or a folder of training_setA/B")]:
         if command is not demo:
-            command.add_argument("--data", type=Path, required=True)
+            command.add_argument("--data", type=Path, required=True, help=DATA_HELP)
+            command.add_argument("--splits", type=Path, help=SPLITS_HELP)
+        else:
+            command.set_defaults(splits=None)
         command.add_argument("--output", type=Path, default=Path("artifacts/demo" if command is demo else "artifacts/real"))
         command.add_argument("--seed", type=int, default=42)
         command.add_argument("--window", type=int, default=6)
@@ -214,7 +237,8 @@ def main():
     baseline = sub.add_parser(
         "baseline", help="Score the SIRS and always-no baselines on every evaluation split"
     )
-    baseline.add_argument("--data", type=Path, required=True)
+    baseline.add_argument("--data", type=Path, required=True, help=DATA_HELP)
+    baseline.add_argument("--splits", type=Path, help=SPLITS_HELP)
     baseline.add_argument("--output", type=Path, default=Path("artifacts/baseline"))
     baseline.add_argument("--seed", type=int, default=42)
     baseline.add_argument("--cooldown", type=int, default=6)
