@@ -9,7 +9,7 @@
 - This is a Python `src/`-layout package named `sepsis_warning`. Use the project's `.venv/bin/python`, not a different environment with the same `.venv` display name. The README recommends Python 3.12 for the notebook; package metadata alone does not certify newer runtimes.
 - Use `uv pip install --python .venv/bin/python -e .` for editable installation when uv is available. Dependencies are declared in [pyproject.toml](pyproject.toml); no dependency lockfile exists.
 - Downloaded data belongs under project-root `data/physionet/`, not a hardcoded personal path or an external project's dataset. Run data commands from the project root and use their documented `--data`/`--output` arguments.
-- `python -m sepsis_warning prepare` creates combined Parquet, but training and replay still read per-record PSV files. The [notebook](src/notebooks/data_check.ipynb) reads Parquet and locates the checkout before importing the local package.
+- `python -m sepsis_warning prepare` creates combined Parquet, and `train` and `baseline` can read it with the saved `splits.csv`; replay and monitoring still read per-record PSV files. The [notebook](src/notebooks/data_check.ipynb) reads Parquet and locates the checkout before importing the local package.
 - The current stack is NumPy, pandas, SciPy, scikit-learn, Joblib, PyArrow, Matplotlib, and unittest. DVC, Pandera, LightGBM, MLflow, FastAPI, Docker, and deployment work in the task tracker are planned, not installed or implemented by default.
 
 ## Definition of done
