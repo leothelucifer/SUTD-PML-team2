@@ -14,12 +14,14 @@
 
 | Person | Owner | Slides |
 |---|---|---|
-| 1 | Edwin | 4, 5, 8 |
-| 2 | Jawad | 6 |
-| 3 | Kaiyuan | 3, 7, 9 |
-| 4 | Josh | 11 |
-| 5 | leo | 13, 14 |
-| 6 | Mashie | 10, 12, 15, 16 |
+| 1 | Edwin | 4, 5, 9, 10 |
+| 2 | Jawad | 6, 7 |
+| 3 | Kaiyuan | 3, 8, 11, 12 |
+| 4 | Josh | 14 |
+| 5 | leo | 16, 17, 18 |
+| 6 | Mashie | 13, 15, 19, 20 |
+
+Slide numbers follow the 22-slide deck in `docs/presentation/` (see its README for titles). Slides 1, 2, 21 and 22 (cover, problem, lessons, close) are shared and assembled by Mashie (M06). Slide 5 (bedside to model) sits with Edwin for now; Mashie may move it to Leo's serving story.
 
 ## Task status
 
@@ -33,7 +35,7 @@
 | E04 | Hospital A / B split | Done | - | 2026-11-09 | `split` command writes `splits.csv` (seed 42, hashes). 55/15/15/15 of A, all B external, every stay once, load-order independent. `tests/test_splits.py`. Stay-level, not person-level. Merged by Leo in PR #48; no formal Approve review. `baseline` can now read the saved split. |
 | E05 | Exploratory analysis | In progress | - | 2026-11-09 | `compare-hospitals` command, 7 figures in `reports/figures/`, findings in `docs/hospital-a-vs-b.md`. A restricted to train split (no test data). To do: team OK on descriptive use of B. Hospital B wording on hold until the model owner replies. |
 | E06 | SIRS rule baseline | Done | - | 2026-11-09 | `baseline` command → `baseline_metrics.csv`; SIRS F1 0.063 (A val), utility −0.014 at B. Independently recomputed with the official utility formula (match to 1e-15). Adds accuracy, specificity, confusion matrix and a validation-only threshold sweep (fig 8). `tests/test_baselines.py`. Merged by Leo in PR #48; no formal Approve review. Failure patterns: `docs/sirs-failure-patterns.md`. |
-| E07 | Prepare slides 4, 5, 8 | Not started | - | 2026-11-09 | Deck README now lists slides 4, 5, 9, 10; awaiting confirmation. Slides done last. |
+| E07 | Prepare slides 4, 5, 9, 10 | Not started | - | 2026-11-09 | Deck README now lists slides 4, 5, 9, 10; awaiting confirmation. Slides done last. |
 
 ### Person 2 - Jawad
 
@@ -45,7 +47,7 @@
 | J04 | Leakage tests: corrupt hour t+1 and verify earlier features remain unchanged | In progress | - | 2026-11-10 | Done so far (PR #51, merged): next-hour corruption, prefix scoring matches the full stay, saved-column mismatch refused. Still to do: training-only preprocessing fit tests (PR #53, open) and a check that a deliberately leaking implementation fails. |
 | J05 | Fast utility-score function | Not started | - | - | - |
 | J06 | Shared feature module | Not started | - | - | - |
-| J07 | Prepare slide 6 | Not started | - | - | - |
+| J07 | Prepare slides 6, 7 | Not started | - | - | - |
 
 ### Person 3 - Kaiyuan
 
@@ -57,7 +59,7 @@
 | K04 | Probability calibration | Not started | - | - | - |
 | K05 | Alarm threshold and six-hour cooldown | Not started | - | - | - |
 | K06 | Fairness checks | Not started | - | - | - |
-| K07 | Prepare slides 3, 7, 9 | Not started | - | - | - |
+| K07 | Prepare slides 3, 8, 11, 12 | Not started | - | - | - |
 
 ### Person 4 - Josh
 
@@ -68,7 +70,7 @@
 | H03 | With / without tests | Not started | - | - | - |
 | H04 | Optional: GMM | Not started | - | - | - |
 | H05 | Optional: GRU | Not started | - | - | - |
-| H06 | Prepare slide 11 | Not started | - | - | - |
+| H06 | Prepare slide 14 | Not started | - | - | - |
 
 ### Person 5 - leo
 
@@ -80,7 +82,7 @@
 | L04 | CI/CD with GitHub Actions | Not started | - | - | - |
 | L05 | Latency tests | Not started | - | - | - |
 | L06 | AWS deployment design | In progress | - | 2026-11-10 | Modular CloudFormation prototype in `infra/cloudformation/` (networking, encrypted artifacts/state, ECS service, monitoring), merged in PR #50. Static validation only, nothing deployed. Still to do: document the boundary, encryption, cost and rollback, and get owner review. |
-| L07 | Prepare slides 13, 14 | Not started | - | - | - |
+| L07 | Prepare slides 16, 17, 18 | Not started | - | - | - |
 
 ### Person 6 - Mashie
 
@@ -92,7 +94,7 @@
 | M04 | Model card | Not started | - | - | - |
 | M05 | Risk register | Done | - | 2026-11-10 | [docs/risk-register.md](docs/risk-register.md): 25 risks with likelihood, impact, owner, evidence and remaining exposure; unresolved risks left open. Merged in PR #52, approved by Leo. Owners still confirm their own rows (e.g. R05 once E03 merges). |
 | M06 | Final deck assembly | Not started | - | - | - |
-| M07 | Prepare slides 10, 12, 15, 16 | Not started | - | - | - |
+| M07 | Prepare slides 13, 15, 19, 20 | Not started | - | - | - |
 
 ## Shared project boundaries
 
