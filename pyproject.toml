@@ -18,6 +18,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+notebook = ["ipykernel>=7,<8"]
 # L01, approved by the team owner on 2026-11-09. Local stores only by default.
 tracking = ["mlflow>=2.17,<4"]
 # L02 research API. FastAPI pulls in pydantic and starlette.

@@ -37,7 +37,8 @@ def split_table(parquet: Path, seed: int) -> pd.DataFrame:
 def write_splits(parquet: Path, output: Path, seed: int) -> dict:
     table = split_table(parquet, seed)
     output.parent.mkdir(parents=True, exist_ok=True)
-    table.to_csv(output, index=False)
+    # Fixed line endings: the CSV's hash must match on Windows, macOS and Linux.
+    table.to_csv(output, index=False, lineterminator="\n")
     counts = table.groupby("split", observed=True).agg(stays=("patient_id", "size"), septic=("septic", "sum"))
     summary = {
         "seed": seed,
@@ -55,6 +56,33 @@ def load_splits(path: Path) -> dict[str, str]:
     """Map 'A:p000001' style IDs to split names."""
     table = pd.read_csv(path, dtype=str)
     return dict(zip(table["hospital"] + ":" + table["patient_id"], table["split"]))
+
+
+def load_split_patients(parquet: Path, splits: Path) -> dict[str, list[Patient]]:
+    """Rebuild the saved cohorts from combined.parquet and splits.csv.
+
+    Nothing is re-split or re-read from the .psv files. Every stay must appear
+    in both files, so a Parquet and a splits.csv that don't belong together fail.
+    """
+    assignment = load_splits(splits)
+    unknown = set(assignment.values()) - set(SPLIT_ORDER)
+    if unknown:
+        raise ValueError(f"{splits}: unknown split names {sorted(unknown)}")
+    frame = pd.read_parquet(parquet).astype({"ICULOS": int, "SepsisLabel": int})
+    cohorts: dict[str, list[Patient]] = {name: [] for name in SPLIT_ORDER}
+    seen = set()
+    for (hospital, pid), stay in frame.groupby(["hospital", "patient_id"], sort=True):
+        key = f"{hospital}:{pid}"
+        if key not in assignment:
+            raise ValueError(f"{key} is in {parquet} but not in {splits}")
+        seen.add(key)
+        cohorts[assignment[key]].append(
+            Patient(key, hospital, stay.drop(columns=["hospital", "patient_id"]).reset_index(drop=True))
+        )
+    missing = set(assignment) - seen
+    if missing:
+        raise ValueError(f"{len(missing)} stays in {splits} are not in {parquet}, e.g. {sorted(missing)[0]}")
+    return cohorts
 
 
 def _sha256(path: Path) -> str:

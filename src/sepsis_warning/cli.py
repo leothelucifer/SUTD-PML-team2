@@ -24,12 +24,39 @@ from .monitoring import REPLAY_SPLITS, MonitoringConfig, replay_monitoring, setu
 from .policy import apply_policy, summarize, tune_threshold
 from .prepare import prepare_parquet, write_summary
 from .report import write_report
-from .splits import write_splits
+from .sirs_failures import failure_tables
+from .splits import load_split_patients, write_splits
 from .tracking import check_tracking_uri, log_run, require_mlflow, run_metadata
 
 
 def write_json(path, value):
     Path(path).write_text(json.dumps(value, indent=2, allow_nan=False) + "\n")
+
+
+def load_cohorts(args):
+    """Return (cohorts, synthetic) for `baseline` and `sirs-failures`.
+
+    A Parquet file as --data uses the saved splits.csv. A folder of .psv files
+    still reads every record and re-splits with --seed.
+    """
+    if args.data.is_file():
+        splits_path = args.splits or args.data.with_name("splits.csv")
+        if not splits_path.exists():
+            raise ValueError(f"{splits_path} not found; run `split` first")
+        cohorts = load_split_patients(args.data, splits_path)
+        ids = [p.patient_id for cohort in cohorts.values() for p in cohort]
+        flagged = sum("synthetic_" in patient_id for patient_id in ids)
+        if flagged not in (0, len(ids)):
+            raise ValueError(f"{args.data} mixes synthetic and real records")
+        synthetic = bool(flagged)
+    else:
+        synthetic = (args.data / "SYNTHETIC.json").exists()
+        patients = load_patients(args.data)
+        if not synthetic and any("synthetic_" in p.patient_id for p in patients):
+            raise ValueError("Synthetic filenames found without SYNTHETIC.json marker")
+        cohorts = split_patients(patients, args.seed)
+    print("Data mode:", "SYNTHETIC SOFTWARE FIXTURE" if synthetic else "PhysioNet records", flush=True)
+    return cohorts, synthetic
 
 
 def run_experiment(args):
@@ -142,13 +169,8 @@ SWEEP_COLUMNS = [
 
 def run_baselines(args):
     """Score SIRS and always-no on validation, internal test and hospital B."""
-    synthetic = (args.data / "SYNTHETIC.json").exists()
-    print("Data mode:", "SYNTHETIC SOFTWARE FIXTURE" if synthetic else "PhysioNet records", flush=True)
-    patients = load_patients(args.data)
-    if not synthetic and any("synthetic_" in p.patient_id for p in patients):
-        raise ValueError("Synthetic filenames found without SYNTHETIC.json marker")
-    # Same seed and split function as `train`, so rows line up with the models.
-    splits = split_patients(patients, args.seed)
+    # The saved split and a seed-42 re-split are the same stays, so rows line up with `train`.
+    splits, _ = load_cohorts(args)
     rows = []
     for split in BASELINE_SPLITS:
         for name in BASELINES:
@@ -179,12 +201,26 @@ def run_baselines(args):
     args.figures.mkdir(parents=True, exist_ok=True)
     plot_sirs_threshold_tradeoff(
         sweep, float(validation["label"].mean()), 0.2, args.figures / "08_sirs_threshold_tradeoff.png",
-        "python -m sepsis_warning baseline --data data/physionet --output artifacts/baseline",
+        f"python -m sepsis_warning baseline --data {args.data.as_posix()} --output artifacts/baseline",
     )
     print(sweep[["alert_at_criteria", "hourly_precision", "hourly_recall", "hourly_f1",
                  "hourly_specificity", "false_alert_events_per_nonseptic_patient_day"]].round(3).to_string(index=False))
     print(f"Threshold sweep (validation): {sweep_path.resolve()}", flush=True)
     return result
+
+
+def run_sirs_failures(args):
+    """Aggregate SIRS failure patterns. Validation split only, by design."""
+    cohorts, _ = load_cohorts(args)
+    args.output.mkdir(parents=True, exist_ok=True)
+    for name, table in failure_tables(cohorts["validation"], args.cooldown).items():
+        table.to_csv(args.output / f"{name}.csv", index=False)
+        print(f"\n{name}\n{table.round(3).to_string(index=False)}", flush=True)
+    print(f"\nTables: {args.output.resolve()}", flush=True)
+
+
+DATA_HELP = "combined.parquet (uses the saved split), or a folder of training_setA/B (re-splits with --seed)"
+SPLITS_HELP = "Saved split for a Parquet --data; defaults to splits.csv next to it"
 
 
 def run_server(args):
@@ -254,11 +290,20 @@ def main():
     baseline = sub.add_parser(
         "baseline", help="Score the SIRS and always-no baselines on every evaluation split"
     )
-    baseline.add_argument("--data", type=Path, required=True)
+    baseline.add_argument("--data", type=Path, required=True, help=DATA_HELP)
+    baseline.add_argument("--splits", type=Path, help=SPLITS_HELP)
     baseline.add_argument("--output", type=Path, default=Path("artifacts/baseline"))
     baseline.add_argument("--seed", type=int, default=42)
     baseline.add_argument("--cooldown", type=int, default=6)
     baseline.add_argument("--figures", type=Path, default=Path("reports/figures"))
+    failures = sub.add_parser(
+        "sirs-failures", help="Aggregate patterns of where SIRS fails (validation split only)"
+    )
+    failures.add_argument("--data", type=Path, default=Path("data/physionet/combined.parquet"), help=DATA_HELP)
+    failures.add_argument("--splits", type=Path, help=SPLITS_HELP)
+    failures.add_argument("--output", type=Path, default=Path("artifacts/baseline/failures"))
+    failures.add_argument("--seed", type=int, default=42)
+    failures.add_argument("--cooldown", type=int, default=6)
     split = sub.add_parser("split", help="Save the patient split once as splits.csv")
     split.add_argument("--data", type=Path, default=Path("data/physionet/combined.parquet"))
     split.add_argument("--output", type=Path, default=Path("data/physionet/splits.csv"))
@@ -339,6 +384,10 @@ def main():
             if args.cooldown < 0:
                 raise ValueError("cooldown must be nonnegative")
             run_baselines(args)
+        elif args.command == "sirs-failures":
+            if args.cooldown < 0:
+                raise ValueError("cooldown must be nonnegative")
+            run_sirs_failures(args)
         elif args.command == "split":
             if not args.data.exists():
                 raise ValueError(f"{args.data} not found; run `prepare` first")
