@@ -27,22 +27,22 @@
 
 | ID | Task | Status | Due date | Updated | Evidence / notes |
 |---|---|---|---|---|---|
-| E01 | Download data and convert to Parquet | In review | - | 2026-11-07 | Full data: 40,336 records / 1,552,210 rows; 0 SHA-256 mismatches vs manifest. `tests/test_prepare.py` (corrupt input, overwrite refusal, values kept exactly). |
-| E02 | Version data with DVC | Not started | - | - | - |
-| E03 | Data schema checks with Pandera | Not started | - | - | - |
-| E04 | Hospital A / B split | In review | - | 2026-11-07 | `split` command writes `splits.csv` (seed 42, hashes). 55/15/15/15 of A, all B external, every stay once, load-order independent. `tests/test_splits.py`. Stay-level, not person-level. |
-| E05 | Exploratory analysis | In progress | - | 2026-11-07 | `compare-hospitals` command, 7 figures in `reports/figures/`, findings in `docs/hospital-a-vs-b.md`. A restricted to train split (no test data). To do: team OK on descriptive use of B. |
-| E06 | SIRS rule baseline | In review | - | 2026-11-07 | `baseline` command → `baseline_metrics.csv`; SIRS F1 0.063 (A val), utility −0.014 at B. Independently recomputed with the official utility formula (match to 1e-15). Adds accuracy, specificity, confusion matrix and a validation-only threshold sweep (fig 8). `tests/test_baselines.py`. |
-| E07 | Prepare slides 4, 5, 8 | Not started | - | - | - |
+| E01 | Download data and convert to Parquet | Done | - | 2026-11-09 | Full data: 40,336 records / 1,552,210 rows; 0 SHA-256 mismatches vs manifest. `tests/test_prepare.py` (corrupt input, overwrite refusal, values kept exactly). Merged by Leo in PR #48; no formal Approve review. |
+| E02 | Version data with DVC | In review | - | 2026-11-10 | `dvc.yaml`, `dvc.lock`, `docs/data-versioning.md`. Two private remotes, set outside Git: a folder on one laptop, and a private SUTD SharePoint site with no other members (4 prepared files, 20 MB, checksums match). No credentials in Git. Fresh clone restored 4 files with matching SHA-256. Licence question R14 open, so no teammates added yet; teammates can rebuild the same files from PhysioNet using the doc. Optional install; awaiting team OK for the package and remotes. |
+| E03 | Data schema checks with Pandera | In review | - | 2026-11-09 | `validate` command and `schema.py`: all 40,336 stays / 1,552,210 rows pass the hard rules. Extreme values are counted for review on train only, never rejected; small counts hidden. `tests/test_schema.py` (16 tests). Optional install; awaiting team OK for the package. |
+| E04 | Hospital A / B split | Done | - | 2026-11-09 | `split` command writes `splits.csv` (seed 42, hashes). 55/15/15/15 of A, all B external, every stay once, load-order independent. `tests/test_splits.py`. Stay-level, not person-level. Merged by Leo in PR #48; no formal Approve review. `baseline` can now read the saved split. |
+| E05 | Exploratory analysis | In progress | - | 2026-11-09 | `compare-hospitals` command, 7 figures in `reports/figures/`, findings in `docs/hospital-a-vs-b.md`. A restricted to train split (no test data). To do: team OK on descriptive use of B. Hospital B wording on hold until the model owner replies. |
+| E06 | SIRS rule baseline | Done | - | 2026-11-09 | `baseline` command → `baseline_metrics.csv`; SIRS F1 0.063 (A val), utility −0.014 at B. Independently recomputed with the official utility formula (match to 1e-15). Adds accuracy, specificity, confusion matrix and a validation-only threshold sweep (fig 8). `tests/test_baselines.py`. Merged by Leo in PR #48; no formal Approve review. Failure patterns: `docs/sirs-failure-patterns.md`. |
+| E07 | Prepare slides 4, 5, 8 | Not started | - | 2026-11-09 | Deck README now lists slides 4, 5, 9, 10; awaiting confirmation. Slides done last. |
 
 ### Person 2 - Jawad
 
 | ID | Task | Status | Due date | Updated | Evidence / notes |
 |---|---|---|---|---|---|
-| J01 | Causal rolling features | Not started | - | - | - |
+| J01 | Causal rolling features | Done | - | 2026-11-10 | Shared builder in `features.py`; 3/6/12-hour windows use current and past hours only. Tests: prefix matches streaming history, future and next-hour changes leave earlier features unchanged (`tests/test_invariants.py`). Demo: `scripts/causal_features.py`. Merged in PR #51, approved by Leo. |
 | J02 | Missing-value handling | Not started | - | - | - |
-| J03 | Hours since last lab test | Not started | - | - | - |
-| J04 | Leakage tests: corrupt hour t+1 and verify earlier features remain unchanged | Not started | - | - | - |
+| J03 | Hours since last lab test | Done | - | 2026-11-10 | Per-lab recency in ICU hours. `test_lab_recency_covers_first_hour_gap_and_never_seen` covers the first hour, a gap and a never-measured lab. Merged in PR #51, approved by Leo. |
+| J04 | Leakage tests: corrupt hour t+1 and verify earlier features remain unchanged | In progress | - | 2026-11-10 | Done so far (PR #51, merged): next-hour corruption, prefix scoring matches the full stay, saved-column mismatch refused. Still to do: training-only preprocessing fit tests (PR #53, open) and a check that a deliberately leaking implementation fails. |
 | J05 | Fast utility-score function | Not started | - | - | - |
 | J06 | Shared feature module | Not started | - | - | - |
 | J07 | Prepare slide 6 | Not started | - | - | - |
@@ -79,7 +79,7 @@
 | L03 | Docker image | Not started | - | - | - |
 | L04 | CI/CD with GitHub Actions | Not started | - | - | - |
 | L05 | Latency tests | Not started | - | - | - |
-| L06 | AWS deployment design | Not started | - | - | - |
+| L06 | AWS deployment design | In progress | - | 2026-11-10 | Modular CloudFormation prototype in `infra/cloudformation/` (networking, encrypted artifacts/state, ECS service, monitoring), merged in PR #50. Static validation only, nothing deployed. Still to do: document the boundary, encryption, cost and rollback, and get owner review. |
 | L07 | Prepare slides 13, 14 | Not started | - | - | - |
 
 ### Person 6 - Mashie
@@ -87,10 +87,10 @@
 | ID | Task | Status | Due date | Updated | Evidence / notes |
 |---|---|---|---|---|---|
 | M01 | Hospital B replay | Not started | - | - | - |
-| M02 | Drift monitoring at two speeds | Not started | - | - | - |
+| M02 | Drift monitoring at two speeds | Done | - | 2026-11-10 | `monitor-setup` / `monitor-replay` ([monitoring.py](src/sepsis_warning/monitoring.py)); reference from A train/validation only, no automatic retraining. 18 tests in `tests/test_monitoring.py` (simulated shifts, label settlement, test-split isolation). Plan and runbook: [docs/monitoring-plan.md](docs/monitoring-plan.md). Merged in PR #52, approved by Leo. |
 | M03 | SHAP explanations | Not started | - | - | - |
 | M04 | Model card | Not started | - | - | - |
-| M05 | Risk register | Not started | - | - | - |
+| M05 | Risk register | Done | - | 2026-11-10 | [docs/risk-register.md](docs/risk-register.md): 25 risks with likelihood, impact, owner, evidence and remaining exposure; unresolved risks left open. Merged in PR #52, approved by Leo. Owners still confirm their own rows (e.g. R05 once E03 merges). |
 | M06 | Final deck assembly | Not started | - | - | - |
 | M07 | Prepare slides 10, 12, 15, 16 | Not started | - | - | - |
 

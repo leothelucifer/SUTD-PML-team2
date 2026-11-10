@@ -3,6 +3,7 @@
 Neither baseline is trained, so neither uses any training data:
 
 * ``sirs``      - the classic SIRS screen (>= 2 of 4 criteria), applied hourly.
+                  Bone RC et al., Chest 1992 (ACCP/SCCM consensus definitions).
 * ``always_no`` - never alerts. Shows what "doing nothing" scores.
 
 Both produce the same table format as the models (``patient_id``, ``hospital``,

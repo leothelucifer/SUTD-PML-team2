@@ -35,7 +35,7 @@ records positive from their first row are excluded from our lead-time analysis.
 
 ## Run the synthetic demo
 
-Use Python 3.11-3.13 with compatible package wheels.
+Use Python 3.12 or newer. The pinned `requirements.txt` is tested on 3.12 and 3.14.
 
 ```bash
 python3 -m venv .venv
@@ -81,15 +81,46 @@ data/physionet/
     ...
 ```
 
-A downloader is provided but is not automatically run by the demo:
+Full steps, from a clean checkout to the SIRS results:
 
 ```bash
-python scripts/download_data.py --limit 500 --output data/physionet
+python -m venv .venv
+source .venv/bin/activate        # Windows PowerShell: .venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+python -m pip install -e .
+python scripts/download_data.py --limit 0 --output data/physionet
+python -m sepsis_warning prepare --data data/physionet --output data/physionet/combined.parquet
+python -m sepsis_warning split --data data/physionet/combined.parquet --output data/physionet/splits.csv
+python -m sepsis_warning baseline --data data/physionet/combined.parquet --output artifacts/baseline
+```
+
+To train the models, which read the `.psv` folder:
+
+```bash
 python -m sepsis_warning train --data data/physionet --output artifacts/real
 ```
 
-`--limit 0` downloads all records. A small random subset may have too few sepsis
-patients for reliable splitting; increase the sample if the CLI reports that.
+Check `split` against the stay counts in [Patient split](#patient-split). For the
+notebook, also run `python -m pip install -e ".[notebook]"`.
+
+Hardware used for the reported results, and how long each step took:
+
+| Item | Value |
+|---|---|
+| Machine | Windows 11 laptop, Intel Core i9-14900HX (24 cores), 32 GB RAM |
+| GPU | Present but not used; no code here needs one |
+| Disk | 323 MB raw files on this machine, 19 MB Parquet |
+| `prepare` | About 4.5 minutes |
+| `split` | About 30 seconds |
+| `baseline` | About 4 to 5.5 minutes |
+| `sirs-failures` | About 1.5 minutes |
+| Download and full `train` | Not timed |
+
+Seeds: the split and the models use `--seed 42`.
+
+`--limit 500` downloads a sample instead of all records. A small random subset may
+have too few sepsis patients for reliable splitting; increase the sample if the
+CLI reports that.
 Full feature tables are currently built in memory and may consume several GB.
 Start with a subset; add partitioned feature caching before a full-cohort study.
 Raw data and generated artifacts are excluded by `.gitignore`.
@@ -97,13 +128,15 @@ Raw data and generated artifacts are excluded by `.gitignore`.
 ## SIRS baseline (the score every model must beat)
 
 ```bash
-python -m sepsis_warning baseline --data data/physionet --output artifacts/baseline
+python -m sepsis_warning baseline --data data/physionet/combined.parquet --output artifacts/baseline
 ```
 
 Writes `artifacts/baseline/baseline_metrics.csv`: one row per baseline per
-split (`validation`, `internal_test`, `external_test` = hospital B). It uses the
-same patient split (`--seed 42`) as `train`, so model rows can be added to the
-same table later.
+split (`validation`, `internal_test`, `external_test` = hospital B). With a
+Parquet `--data`, `baseline` uses the saved `splits.csv` next to it (or
+`--splits <path>`). A folder of `.psv` files as `--data` still works: it reads
+every record and re-splits with `--seed`, which gives the same stays as `train`,
+so model rows can be added to the same table later.
 
 | Baseline | Rule |
 |---|---|
@@ -167,6 +200,12 @@ not used to look at thresholds.
 | ≥ 3 | 0.044 | 0.220 | 0.074 | 0.895 | 0.70 |
 | ≥ 4 | 0.056 | 0.033 | 0.042 | 0.988 | 0.10 |
 
+Group-level patterns of where SIRS fails (validation split only) are in
+[docs/sirs-failure-patterns.md](docs/sirs-failure-patterns.md).
+
+`baseline` also redraws `reports/figures/08_sirs_threshold_tradeoff.png`. Pass
+`--figures <folder>` to write it somewhere else.
+
 ## Patient split
 
 ```bash
@@ -193,6 +232,25 @@ counts). Both stay in the git-ignored `data/` folder.
 
 Code: [src/sepsis_warning/baselines.py](src/sepsis_warning/baselines.py).
 Tests: [tests/test_baselines.py](tests/test_baselines.py).
+
+## Data checks and versioning
+
+These are optional installs, so nothing else depends on them.
+
+```bash
+python -m pip install -e ".[checks]"
+python -m sepsis_warning validate
+```
+
+`validate` checks every stay against the written hard rules in
+`src/sepsis_warning/schema.py`: required columns, numeric types, no infinite
+values, labels that are 0 or 1 and never drop back to 0, and consecutive hours.
+Blank clinical values are allowed. It also counts readings outside broad review
+limits on the training stays only. Those limits are this project's own, and they
+never reject data. Reports show counts only, and small counts appear as `<10`.
+
+DVC records which data files belong with this code: see
+[docs/data-versioning.md](docs/data-versioning.md).
 
 ## What is implemented
 
