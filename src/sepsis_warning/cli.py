@@ -24,6 +24,7 @@ from .monitoring import REPLAY_SPLITS, MonitoringConfig, replay_monitoring, setu
 from .policy import apply_policy, summarize, tune_threshold
 from .prepare import prepare_parquet, write_summary
 from .report import write_report
+from .schema import extreme_value_counts, validate_hourly
 from .sirs_failures import failure_tables
 from .splits import load_split_patients, write_splits
 
@@ -210,6 +211,24 @@ def run_sirs_failures(args):
     print(f"\nTables: {args.output.resolve()}", flush=True)
 
 
+def run_validate(args):
+    """Check every stay against the hard rules, then count review flags on train only."""
+    for path, step in [(args.data, "prepare"), (args.splits, "split")]:
+        if not path.exists():
+            raise ValueError(f"{path} not found; run `{step}` first")
+    frame = pd.read_parquet(args.data)
+    validate_hourly(frame)
+    print(f"All {frame.groupby(['hospital', 'patient_id']).ngroups} stays and {len(frame)} rows pass the hard rules.", flush=True)
+    splits = pd.read_csv(args.splits, dtype=str)
+    train = splits.loc[splits["split"] == "train", ["hospital", "patient_id"]]
+    table = extreme_value_counts(frame.merge(train, on=["hospital", "patient_id"]))
+    args.output.mkdir(parents=True, exist_ok=True)
+    path = args.output / "extreme_value_review_train.csv"
+    table.to_csv(path, index=False)
+    print(f"\nReview flags, training stays only (nothing rejected):\n{table.to_string(index=False)}")
+    print(f"\nReview table: {path.resolve()}", flush=True)
+
+
 DATA_HELP = "combined.parquet (uses the saved split), or a folder of training_setA/B (re-splits with --seed)"
 SPLITS_HELP = "Saved split for a Parquet --data; defaults to splits.csv next to it"
 
@@ -256,6 +275,12 @@ def main():
     baseline.add_argument("--seed", type=int, default=42)
     baseline.add_argument("--cooldown", type=int, default=6)
     baseline.add_argument("--figures", type=Path, default=Path("reports/figures"))
+    validate = sub.add_parser(
+        "validate", help="Check the combined Parquet against the Pandera rules (needs the checks extra)"
+    )
+    validate.add_argument("--data", type=Path, default=Path("data/physionet/combined.parquet"))
+    validate.add_argument("--splits", type=Path, default=Path("data/physionet/splits.csv"))
+    validate.add_argument("--output", type=Path, default=Path("artifacts/data_checks"))
     failures = sub.add_parser(
         "sirs-failures", help="Aggregate patterns of where SIRS fails (validation split only)"
     )
@@ -329,6 +354,8 @@ def main():
             if args.cooldown < 0:
                 raise ValueError("cooldown must be nonnegative")
             run_baselines(args)
+        elif args.command == "validate":
+            run_validate(args)
         elif args.command == "sirs-failures":
             if args.cooldown < 0:
                 raise ValueError("cooldown must be nonnegative")

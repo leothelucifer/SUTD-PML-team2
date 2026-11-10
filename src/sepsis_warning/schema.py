@@ -1,0 +1,103 @@
+"""E03: the data rules, written down in one place with Pandera.
+
+Hard rules reject the data. Review limits never reject anything; they only count
+how many readings look implausible so a person can take a look.
+
+Error messages and reports show column names and counts only, never a patient's
+identifier or reading. Blank clinical values are normal in this data and allowed.
+"""
+
+import numpy as np
+import pandas as pd
+
+from .data import DYNAMIC, STATIC
+
+KEY = ["hospital", "patient_id"]
+MIN_CELL = 10
+# Broad limits chosen by this project to prompt a look, not clinical standards.
+# Readings outside them are counted and kept: review only, never a rejection.
+REVIEW_LIMITS = {
+    "HR": (20, 250), "O2Sat": (50, 100), "Temp": (25, 44), "SBP": (40, 280), "MAP": (20, 220),
+    "DBP": (10, 180), "Resp": (4, 70), "FiO2": (0.21, 1.0), "pH": (6.7, 7.8), "PaCO2": (10, 130),
+    "Glucose": (20, 800), "Lactate": (0, 30), "Potassium": (1.5, 9), "Hgb": (3, 22),
+    "WBC": (0.1, 150), "Platelets": (1, 1500),
+}
+
+
+def _labels_never_drop(frame: pd.DataFrame):
+    if not {*KEY, "SepsisLabel"} <= set(frame):
+        return True  # the missing column is reported by its own rule
+    return frame.groupby(KEY, sort=False)["SepsisLabel"].diff().fillna(0) >= 0
+
+
+def _hours_are_consecutive(frame: pd.DataFrame):
+    if not {*KEY, "ICULOS"} <= set(frame):
+        return True  # the missing column is reported by its own rule
+    return frame.groupby(KEY, sort=False)["ICULOS"].diff().fillna(1) == 1
+
+
+def build_schema():
+    """The hard rules for hourly data with hospital and patient_id columns."""
+    try:
+        import pandera.pandas as pa
+    except ImportError as error:
+        raise ValueError('Pandera is not installed; run: python -m pip install -e ".[checks]"') from error
+
+    numeric = pa.Check(lambda s: pd.api.types.is_numeric_dtype(s), name="numeric_type")
+    finite = pa.Check(lambda s: ~np.isinf(pd.to_numeric(s, errors="coerce").fillna(0)), name="no_infinite_values")
+    columns = {name: pa.Column(nullable=True, checks=[numeric, finite]) for name in DYNAMIC + STATIC}
+    columns["ICULOS"] = pa.Column(nullable=False, checks=[numeric, finite])
+    columns["SepsisLabel"] = pa.Column(nullable=False, checks=pa.Check.isin([0, 1]))
+    columns["hospital"] = pa.Column(nullable=False, checks=pa.Check.isin(["A", "B"]))
+    columns["patient_id"] = pa.Column(nullable=False)
+    return pa.DataFrameSchema(columns, checks=[
+        pa.Check(_labels_never_drop, name="label_never_drops_back_to_0"),
+        pa.Check(_hours_are_consecutive, name="hours_are_consecutive"),
+    ])
+
+
+def validate_hourly(frame: pd.DataFrame) -> None:
+    """Raise ValueError naming each broken rule. Blank clinical values are allowed."""
+    schema = build_schema()
+    import pandera.errors as errors
+
+    try:
+        schema.validate(frame, lazy=True)
+    except errors.SchemaErrors as error:
+        lines = _summarize(error.failure_cases)
+    else:
+        return
+    raise ValueError("Data failed the schema: " + "; ".join(lines))
+
+
+def _summarize(failures: pd.DataFrame) -> list[str]:
+    """Rule names and row counts only, so no reading or identifier reaches a log."""
+    lines = []
+    for (column, check), group in failures.groupby([failures["column"].fillna("table"), "check"], sort=True):
+        if check == "column_in_dataframe":
+            # Here the "failure case" is the missing column's name, not patient data.
+            lines.append(f"missing column {group['failure_case'].iloc[0]}")
+        else:
+            lines.append(f"{column}: {check} ({len(group)} rows)")
+    return lines
+
+
+def extreme_value_counts(frame: pd.DataFrame) -> pd.DataFrame:
+    """Count readings outside the review limits. Nothing is rejected or changed.
+
+    Counts from 1 to MIN_CELL - 1 are shown as "<10", so a report can't point
+    to a single patient's reading.
+    """
+    rows = []
+    for name, (low, high) in REVIEW_LIMITS.items():
+        values = frame[name].dropna()
+        rows.append({
+            "variable": name, "review_low": low, "review_high": high, "readings": len(values),
+            "below_low": _hide_small(int((values < low).sum())),
+            "above_high": _hide_small(int((values > high).sum())),
+        })
+    return pd.DataFrame(rows)
+
+
+def _hide_small(count: int):
+    return f"<{MIN_CELL}" if 0 < count < MIN_CELL else count
