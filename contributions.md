@@ -39,10 +39,10 @@
 
 | ID | Task | Status | Due date | Updated | Evidence / notes |
 |---|---|---|---|---|---|
-| J01 | Causal rolling features | Not started | - | - | - |
+| J01 | Causal rolling features | Done | - | 2026-11-10 | Shared builder in `features.py`; 3/6/12-hour windows use current and past hours only. Tests: prefix matches streaming history, future and next-hour changes leave earlier features unchanged (`tests/test_invariants.py`). Demo: `scripts/causal_features.py`. Merged in PR #51, approved by Leo. |
 | J02 | Missing-value handling | Not started | - | - | - |
-| J03 | Hours since last lab test | Not started | - | - | - |
-| J04 | Leakage tests: corrupt hour t+1 and verify earlier features remain unchanged | Not started | - | - | - |
+| J03 | Hours since last lab test | Done | - | 2026-11-10 | Per-lab recency in ICU hours. `test_lab_recency_covers_first_hour_gap_and_never_seen` covers the first hour, a gap and a never-measured lab. Merged in PR #51, approved by Leo. |
+| J04 | Leakage tests: corrupt hour t+1 and verify earlier features remain unchanged | In progress | - | 2026-11-10 | Done so far (PR #51, merged): next-hour corruption, prefix scoring matches the full stay, saved-column mismatch refused. Still to do: training-only preprocessing fit tests (PR #53, open) and a check that a deliberately leaking implementation fails. |
 | J05 | Fast utility-score function | Not started | - | - | - |
 | J06 | Shared feature module | Not started | - | - | - |
 | J07 | Prepare slide 6 | Not started | - | - | - |
@@ -79,7 +79,7 @@
 | L03 | Docker image | Not started | - | - | - |
 | L04 | CI/CD with GitHub Actions | Not started | - | - | - |
 | L05 | Latency tests | Not started | - | - | - |
-| L06 | AWS deployment design | Not started | - | - | - |
+| L06 | AWS deployment design | In progress | - | 2026-11-10 | Modular CloudFormation prototype in `infra/cloudformation/` (networking, encrypted artifacts/state, ECS service, monitoring), merged in PR #50. Static validation only, nothing deployed. Still to do: document the boundary, encryption, cost and rollback, and get owner review. |
 | L07 | Prepare slides 13, 14 | Not started | - | - | - |
 
 ### Person 6 - Mashie
@@ -87,10 +87,10 @@
 | ID | Task | Status | Due date | Updated | Evidence / notes |
 |---|---|---|---|---|---|
 | M01 | Hospital B replay | Not started | - | - | - |
-| M02 | Drift monitoring at two speeds | Not started | - | - | - |
+| M02 | Drift monitoring at two speeds | Done | - | 2026-11-10 | `monitor-setup` / `monitor-replay` ([monitoring.py](src/sepsis_warning/monitoring.py)); reference from A train/validation only, no automatic retraining. 18 tests in `tests/test_monitoring.py` (simulated shifts, label settlement, test-split isolation). Plan and runbook: [docs/monitoring-plan.md](docs/monitoring-plan.md). Merged in PR #52, approved by Leo. |
 | M03 | SHAP explanations | Not started | - | - | - |
 | M04 | Model card | Not started | - | - | - |
-| M05 | Risk register | Not started | - | - | - |
+| M05 | Risk register | Done | - | 2026-11-10 | [docs/risk-register.md](docs/risk-register.md): 25 risks with likelihood, impact, owner, evidence and remaining exposure; unresolved risks left open. Merged in PR #52, approved by Leo. Owners still confirm their own rows (e.g. R05 once E03 merges). |
 | M06 | Final deck assembly | Not started | - | - | - |
 | M07 | Prepare slides 10, 12, 15, 16 | Not started | - | - | - |
 
