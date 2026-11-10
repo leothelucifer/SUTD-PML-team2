@@ -24,6 +24,8 @@ from .monitoring import REPLAY_SPLITS, MonitoringConfig, replay_monitoring, setu
 from .policy import apply_policy, summarize, tune_threshold
 from .prepare import prepare_parquet, write_summary
 from .report import write_report
+from .splits import write_splits
+from .tracking import check_tracking_uri, log_run, require_mlflow, run_metadata
 from .schema import extreme_value_counts, validate_hourly
 from .sirs_failures import failure_tables
 from .splits import load_split_patients, write_splits
@@ -133,11 +135,19 @@ def run_experiment(args):
     }
     write_json(args.output / "config.json", config)
     write_json(args.output / "metrics.json", summary)
+    write_json(args.output / "run_metadata.json", run_metadata(
+        args.seed, synthetic=synthetic, window=args.window, budget=args.budget,
+        cooldown=args.cooldown, feature_columns=columns,
+        splits_summary=args.splits_summary, dvc_lock=args.dvc_lock,
+    ))
     replay = pd.concat(predictions, ignore_index=True)
     replay.to_csv(args.output / "held_out_predictions.csv", index=False)
     write_report(args.output / "replay.html", replay, summary, threshold, synthetic)
     print(f"Selected: {name}; threshold={threshold:.2f}", flush=True)
     print(f"Replay: {(args.output / 'replay.html').resolve()}", flush=True)
+    if args.mlflow_uri:
+        run_id = log_run(args.output, args.mlflow_uri)
+        print(f"MLflow run: {run_id}", flush=True)
 
 
 BASELINE_SPLITS = ["validation", "internal_test", "external_test"]
@@ -201,6 +211,26 @@ def run_baselines(args):
     return result
 
 
+def run_server(args):
+    if args.host not in ("127.0.0.1", "localhost", "::1") and not args.allow_non_local_host:
+        raise ValueError(f"--host {args.host} exposes an unauthenticated API; pass --allow-non-local-host if agreed")
+    try:
+        import uvicorn
+
+        from .api import create_app
+    except ImportError as error:
+        raise RuntimeError("the API needs the serve extra; run `pip install -e .[serve]`") from error
+    from .service import ModelMismatch, ScoringService
+
+    try:
+        service = ScoringService.from_path(args.model, args.model_sha256)
+    except ModelMismatch as error:
+        raise ValueError(str(error)) from error
+    health = service.health()
+    print(f"Serving {health['model_name']} (bundle {health['bundle_sha256'][:12]}) on {args.host}:{args.port}", flush=True)
+    if health["synthetic_model"]:
+        print("WARNING: synthetic fixture model; scores are meaningless", flush=True)
+    uvicorn.run(create_app(service), host=args.host, port=args.port, workers=1)
 def run_sirs_failures(args):
     """Aggregate SIRS failure patterns. Validation split only, by design."""
     cohorts, _ = load_cohorts(args)
@@ -246,6 +276,15 @@ def main():
         command.add_argument("--window", type=int, default=6)
         command.add_argument("--budget", type=float, default=0.2)
         command.add_argument("--cooldown", type=int, default=6)
+        command.add_argument(
+            "--splits-summary", type=Path, default=None,
+            help="splits.csv.summary.json from `split`; its seed and hashes are logged and the seed must match",
+        )
+        command.add_argument("--dvc-lock", type=Path, default=None, help="dvc.lock whose output hashes are logged")
+        command.add_argument(
+            "--mlflow-uri", default=None,
+            help="Local MLflow store, e.g. file:artifacts/mlruns (needs the tracking extra)",
+        )
     replay = sub.add_parser("replay", help="Score a patient PSV with a saved model")
     replay.add_argument("--model", type=Path, required=True)
     replay.add_argument("--patient", type=Path, required=True)
@@ -329,8 +368,21 @@ def main():
     monitor_replay.add_argument("--reference", type=Path, required=True, help="monitoring_reference.json")
     monitor_replay.add_argument("--split", choices=REPLAY_SPLITS, default="external_test")
     monitor_replay.add_argument("--output", type=Path, default=Path("artifacts/monitoring/replay"))
+    serve = sub.add_parser("serve", help="Local research scoring API for a saved model (needs the serve extra)")
+    serve.add_argument("--model", type=Path, required=True, help="model.joblib produced by train/demo")
+    serve.add_argument("--model-sha256", default=None, help="Refuse to start unless the bundle has this SHA-256")
+    serve.add_argument("--host", default="127.0.0.1")
+    serve.add_argument("--port", type=int, default=8000)
+    serve.add_argument(
+        "--allow-non-local-host", action="store_true",
+        help="Bind beyond localhost. The API has no authentication; agree this with the team first",
+    )
     args = parser.parse_args()
     try:
+        if args.command in ["demo", "train"] and args.mlflow_uri:
+            # Fail before generating data or training, not after it.
+            check_tracking_uri(args.mlflow_uri)
+            require_mlflow()
         if args.command == "demo":
             generate_synthetic(args.data, args.seed)
             write_json(args.data / "SYNTHETIC.json", {"purpose": "Software test only", "seed": args.seed})
@@ -350,6 +402,8 @@ def main():
             args.output.parent.mkdir(parents=True, exist_ok=True)
             table.to_csv(args.output, index=False)
             print(args.output.resolve())
+        elif args.command == "serve":
+            run_server(args)
         elif args.command == "baseline":
             if args.cooldown < 0:
                 raise ValueError("cooldown must be nonnegative")
@@ -429,6 +483,6 @@ def main():
                 f"Records: {summary['records']}; hourly rows: "
                 f"{summary['hourly_rows']}"
             )
-    except (ValueError, FileExistsError) as error:
+    except (ValueError, FileExistsError, RuntimeError) as error:
         # FileExistsError: prepare refuses to overwrite; show a message, not a traceback.
         parser.error(str(error))

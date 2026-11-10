@@ -20,7 +20,7 @@
 - For feature changes, verify prefix invariance, future-measurement corruption, record-local imputation, and exclusion of labels/metadata. For policy changes, verify cooldown resets, hourly decision versus notification accounting, utility, and censored lead-time handling.
 - Verify data preparation preserves original values, missingness, labels, source provenance, and record/hour counts. Never use a synthetic fixture to claim real-cohort performance.
 - Verify notebook execution with the selected kernel, not just terminal Python. Clear saved outputs before sharing or committing.
-- No lint, build, or CI quality gate is currently configured. Do not invent commands or claim these checks passed.
+- GitHub Actions ([.github/workflows/tests.yml](.github/workflows/tests.yml)) runs the unit tests, the causal-feature script and the synthetic demo on pull requests. There is no lint step. Do not claim checks passed without looking at the run.
 
 ## Conventions
 

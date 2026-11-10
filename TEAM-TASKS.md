@@ -74,10 +74,10 @@
 
 | ID | Task | Status | Due date | Updated | Evidence / notes |
 |---|---|---|---|---|---|
-| L01 | MLflow tracking and registry | Not started | - | - | - |
-| L02 | FastAPI service | Not started | - | - | - |
+| L01 | MLflow tracking and registry | In review | - | 2026-11-09 | Tracking part only. Every `train`/`demo` writes `run_metadata.json` (seed, split seed/hashes from `splits.csv.summary.json`, optional `dvc.lock` hashes, feature-contract hash, git commit, package versions). `--mlflow-uri` logs aggregates to a local store only ([tracking.py](src/sepsis_warning/tracking.py), `tests/test_tracking.py`). MLflow approved as optional `tracking` extra. To do: real-run demo with MLflow installed; registry and model retrieval after review. |
+| L02 | FastAPI service | In review | - | 2026-11-09 | `serve` command: `GET /health`, `POST /score`; stateless full-history requests, 422 invalid input, 409 model mismatch, localhost-only by default, no auth ([service.py](src/sepsis_warning/service.py), [api.py](src/sepsis_warning/api.py)). Tests: replay parity, prefix scoring, concurrent isolation, error cases (`tests/test_service.py`, `tests/test_api.py`). Synthetic models only. FastAPI as optional `serve` extra needs team OK. |
 | L03 | Docker image | Not started | - | - | - |
-| L04 | CI/CD with GitHub Actions | Not started | - | - | - |
+| L04 | CI/CD with GitHub Actions | In review | - | 2026-11-09 | [.github/workflows/tests.yml](.github/workflows/tests.yml): read-only permissions, no secrets, refuses committed data/model files, runs unit tests, the causal-feature script and the synthetic demo. No deployment. To do: confirm the first run passes. |
 | L05 | Latency tests | Not started | - | - | - |
 | L06 | AWS deployment design | In progress | - | 2026-11-08 | Modular CloudFormation prototype in `infra/cloudformation/`; static validation only, no AWS deployment. Initial scope: public ALB, private Fargate tasks, no API Gateway/auth. |
 | L07 | Prepare slides 13, 14 | Not started | - | - | - |
