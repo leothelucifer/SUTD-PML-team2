@@ -1,0 +1,58 @@
+schema: '2.0'
+stages:
+  prepare:
+    cmd: python -m sepsis_warning prepare --data data/physionet --output 
+      data/physionet/combined.parquet
+    deps:
+    - path: data/physionet/training_setA
+      hash: md5
+      md5: 67808c65aabd8c665ebfc8a8557d2335.dir
+      size: 131388704
+      nfiles: 20336
+    - path: data/physionet/training_setB
+      hash: md5
+      md5: 6b49408e3e37bc83daa3dd803dc32c15.dir
+      size: 123668780
+      nfiles: 20000
+    - path: src/sepsis_warning/data.py
+      hash: md5
+      md5: 90c213dff8d9a861b3aa939c4672fb5e
+      size: 7016
+    - path: src/sepsis_warning/prepare.py
+      hash: md5
+      md5: 570faf19fd9ef2ec4a72e0a0bf0051b1
+      size: 4058
+    outs:
+    - path: data/physionet/combined.parquet
+      hash: md5
+      md5: 91617275ffa636f0bdb3e5230301b7eb
+      size: 18798934
+    - path: data/physionet/combined.parquet.summary.json
+      hash: md5
+      md5: 41bb2ce276a7fb7b93a4f5c321ed665c
+      size: 1061
+  split:
+    cmd: python -m sepsis_warning split --data data/physionet/combined.parquet 
+      --output data/physionet/splits.csv
+    deps:
+    - path: data/physionet/combined.parquet
+      hash: md5
+      md5: 91617275ffa636f0bdb3e5230301b7eb
+      size: 18798934
+    - path: src/sepsis_warning/data.py
+      hash: md5
+      md5: 90c213dff8d9a861b3aa939c4672fb5e
+      size: 7016
+    - path: src/sepsis_warning/splits.py
+      hash: md5
+      md5: e7b249a2554c743dd237f144e099fe79
+      size: 4059
+    outs:
+    - path: data/physionet/splits.csv
+      hash: md5
+      md5: 5ecff1ce2541942b7e3fe3c50a67672a
+      size: 944050
+    - path: data/physionet/splits.csv.summary.json
+      hash: md5
+      md5: 3d7415270acbf867c05741304a261641
+      size: 720

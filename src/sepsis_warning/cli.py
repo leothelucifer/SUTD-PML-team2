@@ -24,6 +24,9 @@ from .monitoring import REPLAY_SPLITS, MonitoringConfig, replay_monitoring, setu
 from .policy import apply_policy, summarize, tune_threshold
 from .prepare import prepare_parquet, write_summary
 from .report import write_report
+from .splits import write_splits
+from .tracking import check_tracking_uri, log_run, require_mlflow, run_metadata
+from .schema import extreme_value_counts, validate_hourly
 from .sirs_failures import failure_tables
 from .splits import load_split_patients, write_splits
 from .tracking import check_tracking_uri, log_run, require_mlflow, run_metadata
@@ -209,6 +212,26 @@ def run_baselines(args):
     return result
 
 
+def run_server(args):
+    if args.host not in ("127.0.0.1", "localhost", "::1") and not args.allow_non_local_host:
+        raise ValueError(f"--host {args.host} exposes an unauthenticated API; pass --allow-non-local-host if agreed")
+    try:
+        import uvicorn
+
+        from .api import create_app
+    except ImportError as error:
+        raise RuntimeError("the API needs the serve extra; run `pip install -e .[serve]`") from error
+    from .service import ModelMismatch, ScoringService
+
+    try:
+        service = ScoringService.from_path(args.model, args.model_sha256)
+    except ModelMismatch as error:
+        raise ValueError(str(error)) from error
+    health = service.health()
+    print(f"Serving {health['model_name']} (bundle {health['bundle_sha256'][:12]}) on {args.host}:{args.port}", flush=True)
+    if health["synthetic_model"]:
+        print("WARNING: synthetic fixture model; scores are meaningless", flush=True)
+    uvicorn.run(create_app(service), host=args.host, port=args.port, workers=1)
 def run_sirs_failures(args):
     """Aggregate SIRS failure patterns. Validation split only, by design."""
     cohorts, _ = load_cohorts(args)
@@ -217,6 +240,24 @@ def run_sirs_failures(args):
         table.to_csv(args.output / f"{name}.csv", index=False)
         print(f"\n{name}\n{table.round(3).to_string(index=False)}", flush=True)
     print(f"\nTables: {args.output.resolve()}", flush=True)
+
+
+def run_validate(args):
+    """Check every stay against the hard rules, then count review flags on train only."""
+    for path, step in [(args.data, "prepare"), (args.splits, "split")]:
+        if not path.exists():
+            raise ValueError(f"{path} not found; run `{step}` first")
+    frame = pd.read_parquet(args.data)
+    validate_hourly(frame)
+    print(f"All {frame.groupby(['hospital', 'patient_id']).ngroups} stays and {len(frame)} rows pass the hard rules.", flush=True)
+    splits = pd.read_csv(args.splits, dtype=str)
+    train = splits.loc[splits["split"] == "train", ["hospital", "patient_id"]]
+    table = extreme_value_counts(frame.merge(train, on=["hospital", "patient_id"]))
+    args.output.mkdir(parents=True, exist_ok=True)
+    path = args.output / "extreme_value_review_train.csv"
+    table.to_csv(path, index=False)
+    print(f"\nReview flags, training stays only (nothing rejected):\n{table.to_string(index=False)}")
+    print(f"\nReview table: {path.resolve()}", flush=True)
 
 
 DATA_HELP = "combined.parquet (uses the saved split), or a folder of training_setA/B (re-splits with --seed)"
@@ -296,6 +337,12 @@ def main():
     baseline.add_argument("--seed", type=int, default=42)
     baseline.add_argument("--cooldown", type=int, default=6)
     baseline.add_argument("--figures", type=Path, default=Path("reports/figures"))
+    validate = sub.add_parser(
+        "validate", help="Check the combined Parquet against the Pandera rules (needs the checks extra)"
+    )
+    validate.add_argument("--data", type=Path, default=Path("data/physionet/combined.parquet"))
+    validate.add_argument("--splits", type=Path, default=Path("data/physionet/splits.csv"))
+    validate.add_argument("--output", type=Path, default=Path("artifacts/data_checks"))
     failures = sub.add_parser(
         "sirs-failures", help="Aggregate patterns of where SIRS fails (validation split only)"
     )
@@ -384,6 +431,8 @@ def main():
             if args.cooldown < 0:
                 raise ValueError("cooldown must be nonnegative")
             run_baselines(args)
+        elif args.command == "validate":
+            run_validate(args)
         elif args.command == "sirs-failures":
             if args.cooldown < 0:
                 raise ValueError("cooldown must be nonnegative")

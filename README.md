@@ -233,6 +233,25 @@ counts). Both stay in the git-ignored `data/` folder.
 Code: [src/sepsis_warning/baselines.py](src/sepsis_warning/baselines.py).
 Tests: [tests/test_baselines.py](tests/test_baselines.py).
 
+## Data checks and versioning
+
+These are optional installs, so nothing else depends on them.
+
+```bash
+python -m pip install -e ".[checks]"
+python -m sepsis_warning validate
+```
+
+`validate` checks every stay against the written hard rules in
+`src/sepsis_warning/schema.py`: required columns, numeric types, no infinite
+values, labels that are 0 or 1 and never drop back to 0, and consecutive hours.
+Blank clinical values are allowed. It also counts readings outside broad review
+limits on the training stays only. Those limits are this project's own, and they
+never reject data. Reports show counts only, and small counts appear as `<10`.
+
+DVC records which data files belong with this code: see
+[docs/data-versioning.md](docs/data-versioning.md).
+
 ## What is implemented
 
 | Component | First implementation |
