@@ -50,23 +50,66 @@ Check the restored files against these SHA-256 values:
 for hospital B. The raw files are not stored in the remote, as they can be
 downloaded again from PhysioNet.
 
-## Restore from the SharePoint copy (once you have been added)
+## Get the data from SharePoint (once you have been added)
 
 Members will be added only after the licence question (R14) is settled. Until then,
 please use the rebuild steps below.
 
-1. Open the SharePoint site, go to **Documents**, click **Sync**, and allow OneDrive to open.
-2. In File Explorer, right-click the `dvc-storage` folder and choose **Always keep on this device**.
-3. Point DVC at your own synced folder and restore the files:
+DVC cannot read the SharePoint website directly. OneDrive copies the site to a normal
+folder on your computer, and DVC reads from that folder.
+
+### One-time setup
+
+1. Get the latest code with `git pull`. DVC needs `dvc.yaml` and `dvc.lock` from the repo.
+2. Install DVC:
+
+   ```bash
+   python -m pip install -e ".[dvc]"
+   ```
+
+3. Open the SharePoint site from your invitation email. Go to **Documents** and click
+   **Sync** (it may be under **...**). Allow OneDrive to open, and sign in with your SUTD account.
+4. In File Explorer (Windows) or Finder (Mac), find the synced `dvc-storage` folder.
+   Right-click it and choose **Always keep on this device**.
+5. Wait until everything inside `dvc-storage` shows a green tick, meaning it has finished downloading.
+6. Copy the folder's full path:
+   - Windows: right-click the folder and choose **Copy as path**.
+   - Mac: right-click the folder, hold **Option**, and choose **Copy "dvc-storage" as Pathname**.
+7. In the project folder, tell DVC where your copy is. Paste your own path, as it is
+   different on every computer. It is saved in the Git-ignored `.dvc/config.local`.
+
+   ```bash
+   dvc remote add -d --local shared "<paste your path here>"
+   ```
+
+### Get the data
 
 ```bash
-python -m pip install -e ".[dvc]"
-dvc remote add -d --local shared "<path to your synced dvc-storage folder>"
 dvc pull
 ```
 
-The path is different on every computer, so it stays in the Git-ignored
-`.dvc/config.local`. Please do not rename or delete anything inside `dvc-storage`.
+You should see `4 files fetched and 4 files added`, and these files in `data/physionet/`:
+`combined.parquet`, `combined.parquet.summary.json`, `splits.csv` and
+`splits.csv.summary.json`. Check them against the SHA-256 values in the table above.
+
+**Commands you can run with these files:** `baseline`, `validate`, `compare-hospitals`
+and `sirs-failures`. `train`, `missingness` and the monitoring commands read the raw
+`.psv` files, so they still need the PhysioNet download in the README.
+
+### If something goes wrong
+
+| Problem | Fix |
+|---|---|
+| `dvc` is not recognised | Redo step 2, in the same Python environment you use for the project. |
+| `dvc pull` says files are missing | OneDrive has not finished downloading. Wait for the green ticks (step 5) and try again. |
+| DVC says no remote is set | Redo step 7. |
+| Files look wrong | Compare the SHA-256 values with the table above. |
+
+Please do not rename, move or delete anything inside `dvc-storage`. Folder names such as
+`91` and `5e` are how DVC stores the files.
+
+Tested on 10 Nov 2026: a fresh clone with no data pulled all 4 files from the synced
+folder, and both SHA-256 values matched.
 
 ## Rebuild the same files on your own machine
 
