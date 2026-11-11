@@ -1,7 +1,7 @@
-"""Train the hand-written NumPy logistic regression and report statistics.
+"""Train the NumPy logistic regression (sepsis_warning.logistic) and report statistics.
 
-    python scripts/handwritten_logreg.py --data data/physionet/combined.parquet \
-        --splits data/physionet/splits.csv --output artifacts/handwritten
+    python scripts/evaluate_logistic.py --data data/physionet/combined.parquet \
+        --splits data/physionet/splits.csv --output artifacts/logistic
 
 Fits on train, calibrates on the calibration split, and evaluates and sets the
 alert threshold on validation only. The test splits are never read. Outputs
@@ -19,7 +19,7 @@ from sklearn.linear_model import LogisticRegression
 
 from sepsis_warning.baselines import auroc, average_precision
 from sepsis_warning.features import META, feature_table
-from sepsis_warning.handwritten import CalibratedNumpyModel, NumpyLogisticRegression, PlattCalibrator
+from sepsis_warning.logistic import CalibratedLogistic, NewtonLogisticRegression, PlattCalibrator
 from sepsis_warning.policy import apply_policy, summarize, tune_threshold
 from sepsis_warning.splits import load_split_patients
 
@@ -45,7 +45,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data", type=Path, default=Path("data/physionet/combined.parquet"))
     parser.add_argument("--splits", type=Path, default=Path("data/physionet/splits.csv"))
-    parser.add_argument("--output", type=Path, default=Path("artifacts/handwritten"))
+    parser.add_argument("--output", type=Path, default=Path("artifacts/logistic"))
     parser.add_argument("--window", type=int, default=6)
     parser.add_argument("--C", type=float, default=0.3)
     parser.add_argument("--budget", type=float, default=0.2)
@@ -59,10 +59,10 @@ def main():
     y = {name: table["label"].to_numpy(dtype=int) for name, table in tables.items()}
 
     started = time.perf_counter()
-    model = NumpyLogisticRegression(C=args.C).fit(X["train"], y["train"])
+    model = NewtonLogisticRegression(C=args.C).fit(X["train"], y["train"])
     fit_seconds = time.perf_counter() - started
     calibrator = PlattCalibrator().fit(model.decision_function(X["calibration"]), y["calibration"])
-    calibrated = CalibratedNumpyModel(model, calibrator)
+    calibrated = CalibratedLogistic(model, calibrator)
 
     raw_val = model.predict_proba(X["validation"])[:, 1]
     cal_val = calibrated.predict_proba(X["validation"])[:, 1]
@@ -75,7 +75,7 @@ def main():
 
     # Independent check: scikit-learn on the same scaled inputs and objective.
     reference = LogisticRegression(C=args.C, class_weight="balanced", solver="lbfgs", max_iter=5000, tol=1e-10)
-    reference.fit(model.preprocessor.transform(X["train"]), y["train"])
+    reference.fit(model.scaler.transform(X["train"]), y["train"])
     coef_gap = float(np.max(np.abs(reference.coef_[0] - model.coef_)))
 
     top = np.argsort(-np.abs(model.coef_))[:10]

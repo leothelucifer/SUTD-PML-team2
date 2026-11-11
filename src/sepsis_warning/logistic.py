@@ -1,10 +1,11 @@
-"""Hand-written logistic regression, imputation, scaling and Platt calibration.
+"""Logistic regression in NumPy: median fill, scaling, Newton fit and Platt calibration.
 
 Everything that is fitted here is plain NumPy: no scikit-learn estimator is
 used. The steps follow the project's fit boundaries:
 
-* ``fit`` on the train split: median fill values, scaling and coefficients.
-* ``fit_platt`` on the calibration split, with the model frozen.
+* ``NewtonLogisticRegression.fit`` on the train split: median fill values,
+  scaling and coefficients.
+* ``PlattCalibrator.fit`` on the calibration split, with the model frozen.
 * threshold and alert policy on validation (``policy.tune_threshold``).
 
 The model minimises the class-weighted log loss plus an L2 penalty on the
@@ -48,14 +49,14 @@ def weighted_log_loss(y, p, weights) -> float:
 
 
 @dataclass
-class Preprocessor:
+class MedianScaler:
     """Training-split medians for missing values, then standardisation."""
 
     medians: np.ndarray = None
     means: np.ndarray = None
     scales: np.ndarray = None
 
-    def fit(self, X: np.ndarray) -> "Preprocessor":
+    def fit(self, X: np.ndarray) -> "MedianScaler":
         X = np.asarray(X, dtype=np.float64)
         observed = ~np.isnan(X)
         # A column with no training values gets 0: it carries no information.
@@ -75,7 +76,7 @@ class Preprocessor:
 
 
 @dataclass
-class NumpyLogisticRegression:
+class NewtonLogisticRegression:
     """L2-regularised, class-weighted logistic regression fitted by Newton's method."""
 
     C: float = 0.3
@@ -85,12 +86,12 @@ class NumpyLogisticRegression:
     intercept_: float = 0.0
     history: list = field(default_factory=list)
     converged: bool = False
-    preprocessor: Preprocessor = None
+    scaler: MedianScaler = None
 
-    def fit(self, X: np.ndarray, y: np.ndarray) -> "NumpyLogisticRegression":
+    def fit(self, X: np.ndarray, y: np.ndarray) -> "NewtonLogisticRegression":
         y = np.asarray(y, dtype=np.float64)
-        self.preprocessor = Preprocessor().fit(X)
-        Z = self.preprocessor.transform(X)
+        self.scaler = MedianScaler().fit(X)
+        Z = self.scaler.transform(X)
         n, d = Z.shape
         design = np.hstack([Z, np.ones((n, 1))])  # last column is the intercept
         weights = balanced_weights(y.astype(int))
@@ -118,7 +119,7 @@ class NumpyLogisticRegression:
         return self
 
     def decision_function(self, X: np.ndarray) -> np.ndarray:
-        return self.preprocessor.transform(X) @ self.coef_ + self.intercept_
+        return self.scaler.transform(X) @ self.coef_ + self.intercept_
 
     def predict_proba(self, X: np.ndarray) -> np.ndarray:
         p = sigmoid(self.decision_function(X))
@@ -158,10 +159,10 @@ class PlattCalibrator:
 
 
 @dataclass
-class CalibratedNumpyModel:
+class CalibratedLogistic:
     """Frozen logistic regression plus a Platt calibrator; sklearn-style predict_proba."""
 
-    model: NumpyLogisticRegression
+    model: NewtonLogisticRegression
     calibrator: PlattCalibrator
 
     def predict_proba(self, X: np.ndarray) -> np.ndarray:
