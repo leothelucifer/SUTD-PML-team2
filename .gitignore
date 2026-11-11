@@ -1,5 +1,6 @@
 # Local Python environments and generated package/build files.
 .venv/
+.venv312/
 venv/
 env/
 ENV/
