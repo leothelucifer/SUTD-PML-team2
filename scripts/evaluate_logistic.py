@@ -20,7 +20,7 @@ from sklearn.linear_model import LogisticRegression
 from sepsis_warning.baselines import auroc, average_precision
 from sepsis_warning.features import META, feature_table
 from sepsis_warning.logistic import CalibratedLogistic, NewtonLogisticRegression, PlattCalibrator
-from sepsis_warning.policy import apply_policy, summarize, tune_threshold
+from sepsis_warning.policy import apply_policy, tune_threshold
 from sepsis_warning.splits import load_split_patients
 
 
@@ -64,6 +64,8 @@ def main():
     calibrator = PlattCalibrator().fit(model.decision_function(X["calibration"]), y["calibration"])
     calibrated = CalibratedLogistic(model, calibrator)
 
+    # Uncalibrated (class-weighted) scores; used for train ranking metrics and the Brier comparison.
+    train_scores = model.predict_proba(X["train"])[:, 1]
     raw_val = model.predict_proba(X["validation"])[:, 1]
     cal_val = calibrated.predict_proba(X["validation"])[:, 1]
     validation = tables["validation"][META].copy()
@@ -90,8 +92,8 @@ def main():
         "matches_sklearn": {"max_abs_coefficient_difference": coef_gap,
                             "intercept_difference": float(abs(reference.intercept_[0] - model.intercept_))},
         "platt": {"a": calibrator.a, "b": calibrator.b},
-        "train": {"auroc": auroc(y["train"], model.predict_proba(X["train"])[:, 1]),
-                  "average_precision": average_precision(y["train"], model.predict_proba(X["train"])[:, 1])},
+        "train": {"auroc": auroc(y["train"], train_scores),
+                  "average_precision": average_precision(y["train"], train_scores)},
         "validation": {
             "auroc": auroc(y["validation"], cal_val),
             "average_precision": average_precision(y["validation"], cal_val),
@@ -109,8 +111,6 @@ def main():
             "fn": int((labels & ~decided).sum()), "tn": int((~labels & ~decided).sum()),
         },
         "top_coefficients": [{"feature": columns[i], "coefficient": float(model.coef_[i])} for i in top],
-        "baseline_validation": summarize(apply_policy(
-            validation.assign(probability=float(y["train"].mean())), 0.5, args.cooldown))["normalized_hourly_utility"],
     }
     args.output.mkdir(parents=True, exist_ok=True)
     (args.output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")

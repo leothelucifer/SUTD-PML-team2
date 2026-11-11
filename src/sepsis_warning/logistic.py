@@ -17,6 +17,13 @@ with ``s_i = n / (2 * n_class(y_i))`` ("balanced" weights) and ``lam = 1 / C``,
 the same objective as scikit-learn's ``LogisticRegression(C=C,
 class_weight="balanced")``. It is solved with Newton's method (iteratively
 reweighted least squares), which converges in a few steps for this size.
+
+This is the NumPy counterpart of the ``logistic_regression`` candidate in
+``modeling.py`` (sklearn pipeline: median imputer, scaler, LogisticRegression
+with C=0.3 and balanced weights). Both minimise the same objective, so their
+coefficients agree; ``scripts/evaluate_logistic.py`` checks this. The median
+fill here works on the feature matrix, unlike ``features.fit_training_fallback``,
+which fills raw measurements before features are built.
 """
 
 from dataclasses import dataclass, field
