@@ -41,13 +41,13 @@ Slide numbers follow the 22-slide deck in `docs/presentation/` (see its README f
 
 | ID | Task | Status | Due date | Updated | Evidence / notes |
 |---|---|---|---|---|---|
-| J01 | Causal rolling features | Not started | - | - | - |
-| J02 | Missing-value handling | Not started | - | - | - |
-| J03 | Hours since last lab test | Not started | - | - | - |
-| J04 | Leakage tests: corrupt hour t+1 and verify earlier features remain unchanged | Not started | - | - | - |
-| J05 | Fast utility-score function | Not started | - | - | - |
-| J06 | Shared feature module | Not started | - | - | - |
-| J07 | Prepare slides 6, 7 | Not started | - | - | - |
+| J01 | Causal rolling features | Done | - | 2026-11-11 | Shared builder in `features.py`: last value, missing-now, never-seen, hours since seen, and a trailing window of mean, std, count and change. Hours since seen use ICULOS, including a stay that starts after hour 1 (`test_stay_starting_after_hour_one_uses_iculos`). Prefix and future-corruption tests in `tests/test_invariants.py`. Merged in PR #51, approved by Leo. `train` uses the 6-hour window. The 3-hour and 12-hour windows from `features_for_windows` are experimental and are not called by `train`. |
+| J02 | Missing-value handling | Done | - | 2026-11-11 | Forward-fill stays inside one stay, has no expiry, and never fills an earlier blank from a later hour. `fit_training_fallback` and `apply_training_fallback` take medians from the tables they are given. Tests cover a validation row, an all-blank training column, an outage, unchanged raw rows, and a reset between patients. Merged in PR #53. `train` still fills blanks with sklearn's imputer. The training-only fallback is experimental and is not called by `train`. |
+| J03 | Hours since last lab test | Done | - | 2026-11-11 | Per-lab hours since seen, missing-now and never-seen, measured in ICU hours from ICULOS. `test_lab_recency_covers_first_hour_gap_and_never_seen` and `test_stay_starting_after_hour_one_uses_iculos`. Merged in PR #51, approved by Leo. The late-start test is on this branch. |
+| J04 | Leakage tests: corrupt hour t+1 and verify earlier features remain unchanged | Done | - | 2026-11-11 | Merged in PR #51: next-hour corruption, prefix scoring matches the full stay, saved-column mismatch refused. Merged in PR #53: training-only fit tests. `test_a_leaking_fill_changes_earlier_rows` substitutes a backward fill and shows the corruption check catches it. The shared builder on the same rows stays unchanged. |
+| J05 | Fast utility-score function | Done | - | 2026-11-11 | `normalized_utility` matches the published example and is timed on 500 patients by 48 hours, 24,000 patient-hours, with no speed limit (`benchmark_utility`). Hourly decisions, separate from cooldown events. Merged in PR #51 and PR #53. |
+| J06 | Shared feature module | Done | - | 2026-11-11 | `train`, replay and the scoring service call `build_features`. `scripts/causal_features.py` calls the same module. The saved column list is stored with the model and rejected when a stay cannot supply it. The exploratory `missingness` command still builds its own feature table. |
+| J07 | Prepare slides 6, 7 | In progress | - | 2026-11-11 | Slides 6 and 7 are drafted in `docs/presentation/source/slides/pipeline.html` and `features.html`. Team review is not recorded. The features slide still lists 3, 6 and 12 hour windows as next work. The 3-hour and 12-hour windows exist as an experimental builder, and `train` uses 6 hours. |
 
 ### Person 3 - Kaiyuan
 
