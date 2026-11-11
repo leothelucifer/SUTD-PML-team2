@@ -1,8 +1,16 @@
 """Hidden Markov model features: state probabilities that use only past and current hours."""
 
-from dataclasses import dataclass
+import json
+from dataclasses import asdict, dataclass
+from pathlib import Path
 
 import numpy as np
+import pandas as pd
+
+# Vital signs used as HMM observations: measured most hours at both hospitals.
+VITALS = ("HR", "MAP", "Resp", "O2Sat")
+# Readings outside these ranges are treated as recording errors and skipped (set to NaN).
+PLAUSIBLE = {"HR": (20, 250), "MAP": (20, 200), "Resp": (4, 70), "O2Sat": (50, 100)}
 
 
 def forward_filter(start: np.ndarray, transition: np.ndarray, emission: np.ndarray) -> np.ndarray:
@@ -95,9 +103,9 @@ def forward_backward(start: np.ndarray, transition: np.ndarray, log_emission: np
 
     gamma = alpha * beta
     gamma /= gamma.sum(axis=1, keepdims=True)
-    xi_sum = np.zeros((states, states))
-    for t in range(hours - 1):
-        xi_sum += alpha[t][:, None] * transition * (emission[t + 1] * beta[t + 1])[None, :] / scale[t + 1]
+    # xi summed over hours: alpha[t, i] * A[i, j] * b_j(x[t+1]) * beta[t+1, j] / scale[t+1]
+    ahead = emission[1:] * beta[1:] / scale[1:, None]
+    xi_sum = (alpha[:-1].T @ ahead) * transition
     log_likelihood = np.log(scale).sum() + shift.sum()
     return gamma, xi_sum, log_likelihood
 
@@ -161,3 +169,34 @@ def fit_hmm(stays: list[np.ndarray], n_states: int, n_iter: int = 30, tol: float
         if len(history) > 1 and (history[-1] - history[-2]) / total_hours < tol:
             break
     return GaussianHMM(start, transition, means, stds), history
+
+
+def vital_observations(frame: pd.DataFrame, columns=VITALS) -> np.ndarray:
+    """One stay's vitals as (hours, measurements), with implausible readings set to NaN."""
+    values = frame[list(columns)].to_numpy(dtype=float).copy()
+    for k, name in enumerate(columns):
+        low, high = PLAUSIBLE.get(name, (-np.inf, np.inf))
+        column = values[:, k]
+        column[(column < low) | (column > high)] = np.nan
+    return values
+
+
+def hmm_state_features(frame: pd.DataFrame, model: GaussianHMM, columns=VITALS) -> pd.DataFrame:
+    """hmm_state_0 ... hmm_state_{N-1} for every hour of ONE stay, forward-filtered only."""
+    probabilities = model.filter(vital_observations(frame, columns))
+    names = [f"hmm_state_{k}" for k in range(probabilities.shape[1])]
+    return pd.DataFrame(probabilities, index=frame.index, columns=names)
+
+
+def save_hmm(model: GaussianHMM, path: Path, columns=VITALS, extra: dict | None = None) -> None:
+    """Save parameters as JSON so they can be read without pickle."""
+    content = {key: value.tolist() for key, value in asdict(model).items()}
+    content["columns"] = list(columns)
+    content.update(extra or {})
+    Path(path).write_text(json.dumps(content, indent=2))
+
+
+def load_hmm(path: Path) -> tuple[GaussianHMM, list[str]]:
+    content = json.loads(Path(path).read_text())
+    model = GaussianHMM(*(np.array(content[key]) for key in ("start", "transition", "means", "stds")))
+    return model, content["columns"]

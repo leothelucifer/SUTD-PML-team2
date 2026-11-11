@@ -1,8 +1,11 @@
+import tempfile
 import unittest
+from pathlib import Path
 
 import numpy as np
+import pandas as pd
 
-from sepsis_warning.hmm import fit_hmm, forward_backward
+from sepsis_warning.hmm import fit_hmm, forward_backward, hmm_state_features, load_hmm, save_hmm, vital_observations
 
 START = np.array([0.8, 0.2])
 TRANSITION = np.array([[0.9, 0.1], [0.3, 0.7]])
@@ -62,6 +65,33 @@ class BaumWelch(unittest.TestCase):
         changed = stays[0].copy()
         changed[20:] = 200.0
         np.testing.assert_array_equal(model.filter(stays[0])[:20], model.filter(changed)[:20])
+
+
+class RealDataHelpers(unittest.TestCase):
+    def test_implausible_vitals_become_missing(self):
+        frame = pd.DataFrame({"HR": [80, 0, 300], "MAP": [70, 70, 70], "Resp": [16, 2, 20], "O2Sat": [97, 97, 120]})
+        values = vital_observations(frame)
+        self.assertTrue(np.isnan(values[1, 0]) and np.isnan(values[2, 0]))
+        self.assertTrue(np.isnan(values[1, 2]) and np.isnan(values[2, 3]))
+        self.assertEqual(values[0].tolist(), [80, 70, 16, 97])
+
+    def test_features_have_one_row_per_hour_and_survive_save_load(self):
+        rng = np.random.default_rng(5)
+        stays = [np.column_stack([rng.normal(80, 8, 30), rng.normal(75, 8, 30), rng.normal(18, 3, 30), rng.normal(97, 1, 30)])
+                 for _ in range(20)]
+        model, _ = fit_hmm(stays, n_states=3)
+        frame = pd.DataFrame(stays[0], columns=["HR", "MAP", "Resp", "O2Sat"])
+        frame.loc[3:6, "MAP"] = np.nan
+        features = hmm_state_features(frame, model)
+        self.assertEqual(list(features.columns), ["hmm_state_0", "hmm_state_1", "hmm_state_2"])
+        self.assertEqual(len(features), 30)
+        np.testing.assert_allclose(features.sum(axis=1), np.ones(30))
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "hmm.json"
+            save_hmm(model, path)
+            loaded, columns = load_hmm(path)
+        self.assertEqual(columns, ["HR", "MAP", "Resp", "O2Sat"])
+        pd.testing.assert_frame_equal(hmm_state_features(frame, loaded), features)
 
 
 if __name__ == "__main__":
