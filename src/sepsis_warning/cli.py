@@ -65,21 +65,25 @@ def run_experiment(args):
     if args.output.exists() and any(args.output.iterdir()):
         raise ValueError(f"{args.output} is not empty; use a new output directory")
     args.output.mkdir(parents=True, exist_ok=True)
-    synthetic = (args.data / "SYNTHETIC.json").exists()
-    print("Data mode:", "SYNTHETIC SOFTWARE FIXTURE" if synthetic else "PhysioNet records", flush=True)
-    patients = load_patients(args.data)
-    if not synthetic and any("synthetic_" in p.patient_id for p in patients):
-        raise ValueError("Synthetic filenames found without SYNTHETIC.json marker")
-    splits = split_patients(patients, args.seed)
+    splits, synthetic = load_cohorts(args)
     manifest = []
     for name, cohort in splits.items():
         print(f"{name}: {len(cohort)} patients", flush=True)
         for patient in cohort:
-            path = args.data / f"training_set{patient.hospital}" / f"{patient.patient_id.split(':', 1)[1]}.psv"
+            pid = patient.patient_id.split(":", 1)[1] if ":" in patient.patient_id else patient.patient_id
+            if not args.data.is_file():
+                path = args.data / f"training_set{patient.hospital}" / f"{pid}.psv"
+                sha = hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else None
+            else:
+                path = args.data.parent / f"training_set{patient.hospital}" / f"{pid}.psv"
+                if path.exists():
+                    sha = hashlib.sha256(path.read_bytes()).hexdigest()
+                else:
+                    sha = hashlib.sha256(patient.patient_id.encode("utf-8")).hexdigest()
             manifest.append({
                 "patient_id": patient.patient_id, "hospital": patient.hospital,
                 "split": name, "septic": patient.septic,
-                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                "sha256": sha,
             })
     pd.DataFrame(manifest).to_csv(args.output / "split_manifest.csv", index=False)
     # Only source training/calibration/validation features are built before
@@ -135,10 +139,21 @@ def run_experiment(args):
     }
     write_json(args.output / "config.json", config)
     write_json(args.output / "metrics.json", summary)
+    splits_summary = args.splits_summary
+    if splits_summary is None and args.data.is_file():
+        splits_path = getattr(args, "splits", None) or args.data.with_name("splits.csv")
+        candidate = splits_path.with_name(f"{splits_path.name}.summary.json")
+        if candidate.exists():
+            try:
+                candidate_seed = json.loads(candidate.read_text(encoding="utf-8")).get("seed")
+                if candidate_seed is not None and int(candidate_seed) == int(args.seed):
+                    splits_summary = candidate
+            except Exception:
+                pass
     write_json(args.output / "run_metadata.json", run_metadata(
         args.seed, synthetic=synthetic, window=args.window, budget=args.budget,
         cooldown=args.cooldown, feature_columns=columns,
-        splits_summary=args.splits_summary, dvc_lock=args.dvc_lock,
+        splits_summary=splits_summary, dvc_lock=args.dvc_lock,
     ))
     replay = pd.concat(predictions, ignore_index=True)
     replay.to_csv(args.output / "held_out_predictions.csv", index=False)
@@ -268,9 +283,10 @@ def main():
     sub = parser.add_subparsers(dest="command", required=True)
     demo = sub.add_parser("demo", help="Generate an explicitly synthetic fixture and run it")
     demo.add_argument("--data", type=Path, default=Path("data/synthetic"))
-    for command in [demo, sub.add_parser("train", help="Run on downloaded training_setA/B")]:
+    for command in [demo, sub.add_parser("train", help="Run on downloaded training_setA/B or combined.parquet")]:
         if command is not demo:
-            command.add_argument("--data", type=Path, required=True)
+            command.add_argument("--data", type=Path, required=True, help=DATA_HELP)
+            command.add_argument("--splits", type=Path, default=None, help=SPLITS_HELP)
         command.add_argument("--output", type=Path, default=Path("artifacts/demo" if command is demo else "artifacts/real"))
         command.add_argument("--seed", type=int, default=42)
         command.add_argument("--window", type=int, default=6)
