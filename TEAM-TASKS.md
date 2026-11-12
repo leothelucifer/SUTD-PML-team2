@@ -53,13 +53,13 @@ Slide numbers follow the 22-slide deck in `docs/presentation/` (see its README f
 
 | ID | Task | Status | Due date | Updated | Evidence / notes |
 |---|---|---|---|---|---|
-| K01 | Logistic regression | Not started | - | - | - |
-| K02 | Random forest | Not started | - | - | - |
-| K03 | LightGBM as the main model | Not started | - | - | - |
-| K04 | Probability calibration | Not started | - | - | - |
-| K05 | Alarm threshold and six-hour cooldown | Not started | - | - | - |
-| K06 | Fairness checks | Not started | - | - | - |
-| K07 | Prepare slides 3, 8, 11, 12 | Not started | - | - | - |
+| K01 | Logistic regression | Done | - | 2026-11-13 | Logistic regression baseline with median imputation and standard scaling fitted on Hospital A train. Validation AUROC: 0.795, AP: 0.105, Brier: 0.0204, Utility: 0.250 at alert budget (0.151 alarms/patient-day). Evidence: `artifacts/real/validation_models.csv`. |
+| K02 | Random forest | Done | - | 2026-11-13 | Bounded Random Forest (`n_estimators=80`, `max_depth=8`, `min_samples_leaf=20`) on Hospital A train. Validation AUROC: 0.817, AP: 0.125, Brier: 0.0200, Utility: 0.365, Early detection recall: 57.8% (8h lead time). Evidence: `artifacts/real/validation_models.csv`. |
+| K03 | LightGBM as the main model | Done | - | 2026-11-13 | HistGradientBoosting (histogram-binned tree ensemble) selected as winning model on validation. Validation AUROC: 0.833, AP: 0.136, Brier: 0.0199, Utility: 0.390, Early detection recall: 59.8% (9h lead time). Evaluated on internal test (AUROC 0.829, utility 0.368) and Hospital B external test (AUROC 0.769, utility 0.232). Evidence: `artifacts/real/metrics.json`. |
+| K04 | Probability calibration | Done | - | 2026-11-13 | Fitted sigmoid probability calibration (Platt scaling) via FrozenEstimator on held-out 15% calibration split (3,051 stays) with base estimator frozen. Prevents probability distortion from balanced class weights. Validation Brier score improved from 0.0213 prior to 0.0199. Evidence: `artifacts/real/model.joblib`. |
+| K05 | Alarm threshold and six-hour cooldown | Done | - | 2026-11-13 | Validation-only threshold tuning under clinical budget ceiling (<=0.20 false alarms/patient-day) with 6-hour refractory cooldown. Chosen threshold: 0.06. Achieved 0.192 false alarms/patient-day on validation, 0.176 on internal test, and 0.134 on external test B. Evidence: `artifacts/real/validation_models.csv`, `metrics.json`. |
+| K06 | Fairness checks | In progress | - | 2026-11-13 | Subgroup audit across age groups (<50, 50-64, 65-79, >=80) and recorded gender in progress. |
+| K07 | Prepare slides 3, 8, 11, 12 | In progress | - | 2026-11-13 | Preparing empirical evidence, model selection rationale, and cross-hospital generalization drop for slides 3, 8, 11, and 12. |
 
 ### Person 4 - Josh
 
