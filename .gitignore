@@ -24,6 +24,7 @@ htmlcov/
 # Patient data and experiment outputs (including HTML replays and screenshots).
 /data/
 /artifacts/
+/benchmarks/
 # Guard against raw patient records or models saved outside those directories.
 *.psv
 *.part
