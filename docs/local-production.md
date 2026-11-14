@@ -43,6 +43,7 @@ bash scripts/local_prod.sh test
 `test` checks, all through the load balancer:
 
 - `/health` reports the staged bundle's hash, and `/score` returns valid probabilities;
+- `/model` shows the selected model and its validation-only comparison, and `/predict` scores a ward batch;
 - requests are spread across both tasks;
 - input that contains the label gets a 422;
 - tasks have no published port and cannot reach the internet;

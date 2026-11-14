@@ -27,7 +27,7 @@ stage() {  # resolve a registry URI, copy its bundle, write the env file
   local uri="$1"
   mkdir -p "$STATE"
   ALB_PORT="$ALB_PORT" "$PYTHON" - "$uri" "$MLFLOW_URI" "$STATE" "$ENV_FILE" <<'PY'
-import os, shutil, sys, tempfile
+import json, os, shutil, sys, tempfile
 from pathlib import Path
 from sepsis_warning.registry import resolve_model
 from sepsis_warning.scoring import file_sha256
@@ -37,7 +37,14 @@ path, sha, tags = resolve_model(uri, tracking, download)
 target = state / f"v{tags['version']}"
 target.mkdir(exist_ok=True)
 shutil.copyfile(path, target / "model.joblib")
-os.chmod(target / "model.joblib", 0o644)
+for name in ("selection_metrics.json", "run_metadata.json"):  # for GET /model (validation only)
+    if (path.parent / name).is_file():
+        shutil.copyfile(path.parent / name, target / name)
+(target / "registry.json").write_text(json.dumps({
+    "model_uri": uri, "version": tags["version"],
+    "reviewed_by": tags.get("production_reviewed_by"), "promoted_at": tags.get("production_promoted_at")}))
+for item in target.iterdir():
+    os.chmod(item, 0o644)
 if file_sha256(target / "model.joblib") != sha:
     sys.exit("staged bundle does not match the registry hash")
 shutil.rmtree(download)
@@ -68,6 +75,8 @@ cmd_up() {
   echo "Building sepsis-warning:local"
   build
   compose up -d --wait
+  for _ in $(seq 1 30); do curl -fsS -o /dev/null "$ALB/health" 2>/dev/null && break; sleep 0.5; done
+  curl -fsS -o /dev/null "$ALB/health" || fail "load balancer has no healthy task"
   echo "Load balancer: $ALB  (try: curl $ALB/health)"
 }
 
@@ -83,6 +92,22 @@ cmd_test() {
   score | "$PYTHON" -c 'import json,sys; r=json.load(sys.stdin); assert len(r["hours"])==3 and all(0<=h["probability"]<=1 for h in r["hours"])' \
     || fail "/score response invalid"
   ok "/score returns three valid probabilities"
+
+  curl -fsS "$ALB/model" | "$PYTHON" -c '
+import json, sys
+text = sys.stdin.read(); m = json.loads(text)
+assert m["selection"] and m["selection"]["selected_model"] == m["model_name"], m
+assert not any(w in text for w in ("held_out", "internal_test", "external_test")), "held-out results served"
+print("selected", m["model_name"], "from", len(m["selection"]["candidates"]), "candidates")' >/dev/null \
+    || fail "/model does not describe the selection"
+  ok "/model shows the selected model and its validation-only comparison"
+
+  printf '{"stays":[{"patient_id":"bed-1","hours":%s},{"patient_id":"bed-2","hours":%s}]}' \
+    "$("$PYTHON" -c 'import json,sys; print(json.dumps(json.loads(sys.argv[1])["hours"]))' "$score_body")" '[{"ICULOS":1,"HR":80}]' \
+    | curl -fsS -H 'Content-Type: application/json' -d @- "$ALB/predict" \
+    | "$PYTHON" -c 'import json,sys; r=json.load(sys.stdin); assert [p["patient_id"] for p in r["predictions"]]==["bed-1","bed-2"] and r["predictions"][0]["hour"]==3' \
+    || fail "/predict response invalid"
+  ok "/predict returns the current risk for each stay in a ward batch"
 
   local upstreams; upstreams="$(for _ in 1 2 3 4 5 6; do curl -fsS -o /dev/null -D - -H 'Content-Type: application/json' \
     -d "$score_body" "$ALB/score" | tr -d '\r' | awk -F': ' 'tolower($1)=="x-upstream"{print $2}'; done | sort -u | wc -l)"
