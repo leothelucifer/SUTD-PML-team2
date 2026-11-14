@@ -24,8 +24,13 @@ from .monitoring import REPLAY_SPLITS, MonitoringConfig, replay_monitoring, setu
 from .policy import apply_policy, summarize, tune_threshold
 from .prepare import prepare_parquet, write_summary
 from .report import write_report
+from .scoring import load_bundle
 from .splits import write_splits
 from .tracking import check_tracking_uri, log_run, require_mlflow, run_metadata
+from .ward import (
+    HELD_OUT_SPLITS, SELECTION_SPLITS, build_payload, check_split, choose_stays,
+    score_locally, score_via_api, write_ward,
+)
 from .schema import extreme_value_counts, validate_hourly
 from .sirs_failures import failure_tables
 from .splits import load_split_patients, write_splits
@@ -278,6 +283,38 @@ DATA_HELP = "combined.parquet (uses the saved split), or a folder of training_se
 SPLITS_HELP = "Saved split for a Parquet --data; defaults to splits.csv next to it"
 
 
+def run_ward(args):
+    """Write the ICU ward replay page for a saved model (see ward.py)."""
+    check_split(args.split, args.after_freeze)
+    if args.output.exists():
+        raise ValueError(f"{args.output} already exists; choose a new output file")
+    cohorts, synthetic = load_cohorts(args)
+    cohort = cohorts[args.split]
+    stays = choose_stays(cohort, args.beds, args.septic_share, args.max_hours, args.seed)
+    if args.api_url:
+        frames, details = score_via_api(args.api_url, stays)
+        if bool(details["synthetic_model"]) != synthetic:
+            raise ValueError("The API's model and the data disagree on whether they are synthetic")
+        model_name, threshold, cooldown = details["model_name"], details["threshold"], details["cooldown_hours"]
+        scored_by = f"POST /score on {args.api_url}, one request per bed, as the hospital engine would send"
+    else:
+        bundle = load_bundle(args.model)
+        if bool(bundle["synthetic"]) != synthetic:
+            raise ValueError("The model bundle and the data disagree on whether they are synthetic")
+        frames = score_locally(bundle, stays)
+        model_name, threshold, cooldown = bundle["model_name"], bundle["threshold"], bundle["cooldown"]
+        scored_by = "Saved model scored in-process, with the same feature code as the API"
+    payload = build_payload(
+        frames, model_name=model_name, threshold=threshold, cooldown=cooldown, synthetic=synthetic,
+        split=args.split, scored_by=scored_by, seed=args.seed,
+        cohort_septic_share=sum(p.septic for p in cohort) / len(cohort),
+    )
+    write_ward(args.output, payload)
+    if not synthetic:
+        print("Contains PhysioNet stays: keep it private and out of Git.", flush=True)
+    print(f"Ward replay: {args.output.resolve()}", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -393,6 +430,20 @@ def main():
         "--allow-non-local-host", action="store_true",
         help="Bind beyond localhost. The API has no authentication; agree this with the team first",
     )
+    ward = sub.add_parser("ward", help="Write an ICU ward replay page for a saved model (research demo)")
+    ward.add_argument("--model", type=Path, help="model.joblib produced by train/demo (not needed with --api-url)")
+    ward.add_argument("--api-url", default=None, help="Score through a running API instead, e.g. http://127.0.0.1:8000")
+    ward.add_argument("--data", type=Path, required=True, help=DATA_HELP)
+    ward.add_argument("--splits", type=Path, help=SPLITS_HELP)
+    ward.add_argument("--split", choices=SELECTION_SPLITS + HELD_OUT_SPLITS, default="validation")
+    ward.add_argument("--after-freeze", action="store_true",
+                      help="Allow internal_test or external_test; only once the model is frozen")
+    ward.add_argument("--beds", type=int, default=12)
+    ward.add_argument("--septic-share", type=float, default=0.3,
+                      help="Share of beds given to stays that become septic (over-represented for the demo)")
+    ward.add_argument("--max-hours", type=int, default=72, help="Hours shown per stay")
+    ward.add_argument("--seed", type=int, default=42)
+    ward.add_argument("--output", type=Path, default=Path("artifacts/ward/ward.html"))
     args = parser.parse_args()
     try:
         if args.command in ["demo", "train"] and args.mlflow_uri:
@@ -420,6 +471,12 @@ def main():
             print(args.output.resolve())
         elif args.command == "serve":
             run_server(args)
+        elif args.command == "ward":
+            if not args.model and not args.api_url:
+                raise ValueError("pass --model, or --api-url for a running API")
+            if args.max_hours < 1:
+                raise ValueError("max-hours must be positive")
+            run_ward(args)
         elif args.command == "baseline":
             if args.cooldown < 0:
                 raise ValueError("cooldown must be nonnegative")
