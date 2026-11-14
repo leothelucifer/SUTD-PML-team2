@@ -60,3 +60,16 @@ jobs:
             --data "$RUNNER_TEMP/synthetic" \
             --output "$RUNNER_TEMP/demo"
           test -f "$RUNNER_TEMP/demo/run_metadata.json"
+
+  # L03: build the scoring image and smoke-test it with synthetic data only.
+  # Nothing is pushed to a registry.
+  docker-image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Build and smoke-test the scoring image
+        run: bash scripts/docker_smoke_test.sh sepsis-warning:ci

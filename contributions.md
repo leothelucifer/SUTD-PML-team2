@@ -78,10 +78,10 @@ Slide numbers follow the 22-slide deck in `docs/presentation/` (see its README f
 |---|---|---|---|---|---|
 | L01 | MLflow tracking and registry | Not started | - | - | - |
 | L02 | FastAPI service | Not started | - | - | - |
-| L03 | Docker image | Not started | - | - | - |
-| L04 | CI/CD with GitHub Actions | Not started | - | - | - |
-| L05 | Latency tests | Not started | - | - | - |
-| L06 | AWS deployment design | In progress | - | 2026-11-10 | Modular CloudFormation prototype in `infra/cloudformation/` (networking, encrypted artifacts/state, ECS service, monitoring), merged in PR #50. Static validation only, nothing deployed. Still to do: document the boundary, encryption, cost and rollback, and get owner review. |
+| L03 | Docker image | In review | - | 2026-11-13 | `Dockerfile` (non-root uid 10001, pinned `requirements.txt`, model mounted read-only, allowlist `.dockerignore`, health check). `scripts/docker_smoke_test.sh` passes: non-root, no data/model files in the image, synthetic demo model, `/health`, `/score`, 422 on a label in the input. CI job `docker-image` runs it. See `docs/serving.md`. |
+| L04 | CI/CD with GitHub Actions | Done | - | 2026-11-13 | [.github/workflows/tests.yml](.github/workflows/tests.yml): read-only permissions, no secrets, refuses committed data/model files, runs unit tests, the causal-feature script and the synthetic demo. No deployment. Green on main `5a0a5ea` (fork run #7, identical commit) and on `47896ad` (run #6). |
+| L05 | Latency tests | In review | - | 2026-11-13 | `scripts/latency.py` (standard library): p50/p95/p99, throughput and failures per stay length and concurrency, synthetic stays. Docker image, 2 CPUs: p50 41 ms / p95 67 ms / p99 116 ms for a 24 h stay, 49/75/121 ms for 336 h, one client; requests queue under concurrency (about 15-20 req/s, single worker by design). No numeric target agreed yet. `docs/serving.md`. |
+| L06 | AWS deployment design | In progress | - | 2026-11-13 | CloudFormation in `infra/cloudformation/`, static validation only (cfn-lint clean), no AWS deployment. Load balancer is now internal in private subnets by default, matching the deck's private design; `internet-facing` remains for a synthetic-only demo. README table lists what is aligned and what is not built (VPN, private API Gateway with OAuth2, SageMaker, EventBridge, Secrets Manager, CloudTrail). |
 | L07 | Prepare slides 16, 17, 18 | Not started | - | - | - |
 
 ### Person 6 - Mashie
