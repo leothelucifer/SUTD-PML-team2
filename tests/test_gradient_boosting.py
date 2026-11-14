@@ -3,7 +3,7 @@
 Synthetic data only: these tests check the binning, split search and boosting
 maths, not real-cohort performance.
 
-Run: MPLBACKEND=Agg .venv/bin/python -m unittest tests.test_numpy_gbm -v
+Run: MPLBACKEND=Agg .venv/bin/python -m unittest tests.test_gradient_boosting -v
 """
 
 import ast
@@ -16,11 +16,11 @@ import numpy as np
 import pandas as pd
 from sklearn.ensemble import HistGradientBoostingClassifier
 
-from sepsis_warning import numpy_gbm
+from sepsis_warning import gradient_boosting
 from sepsis_warning.baselines import auroc
-from sepsis_warning.numpy_gbm import NumpyGradientBoosting
-from sepsis_warning.numpy_trees import FeatureBinner
-from sepsis_warning.numpy_models import calibrate_frozen, sigmoid
+from sepsis_warning.gradient_boosting import NumpyGradientBoosting
+from sepsis_warning.histogram_trees import FeatureBinner
+from sepsis_warning.logistic import calibrate_frozen, sigmoid
 
 
 def synthetic(n, seed, features=10):
@@ -181,14 +181,14 @@ class AgainstSklearn(unittest.TestCase):
 
 class NoSklearn(unittest.TestCase):
     def test_module_imports_only_numpy_and_local_code(self):
-        tree = ast.parse(Path(numpy_gbm.__file__).read_text())
+        tree = ast.parse(Path(gradient_boosting.__file__).read_text())
         imported = set()
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 imported.update(alias.name.split(".")[0] for alias in node.names)
             elif isinstance(node, ast.ImportFrom):
                 imported.add((node.module or "").split(".")[0])
-        self.assertEqual(imported, {"numpy", "numpy_models", "numpy_trees"})
+        self.assertEqual(imported, {"numpy", "logistic", "histogram_trees"})
 
 
 if __name__ == "__main__":

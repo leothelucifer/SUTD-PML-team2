@@ -20,7 +20,7 @@ random forest uses.
 
 import numpy as np
 
-from .numpy_models import _as_matrix
+from .logistic import _as_matrix
 
 
 class FeatureBinner:

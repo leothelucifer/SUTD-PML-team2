@@ -3,7 +3,7 @@
 Synthetic data only: these tests check the Gini split search, bootstrap and
 averaging, not real-cohort performance.
 
-Run: MPLBACKEND=Agg .venv/bin/python -m unittest tests.test_numpy_forest -v
+Run: MPLBACKEND=Agg .venv/bin/python -m unittest tests.test_random_forest -v
 """
 
 import ast
@@ -19,10 +19,10 @@ from sklearn.impute import SimpleImputer
 from sklearn.pipeline import make_pipeline
 from sklearn.tree import DecisionTreeClassifier
 
-from sepsis_warning import numpy_forest, numpy_trees
+from sepsis_warning import random_forest, histogram_trees
 from sepsis_warning.baselines import auroc
-from sepsis_warning.numpy_forest import NumpyRandomForest
-from sepsis_warning.numpy_models import calibrate_frozen, sigmoid
+from sepsis_warning.random_forest import NumpyRandomForest
+from sepsis_warning.logistic import calibrate_frozen, sigmoid
 
 
 def synthetic(n, seed, features=10):
@@ -155,14 +155,14 @@ class Forest(unittest.TestCase):
 
 class NoSklearn(unittest.TestCase):
     def test_modules_import_only_numpy_and_local_code(self):
-        for module in (numpy_forest, numpy_trees):
+        for module in (random_forest, histogram_trees):
             imported = set()
             for node in ast.walk(ast.parse(Path(module.__file__).read_text())):
                 if isinstance(node, ast.Import):
                     imported.update(alias.name.split(".")[0] for alias in node.names)
                 elif isinstance(node, ast.ImportFrom):
                     imported.add((node.module or "").split(".")[0])
-            self.assertLessEqual(imported, {"numpy", "numpy_models", "numpy_trees"})
+            self.assertLessEqual(imported, {"numpy", "logistic", "histogram_trees"})
 
 
 if __name__ == "__main__":

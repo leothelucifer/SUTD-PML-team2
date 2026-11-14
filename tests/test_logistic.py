@@ -3,7 +3,7 @@
 Synthetic data only: these tests check the optimiser and the calibration
 maths, not real-cohort performance.
 
-Run: MPLBACKEND=Agg .venv/bin/python -m unittest tests.test_numpy_models -v
+Run: MPLBACKEND=Agg .venv/bin/python -m unittest tests.test_logistic -v
 """
 
 import ast
@@ -22,8 +22,8 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler as SklearnScaler
 
-from sepsis_warning import numpy_models
-from sepsis_warning.numpy_models import (
+from sepsis_warning import logistic
+from sepsis_warning.logistic import (
     MedianImputer, NumpyLogisticRegression, PlattCalibrator, StandardScaler,
     fit_numpy_calibrated, sigmoid,
 )
@@ -185,7 +185,7 @@ class PlattCalibration(unittest.TestCase):
 
 class NoSklearn(unittest.TestCase):
     def test_module_imports_only_numpy_and_stdlib(self):
-        tree = ast.parse(Path(numpy_models.__file__).read_text())
+        tree = ast.parse(Path(logistic.__file__).read_text())
         imported = set()
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
