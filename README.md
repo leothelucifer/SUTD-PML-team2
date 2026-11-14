@@ -298,6 +298,7 @@ average precision is sklearn's metric, not a claim of official leaderboard AUPRC
 - [Final presentation](docs/presentation/sepsis-early-warning.pptx): 22 slides with speaker notes. Source, assets and rebuild steps are in [docs/presentation](docs/presentation/README.md).
 - [Monitoring plan](docs/monitoring-plan.md) (M02): two-speed checks, reference data, thresholds, owners and runbook.
 - [Risk register](docs/risk-register.md) (M05): leakage, data quality, source shift, privacy, fairness, alert fatigue, licensing and operational risks, with evidence and remaining exposure.
+- [ICU ward replay](docs/ward-replay.md): plays stays hour by hour as a care team would see them; synthetic version in `docs/design/ward-replay-synthetic.html`.
 
 ## Two-speed monitoring (M02)
 
