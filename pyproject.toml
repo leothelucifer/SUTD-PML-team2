@@ -35,4 +35,4 @@ sepsis-warning = "sepsis_warning.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-sepsis_warning = ["report_template.html"]
+sepsis_warning = ["report_template.html", "ward_template.html"]

@@ -61,6 +61,25 @@ class ResearchInvariants(unittest.TestCase):
         frame.loc[4:, "Unit1"] = 999
         pd.testing.assert_frame_equal(before, build_features(frame).iloc[:4])
 
+    def test_a_leaking_fill_changes_earlier_rows(self):
+        """Backward fill reads a later hour, so the same corruption check must fail."""
+        frame = self.patients[0].frame.iloc[:6].copy().reset_index(drop=True)
+        frame["HR"] = [np.nan, np.nan, np.nan, np.nan, 80.0, 90.0]
+
+        def leaking_fill(table):
+            leaked = table.copy()
+            leaked["HR"] = leaked["HR"].bfill()
+            return leaked
+
+        before = leaking_fill(frame).iloc[:4]
+        corrupted = frame.copy()
+        corrupted.loc[4:, "HR"] = 9999
+        corrupted.loc[4:, "SepsisLabel"] = 1
+        corrupted.loc[4:, "Unit1"] = 999
+        after = leaking_fill(corrupted).iloc[:4]
+        self.assertFalse(before["HR"].equals(after["HR"]))
+        pd.testing.assert_frame_equal(build_features(frame).iloc[:4], build_features(corrupted).iloc[:4])
+
     def test_lab_recency_covers_first_hour_gap_and_never_seen(self):
         frame = self.patients[0].frame.iloc[:6].copy()
         frame["Lactate"] = [np.nan, np.nan, 1.5, np.nan, np.nan, 2.0]
@@ -77,6 +96,20 @@ class ResearchInvariants(unittest.TestCase):
         self.assertTrue(features["Fibrinogen__never_seen"].eq(1).all())
         self.assertTrue(features["Fibrinogen__missing_now"].eq(1).all())
         self.assertTrue(features["Fibrinogen__hours_since_seen"].isna().all())
+
+    def test_stay_starting_after_hour_one_uses_iculos(self):
+        frame = self.patients[0].frame.iloc[:6].copy().reset_index(drop=True)
+        frame["ICULOS"] = [8, 9, 10, 12, 13, 14]
+        frame["Lactate"] = [np.nan, 1.5, np.nan, np.nan, 2.0, np.nan]
+        full = build_features(frame)
+        pd.testing.assert_frame_equal(full.iloc[:3], build_features(frame.iloc[:3]))
+        self.assertTrue(pd.isna(full.loc[0, "Lactate__hours_since_seen"]))
+        self.assertEqual(float(full.loc[1, "Lactate__hours_since_seen"]), 0.0)
+        # ICU hour 12 is three hours after the lactate at hour 9, and only two rows later.
+        self.assertEqual(
+            float(full.loc[3, "Lactate__hours_since_seen"]),
+            float(frame.loc[3, "ICULOS"] - frame.loc[1, "ICULOS"]),
+        )
 
     def test_scoring_a_prefix_matches_the_full_stay(self):
         frame = next(patient.frame for patient in self.patients if patient.frame["SepsisLabel"].nunique() == 2)

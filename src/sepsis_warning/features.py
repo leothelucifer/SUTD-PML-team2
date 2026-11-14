@@ -11,12 +11,16 @@ def build_features(frame: pd.DataFrame, window: int = 6) -> pd.DataFrame:
 
     The last observed value is carried forward until the stay ends or a new
     measurement arrives. There is no expiry. A missing value is never filled
-    from a later hour.
+    from a later hour. Hours since a measurement are ICU hours from ICULOS,
+    so a stay that starts after hour 1, or skips an hour, still counts the
+    ICU-hour gap.
     """
     if window < 1:
         raise ValueError("window must be positive")
+    if "ICULOS" not in frame.columns or frame["ICULOS"].isna().any():
+        raise ValueError("ICULOS is required for every row")
     columns = {}
-    hour = np.arange(len(frame), dtype=float)
+    hour = frame["ICULOS"].to_numpy(dtype=float)
     for name in DYNAMIC:
         raw = frame[name]
         observed = raw.notna().to_numpy()

@@ -5,6 +5,7 @@ import hashlib
 import importlib.metadata
 import json
 import platform
+import time
 from pathlib import Path
 
 import joblib
@@ -24,8 +25,13 @@ from .monitoring import REPLAY_SPLITS, MonitoringConfig, replay_monitoring, setu
 from .policy import apply_policy, summarize, tune_threshold
 from .prepare import prepare_parquet, write_summary
 from .report import write_report
+from .scoring import load_bundle
 from .splits import write_splits
-from .tracking import check_tracking_uri, log_run, require_mlflow, run_metadata
+from .tracking import DEFAULT_TRACKING_URI, check_tracking_uri, log_run, require_mlflow, run_metadata
+from .ward import (
+    HELD_OUT_SPLITS, SELECTION_SPLITS, build_payload, check_split, choose_stays,
+    score_locally, score_via_api, write_ward,
+)
 from .schema import extreme_value_counts, validate_hourly
 from .sirs_failures import failure_tables
 from .splits import load_split_patients, write_splits
@@ -61,25 +67,46 @@ def load_cohorts(args):
     return cohorts, synthetic
 
 
+def candidate_details(estimator, seconds) -> dict:
+    """What MLflow records per candidate: implementation, settings, fit time, loss curve."""
+    final = estimator[-1] if hasattr(estimator, "steps") else estimator
+    module = type(final).__module__
+    implementation = "numpy" if module.startswith("sepsis_warning") else (
+        "reference" if module.startswith("sklearn.dummy") else "sklearn")
+    if hasattr(final, "get_params"):
+        params = final.get_params(deep=False)
+    else:
+        params = {key: value for key, value in vars(final).items() if not key.endswith("_")}
+    params = {key: value for key, value in params.items() if isinstance(value, (int, float, str, bool, type(None)))}
+    history = getattr(final, "loss_history_", None)
+    return {"implementation": implementation, "class": type(final).__name__, "params": params,
+            "fit_seconds": round(seconds, 3),
+            "loss_history": [float(value) for value in history] if history is not None else None}
+
+
 def run_experiment(args):
     if args.output.exists() and any(args.output.iterdir()):
         raise ValueError(f"{args.output} is not empty; use a new output directory")
     args.output.mkdir(parents=True, exist_ok=True)
-    synthetic = (args.data / "SYNTHETIC.json").exists()
-    print("Data mode:", "SYNTHETIC SOFTWARE FIXTURE" if synthetic else "PhysioNet records", flush=True)
-    patients = load_patients(args.data)
-    if not synthetic and any("synthetic_" in p.patient_id for p in patients):
-        raise ValueError("Synthetic filenames found without SYNTHETIC.json marker")
-    splits = split_patients(patients, args.seed)
+    splits, synthetic = load_cohorts(args)
     manifest = []
     for name, cohort in splits.items():
         print(f"{name}: {len(cohort)} patients", flush=True)
         for patient in cohort:
-            path = args.data / f"training_set{patient.hospital}" / f"{patient.patient_id.split(':', 1)[1]}.psv"
+            pid = patient.patient_id.split(":", 1)[1] if ":" in patient.patient_id else patient.patient_id
+            if not args.data.is_file():
+                path = args.data / f"training_set{patient.hospital}" / f"{pid}.psv"
+                sha = hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else None
+            else:
+                path = args.data.parent / f"training_set{patient.hospital}" / f"{pid}.psv"
+                if path.exists():
+                    sha = hashlib.sha256(path.read_bytes()).hexdigest()
+                else:
+                    sha = hashlib.sha256(patient.patient_id.encode("utf-8")).hexdigest()
             manifest.append({
                 "patient_id": patient.patient_id, "hospital": patient.hospital,
                 "split": name, "septic": patient.septic,
-                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                "sha256": sha,
             })
     pd.DataFrame(manifest).to_csv(args.output / "split_manifest.csv", index=False)
     # Only source training/calibration/validation features are built before
@@ -88,12 +115,15 @@ def run_experiment(args):
     columns = [c for c in tables["train"] if c not in META]
     comparisons = []
     fitted = {}
+    details = {}
     for name, estimator in candidate_models(args.seed).items():
         print(f"Training {name}...", flush=True)
+        started = time.perf_counter()
         with threadpool_limits(limits=2):
             model = fit_calibrated(estimator, tables["train"], tables["calibration"], columns, is_constant=name == "constant_prior")
             validation = tables["validation"][META].copy()
             validation["probability"] = model.predict_proba(tables["validation"][columns])[:, 1]
+        details[name] = candidate_details(estimator, time.perf_counter() - started)
         metrics = tune_threshold(validation, args.budget, args.cooldown)
         comparisons.append({"model": name, **metrics})
         fitted[name] = model
@@ -103,6 +133,7 @@ def run_experiment(args):
     ))
     name, threshold = selected["model"], selected["threshold"]
     pd.DataFrame(comparisons).to_csv(args.output / "validation_models.csv", index=False)
+    write_json(args.output / "candidate_details.json", details)
     bundle = {
         "model": fitted[name], "model_name": name, "feature_columns": columns,
         "window": args.window, "threshold": threshold, "cooldown": args.cooldown,
@@ -135,10 +166,21 @@ def run_experiment(args):
     }
     write_json(args.output / "config.json", config)
     write_json(args.output / "metrics.json", summary)
+    splits_summary = args.splits_summary
+    if splits_summary is None and args.data.is_file():
+        splits_path = getattr(args, "splits", None) or args.data.with_name("splits.csv")
+        candidate = splits_path.with_name(f"{splits_path.name}.summary.json")
+        if candidate.exists():
+            try:
+                candidate_seed = json.loads(candidate.read_text(encoding="utf-8")).get("seed")
+                if candidate_seed is not None and int(candidate_seed) == int(args.seed):
+                    splits_summary = candidate
+            except Exception:
+                pass
     write_json(args.output / "run_metadata.json", run_metadata(
         args.seed, synthetic=synthetic, window=args.window, budget=args.budget,
         cooldown=args.cooldown, feature_columns=columns,
-        splits_summary=args.splits_summary, dvc_lock=args.dvc_lock,
+        splits_summary=splits_summary, dvc_lock=args.dvc_lock,
     ))
     replay = pd.concat(predictions, ignore_index=True)
     replay.to_csv(args.output / "held_out_predictions.csv", index=False)
@@ -148,6 +190,12 @@ def run_experiment(args):
     if args.mlflow_uri:
         run_id = log_run(args.output, args.mlflow_uri)
         print(f"MLflow run: {run_id}", flush=True)
+        if args.register_model:
+            from .registry import MODEL_NAME, register_bundle
+
+            version = register_bundle(args.output, args.mlflow_uri, run_id)
+            print(f"Registered {MODEL_NAME} version {version} as @candidate "
+                  f"(models:/{MODEL_NAME}@candidate). Promote only after review.", flush=True)
 
 
 BASELINE_SPLITS = ["validation", "internal_test", "external_test"]
@@ -222,8 +270,14 @@ def run_server(args):
         raise RuntimeError("the API needs the serve extra; run `pip install -e .[serve]`") from error
     from .service import ModelMismatch, ScoringService
 
+    model_path, expected = args.model, args.model_sha256
+    if args.model_uri:
+        from .registry import resolve_model
+
+        model_path, expected, tags = resolve_model(args.model_uri, args.mlflow_uri)
+        print(f"Resolved {args.model_uri} to version {tags['version']} (bundle {expected[:12]})", flush=True)
     try:
-        service = ScoringService.from_path(args.model, args.model_sha256)
+        service = ScoringService.from_path(model_path, expected)
     except ModelMismatch as error:
         raise ValueError(str(error)) from error
     health = service.health()
@@ -263,14 +317,47 @@ DATA_HELP = "combined.parquet (uses the saved split), or a folder of training_se
 SPLITS_HELP = "Saved split for a Parquet --data; defaults to splits.csv next to it"
 
 
+def run_ward(args):
+    """Write the ICU ward replay page for a saved model (see ward.py)."""
+    check_split(args.split, args.after_freeze)
+    if args.output.exists():
+        raise ValueError(f"{args.output} already exists; choose a new output file")
+    cohorts, synthetic = load_cohorts(args)
+    cohort = cohorts[args.split]
+    stays = choose_stays(cohort, args.beds, args.septic_share, args.max_hours, args.seed)
+    if args.api_url:
+        frames, details = score_via_api(args.api_url, stays)
+        if bool(details["synthetic_model"]) != synthetic:
+            raise ValueError("The API's model and the data disagree on whether they are synthetic")
+        model_name, threshold, cooldown = details["model_name"], details["threshold"], details["cooldown_hours"]
+        scored_by = f"POST /score on {args.api_url}, one request per bed, as the hospital engine would send"
+    else:
+        bundle = load_bundle(args.model)
+        if bool(bundle["synthetic"]) != synthetic:
+            raise ValueError("The model bundle and the data disagree on whether they are synthetic")
+        frames = score_locally(bundle, stays)
+        model_name, threshold, cooldown = bundle["model_name"], bundle["threshold"], bundle["cooldown"]
+        scored_by = "Saved model scored in-process, with the same feature code as the API"
+    payload = build_payload(
+        frames, model_name=model_name, threshold=threshold, cooldown=cooldown, synthetic=synthetic,
+        split=args.split, scored_by=scored_by, seed=args.seed,
+        cohort_septic_share=sum(p.septic for p in cohort) / len(cohort),
+    )
+    write_ward(args.output, payload)
+    if not synthetic:
+        print("Contains PhysioNet stays: keep it private and out of Git.", flush=True)
+    print(f"Ward replay: {args.output.resolve()}", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
     demo = sub.add_parser("demo", help="Generate an explicitly synthetic fixture and run it")
     demo.add_argument("--data", type=Path, default=Path("data/synthetic"))
-    for command in [demo, sub.add_parser("train", help="Run on downloaded training_setA/B")]:
+    for command in [demo, sub.add_parser("train", help="Run on downloaded training_setA/B or combined.parquet")]:
         if command is not demo:
-            command.add_argument("--data", type=Path, required=True)
+            command.add_argument("--data", type=Path, required=True, help=DATA_HELP)
+            command.add_argument("--splits", type=Path, default=None, help=SPLITS_HELP)
         command.add_argument("--output", type=Path, default=Path("artifacts/demo" if command is demo else "artifacts/real"))
         command.add_argument("--seed", type=int, default=42)
         command.add_argument("--window", type=int, default=6)
@@ -283,7 +370,11 @@ def main():
         command.add_argument("--dvc-lock", type=Path, default=None, help="dvc.lock whose output hashes are logged")
         command.add_argument(
             "--mlflow-uri", default=None,
-            help="Local MLflow store, e.g. file:artifacts/mlruns (needs the tracking extra)",
+            help=f"Local MLflow store, e.g. {DEFAULT_TRACKING_URI} (needs the tracking extra)",
+        )
+        command.add_argument(
+            "--register-model", action="store_true",
+            help="Also register the selected bundle in the MLflow registry as @candidate (needs --mlflow-uri)",
         )
     replay = sub.add_parser("replay", help="Score a patient PSV with a saved model")
     replay.add_argument("--model", type=Path, required=True)
@@ -369,7 +460,11 @@ def main():
     monitor_replay.add_argument("--split", choices=REPLAY_SPLITS, default="external_test")
     monitor_replay.add_argument("--output", type=Path, default=Path("artifacts/monitoring/replay"))
     serve = sub.add_parser("serve", help="Local research scoring API for a saved model (needs the serve extra)")
-    serve.add_argument("--model", type=Path, required=True, help="model.joblib produced by train/demo")
+    serve_source = serve.add_mutually_exclusive_group(required=True)
+    serve_source.add_argument("--model", type=Path, help="model.joblib produced by train/demo")
+    serve_source.add_argument("--model-uri", default=None,
+                              help="Registered model, e.g. models:/sepsis-warning@production (needs the tracking extra)")
+    serve.add_argument("--mlflow-uri", default=DEFAULT_TRACKING_URI, help="Local MLflow store holding --model-uri")
     serve.add_argument("--model-sha256", default=None, help="Refuse to start unless the bundle has this SHA-256")
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8000)
@@ -377,8 +472,30 @@ def main():
         "--allow-non-local-host", action="store_true",
         help="Bind beyond localhost. The API has no authentication; agree this with the team first",
     )
+    ward = sub.add_parser("ward", help="Write an ICU ward replay page for a saved model (research demo)")
+    ward.add_argument("--model", type=Path, help="model.joblib produced by train/demo (not needed with --api-url)")
+    ward.add_argument("--api-url", default=None, help="Score through a running API instead, e.g. http://127.0.0.1:8000")
+    ward.add_argument("--data", type=Path, required=True, help=DATA_HELP)
+    ward.add_argument("--splits", type=Path, help=SPLITS_HELP)
+    ward.add_argument("--split", choices=SELECTION_SPLITS + HELD_OUT_SPLITS, default="validation")
+    ward.add_argument("--after-freeze", action="store_true",
+                      help="Allow internal_test or external_test; only once the model is frozen")
+    ward.add_argument("--beds", type=int, default=12)
+    ward.add_argument("--septic-share", type=float, default=0.3,
+                      help="Share of beds given to stays that become septic (over-represented for the demo)")
+    ward.add_argument("--max-hours", type=int, default=72, help="Hours shown per stay")
+    ward.add_argument("--seed", type=int, default=42)
+    ward.add_argument("--output", type=Path, default=Path("artifacts/ward/ward.html"))
+    promote_cmd = sub.add_parser(
+        "promote", help="Point a registry alias (default production) at a reviewed model version")
+    promote_cmd.add_argument("--version", required=True, help="Model version number to promote")
+    promote_cmd.add_argument("--reviewed-by", required=True, help="Name of the teammate who reviewed this version")
+    promote_cmd.add_argument("--alias", default="production")
+    promote_cmd.add_argument("--mlflow-uri", default=DEFAULT_TRACKING_URI)
     args = parser.parse_args()
     try:
+        if args.command in ["demo", "train"] and args.register_model and not args.mlflow_uri:
+            raise ValueError("--register-model needs --mlflow-uri, e.g. " + DEFAULT_TRACKING_URI)
         if args.command in ["demo", "train"] and args.mlflow_uri:
             # Fail before generating data or training, not after it.
             check_tracking_uri(args.mlflow_uri)
@@ -404,6 +521,22 @@ def main():
             print(args.output.resolve())
         elif args.command == "serve":
             run_server(args)
+        elif args.command == "promote":
+            require_mlflow()
+            from .registry import MODEL_NAME, promote
+
+            change = promote(args.mlflow_uri, args.version, args.reviewed_by, alias=args.alias)
+            print(f"{MODEL_NAME}@{change['alias']} -> version {change['version']} "
+                  f"(was {change['previous'] or 'unset'}; reviewed by {change['reviewed_by']})", flush=True)
+            if change["previous"]:
+                print(f"Roll back with: python -m sepsis_warning promote --version {change['previous']} "
+                      f"--alias {change['alias']} --reviewed-by <name>", flush=True)
+        elif args.command == "ward":
+            if not args.model and not args.api_url:
+                raise ValueError("pass --model, or --api-url for a running API")
+            if args.max_hours < 1:
+                raise ValueError("max-hours must be positive")
+            run_ward(args)
         elif args.command == "baseline":
             if args.cooldown < 0:
                 raise ValueError("cooldown must be nonnegative")
