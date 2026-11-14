@@ -362,6 +362,14 @@ current feature code is refused at start-up or with 409. There is no
 authentication, so the command refuses non-local hosts unless
 `--allow-non-local-host` is passed. Scores are research output, not clinical advice.
 
+To test the AWS layout on a laptop (load balancer, two Fargate-sized tasks on
+a private network, model from the registry's `@production` alias, rolling
+deploy and rollback), see [docs/local-production.md](docs/local-production.md):
+
+```bash
+bash scripts/local_prod.sh up && bash scripts/local_prod.sh test
+```
+
 ## Files and artifacts
 
 ```text
