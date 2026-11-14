@@ -1,7 +1,7 @@
 """Logistic regression and Platt calibration in pure NumPy (K01, K04).
 
 No scikit-learn is imported here. The scikit-learn models in ``modeling.py``
-stay as the reference benchmark; ``tests/test_numpy_models.py`` checks this
+stay as the reference benchmark; ``tests/test_logistic.py`` checks this
 module against them.
 
 The logistic regression minimises the same objective as scikit-learn,
@@ -11,6 +11,10 @@ The logistic regression minimises the same objective as scikit-learn,
 with the intercept ``b`` unpenalised, using full-batch Newton steps (IRLS,
 Bishop PRML 4.3.3). The problem is convex, so the fit is deterministic and
 needs no learning rate, seed or epoch count.
+
+The shared helpers here (``sigmoid``, ``row_weights``, input checks and
+``calibrate_frozen``) are also used by ``random_forest.py`` and
+``gradient_boosting.py``.
 """
 
 import warnings
