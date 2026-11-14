@@ -49,6 +49,29 @@ def _binary_labels(y):
     return y
 
 
+def row_weights(y, class_weight, sample_weight=None):
+    """Per-row loss weights: class weights times optional ``sample_weight``.
+
+    ``"balanced"`` class weights are ``n / (2 * n_class)`` from row counts.
+    """
+    n = len(y)
+    if class_weight is None:
+        weight = np.ones(n)
+    else:
+        positives = y.sum()
+        weight = np.where(y == 1, n / (2.0 * positives), n / (2.0 * (n - positives)))
+    if sample_weight is not None:
+        sample_weight = np.asarray(sample_weight, dtype=np.float64)
+        if sample_weight.shape != (n,):
+            raise ValueError("sample_weight must have one value per row")
+        if not np.isfinite(sample_weight).all() or (sample_weight < 0).any():
+            raise ValueError("sample_weight must be finite and non-negative")
+        weight = weight * sample_weight
+        if not (weight[y == 1].sum() > 0 and weight[y == 0].sum() > 0):
+            raise ValueError("both classes need some positive sample_weight")
+    return weight
+
+
 class MedianImputer:
     """Fill missing values with training medians. All-missing columns get 0."""
 
@@ -107,12 +130,6 @@ class NumpyLogisticRegression:
         self.tol = tol
         self.chunk_rows = chunk_rows
 
-    def _sample_weights(self, y):
-        if self.class_weight is None:
-            return np.ones_like(y)
-        n, n_pos = len(y), y.sum()
-        return np.where(y == 1, n / (2.0 * n_pos), n / (2.0 * (n - n_pos)))
-
     def _objective(self, Z, y, s, theta):
         z = Z @ theta[:-1] + theta[-1]
         return 0.5 * theta[:-1] @ theta[:-1] + self.C * (s @ _log_loss_terms(z, y)), z
@@ -130,7 +147,13 @@ class NumpyLogisticRegression:
         H[k, :k] = H[:k, k]
         return H
 
-    def fit(self, X, y):
+    def fit(self, X, y, sample_weight=None):
+        """Fit on rows ``X`` with labels ``y``.
+
+        ``sample_weight`` is an optional non-negative weight per row. It
+        multiplies the class weights, as in scikit-learn, and does not affect
+        the imputation medians or scaling statistics.
+        """
         X = _as_matrix(X)
         y = _binary_labels(y)
         if len(y) != len(X):
@@ -140,7 +163,7 @@ class NumpyLogisticRegression:
         self.scaler_ = StandardScaler().fit(Z)
         Z = self.scaler_.transform(Z)
 
-        s = self._sample_weights(y)
+        s = row_weights(y, self.class_weight, sample_weight)
         k = Z.shape[1]
         penalty = np.append(np.ones(k), 0.0)  # the intercept is not penalised
         theta = np.zeros(k + 1)
@@ -274,12 +297,20 @@ class CalibratedNumpyModel:
         return np.column_stack([1.0 - p, p])
 
 
+def calibrate_frozen(base, calibration, columns):
+    """Platt-calibrate an already fitted model without refitting it.
+
+    ``base`` needs ``decision_function``; the calibrator sees only its logits
+    on the ``calibration`` rows.
+    """
+    calibrator = PlattCalibrator().fit(base.decision_function(calibration[columns]), calibration["label"])
+    return CalibratedNumpyModel(base, calibrator)
+
+
 def fit_numpy_calibrated(train, calibration, columns, C=0.3):
     """NumPy counterpart of ``modeling.fit_calibrated`` for logistic regression.
 
-    The base model is fitted on ``train`` only; the calibrator sees only the
-    frozen model's logits on ``calibration``.
+    The base model is fitted on ``train`` only, then calibrated on ``calibration``.
     """
     base = NumpyLogisticRegression(C=C).fit(train[columns], train["label"])
-    calibrator = PlattCalibrator().fit(base.decision_function(calibration[columns]), calibration["label"])
-    return CalibratedNumpyModel(base, calibrator)
+    return calibrate_frozen(base, calibration, columns)
