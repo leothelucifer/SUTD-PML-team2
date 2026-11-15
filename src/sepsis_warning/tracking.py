@@ -33,7 +33,8 @@ PACKAGES = ["numpy", "pandas", "scipy", "scikit-learn", "joblib", "pyarrow"]
 # replay.html and model.joblib are patient-level or executable and stay local.
 # metrics.json is logged as selection_metrics.json, without held-out results.
 LOGGABLE_ARTIFACTS = {"config.json", "selection_metrics.json", "validation_models.csv",
-                      "run_metadata.json", "candidate_details.json"}
+                      "run_metadata.json", "candidate_details.json", "manifest.json",
+                      "extreme_value_review_train.csv"}
 DEFAULT_TRACKING_URI = "sqlite:///artifacts/mlflow.db"
 SELECTION_EXPERIMENT = "sepsis-warning-selection"
 

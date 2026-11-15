@@ -10,12 +10,11 @@ the loaded bundle is refused.
 import json
 from pathlib import Path
 
-SELECTION_RULE = (
-    "Highest validation normalized hourly utility at a threshold tuned to the false-alert budget; "
-    "ties broken by fewer false alerts per non-septic patient-day, then higher average precision."
-)
+from .policy import SELECTION_RULE
+
 CANDIDATE_FIELDS = (
     "auroc", "average_precision", "brier_score", "normalized_hourly_utility",
+    "utility_standard_error", "utility_ci_low", "utility_ci_high",
     "false_alert_events_per_nonseptic_patient_day", "early_detection_recall",
     "median_inferred_lead_hours", "threshold",
 )
@@ -55,7 +54,8 @@ def card_from_run_dir(run_dir: Path, bundle: dict, registry: dict | None = None)
         "threshold": float(bundle["threshold"]),
         "cooldown_hours": int(bundle["cooldown"]),
         "validation_alarm_budget": selection.get("validation_alarm_budget"),
-        "selection_rule": SELECTION_RULE,
+        "selection_rule": (selection.get("selection") or {}).get("rule", SELECTION_RULE),
+        "selection_detail": selection.get("selection"),
         "evaluated_on": "validation split only; held-out test results are not served",
         "candidates": candidates,
         "training": {field: metadata.get(field) for field in TRAINING_FIELDS if field in metadata},

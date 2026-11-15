@@ -11,7 +11,8 @@ SageMaker starts the training image with the argument ``train``. This module:
    ``splits.csv.summary.json`` and ``dvc.lock``), or a folder with
    ``training_setA``/``training_setB`` (the synthetic fixture);
 3. runs the same ``run_experiment`` as ``python -m sepsis_warning train``:
-   every candidate is fitted, selection uses the validation split only;
+   the data checks run first, every candidate is fitted, and selection uses
+   the validation split only (the test splits are never scored here);
 4. writes the run to ``/opt/ml/model``, which SageMaker uploads to the
    encrypted artifact bucket as ``model.tar.gz``, and, when a tracking URI is
    given, logs the selection run and registers the bundle as ``@candidate``.
@@ -60,6 +61,8 @@ def build_args(root: Path) -> Namespace:
         splits_summary=summary if summary.is_file() else None,
         dvc_lock=dvc_lock if dvc_lock.is_file() else None,
         mlflow_uri=tracking, register_model=_flag(params.get("register_model", "false")) and tracking is not None,
+        models_config=None, include_numpy_models=_flag(params.get("include_numpy_models", "false")),
+        skip_data_checks=_flag(params.get("skip_data_checks", "false")),
     )
 
 

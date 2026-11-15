@@ -30,9 +30,9 @@ Experiment `sepsis-warning-selection`, one parent run per `train` or `demo`:
 
 Never logged: held-out test results (internal test, hospital B), patient-level
 predictions, the split manifest, replay or ward pages, raw data. `train`
-still writes held-out results to its local `metrics.json`; they are removed
-from the logged `selection_metrics.json` so model choice in MLflow only ever
-sees validation numbers.
+does not score the test splits at all, so selection runs can only hold
+validation numbers. The run also logs `manifest.json` (versions, hashes and
+validation metrics of the selected bundle).
 
 ## Registry
 
@@ -58,8 +58,16 @@ python -m sepsis_warning serve --model-uri models:/sepsis-warning@production
 
 A registered version is the freeze record: it fixes the model, features,
 calibration and threshold, with hashes that show which data, split and code
-produced it. Internal-test and hospital-B evaluation should use that version
-once, in a separate `evaluation` experiment (M01), not in selection runs.
+produced it. Internal-test and hospital-B results come from that version
+once, in the separate `sepsis-warning-evaluation` experiment:
+
+```bash
+python -m sepsis_warning evaluate --data data/physionet/combined.parquet \
+  --model-uri models:/sepsis-warning/3 --output artifacts/evaluation-v3
+```
+
+The version is tagged `frozen_evaluated_at`; a second `evaluate` on it is
+refused. The split's hash must match the one in the model's manifest.
 
 The model can also be loaded with MLflow's standard loader, which checks the
 same hash and scores through the API's validation and feature code:

@@ -48,7 +48,7 @@ FROM base AS training
 ARG MLFLOW_VERSION=3.16.1
 RUN --mount=type=secret,id=extra_ca,required=false \
     if [ -f /run/secrets/extra_ca ]; then export PIP_CERT=/run/secrets/extra_ca; fi; \
-    python -m pip install ".[tracking,aws,sagemaker]" "mlflow==${MLFLOW_VERSION}" && rm -rf /app/src
+    python -m pip install ".[tracking,aws,sagemaker,checks]" "mlflow==${MLFLOW_VERSION}" && rm -rf /app/src
 ENV MLFLOW_DISABLE_TELEMETRY=true \
     MLFLOW_DISABLE_AGENT_HINT=1 \
     GIT_PYTHON_REFRESH=quiet
