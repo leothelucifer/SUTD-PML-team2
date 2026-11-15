@@ -5,8 +5,9 @@ The question is: **can an hourly early-warning model retain useful performance
 at another hospital under a limited notification budget?**
 
 The first version runs with an explicitly synthetic software fixture. It produces
-a model comparison, saved model, held-out predictions, and an offline patient
-replay. Synthetic scores demonstrate software behavior only. Real-data model
+a model comparison, a saved model with its manifest, and an offline patient
+replay of validation stays. Test-split results come from a separate, one-time
+`evaluate` step. Synthetic scores demonstrate software behavior only. Real-data model
 quality has not been established.
 
 ## System sketch
@@ -45,9 +46,21 @@ python -m sepsis_warning demo
 python -m unittest discover -s tests -v
 ```
 
-Open `artifacts/demo/replay.html` in a browser. Select an internal-test or
-external-test patient, play the hourly sequence, and inspect probabilities,
-threshold crossings, notifications, and retrospective positive labels.
+Open `artifacts/demo/replay.html` in a browser. Select a validation patient,
+play the hourly sequence, and inspect probabilities, threshold crossings,
+notifications, and retrospective positive labels.
+
+`train` and `demo` never score the test splits. Once a model is reviewed and
+frozen, score internal test and hospital B one time:
+
+```bash
+python -m sepsis_warning evaluate --data data/synthetic \
+  --model artifacts/demo/model.joblib --output artifacts/demo-evaluation
+```
+
+For real data this works once per model (a registered version is tagged, a
+local bundle gets `frozen_evaluation.json` beside it) and only with the split
+the model was trained on. Synthetic fixtures may be re-evaluated.
 
 The default fixture has 160 hospital-A patients and 80 hospital-B patients. It
 uses an artificial 20% patient prevalence and simplified trends, with a modest
@@ -352,8 +365,10 @@ is reserved for external testing. No patient-hour row split is used. ICU unit
 administrative codes and patient/hospital IDs do not enter the model.
 
 Fit preprocessing and model on training patients. Fit calibration on calibration
-patients. Choose model and probability threshold on validation patients. Freeze
-all choices before evaluating internal-test and hospital-B patients. Do not
+patients. Choose model and probability threshold on validation patients: the
+simplest model whose validation utility is within one bootstrap standard error
+of the best (candidates and settings in `src/sepsis_warning/models.toml`). Freeze
+all choices, then run `evaluate` once for internal-test and hospital-B patients. Do not
 adjust the threshold after inspecting B and still call B an untouched test.
 
 The default validation budget is **0.2 false alert events per nonseptic
@@ -508,12 +523,24 @@ tests/test_monitoring.py
 The experiment creates:
 
 - `validation_models.csv`: model comparison using validation patients only.
-- `metrics.json`: validation results and selected model's held-out results.
+- `metrics.json` / `selection_metrics.json`: validation results, the selection
+  rule and which models were within one standard error. No test results.
 - `split_manifest.csv`: patient-to-split mapping and raw record SHA256 hashes.
-- `config.json`: feature names, seed, package versions, and operating settings.
-- `model.joblib`: saved calibrated classifier, features, threshold, cooldown.
-- `held_out_predictions.csv`: hourly outcomes, scores, decisions and notifications.
-- `replay.html`: self-contained interactive replay of held-out predictions.
+- `config.json`: feature names, seed, package versions, model settings and operating settings.
+- `model.joblib`: saved calibrated classifier, features, threshold, cooldown and its manifest.
+- `manifest.json`: package versions, feature-code and data hashes, validation
+  metrics and the bundle's SHA-256. `serve` and `load_bundle` verify the bundle
+  against it, and a bundle fitted under another scikit-learn minor is refused.
+- `extreme_value_review_train.csv`: review-flag counts from the data checks (Parquet input).
+- `validation_predictions.csv`, `replay.html`: hourly scores and an interactive
+  replay for validation stays only.
+
+`evaluate` creates `evaluation_metrics.json`, `held_out_predictions.csv` and a
+`replay.html` for the test splits.
+
+Training on `combined.parquet` first runs the schema checks (`pip install -e
+".[checks]"`); a dropped label or a skipped hour stops the run before fitting.
+`--include-numpy-models` adds the hand-written NumPy models as candidates.
 
 Batch inference from a saved local model:
 

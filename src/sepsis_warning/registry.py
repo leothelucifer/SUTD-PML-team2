@@ -177,7 +177,7 @@ def resolve_model(model_uri: str, tracking_uri: str, download_dir: Path | None =
     return matches[0], expected, {"version": str(found.version), **found.tags}
 
 
-SELECTION_FILES = ("selection_metrics.json", "run_metadata.json")
+SELECTION_FILES = ("selection_metrics.json", "run_metadata.json", "manifest.json")
 
 
 def _download_selection_files(run_id: str | None, target: Path) -> None:

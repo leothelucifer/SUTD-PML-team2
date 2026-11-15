@@ -27,6 +27,7 @@ import pandas as pd
 
 from .data import DYNAMIC, STATIC, validate_record
 from .features import build_features, select_saved_features
+from .manifest import ManifestMismatch, check_runtime, code_sha256
 from .policy import apply_policy
 from .scoring import BUNDLE_KEYS, file_sha256, load_bundle
 
@@ -54,6 +55,12 @@ class ScoringService:
             raise ModelMismatch(f"not a model bundle; missing {sorted(missing)}")
         self.bundle = bundle
         self.bundle_sha256 = bundle_sha256
+        self.manifest = bundle.get("manifest")
+        if self.manifest is not None:
+            try:
+                check_runtime(self.manifest)
+            except ManifestMismatch as error:
+                raise ModelMismatch(str(error)) from error
         # threadpoolctl changes process-wide state, so predictions are
         # serialised; feature building stays per request and in parallel.
         self._predict_lock = threading.Lock()
@@ -90,6 +97,12 @@ class ScoringService:
             "feature_columns_sha256": hashlib.sha256(
                 "\n".join(self.bundle["feature_columns"]).encode()
             ).hexdigest(),
+            # None for bundles made before manifests existed.
+            "manifest": self.manifest,
+            # False means features.py, policy.py or data.py changed since the model was fitted.
+            "contract_code_matches": (
+                self.manifest.get("contract_code_sha256") == code_sha256() if self.manifest else None
+            ),
             "disclaimer": DISCLAIMER,
         }
 

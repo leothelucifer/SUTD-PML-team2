@@ -13,28 +13,56 @@ import pandas as pd
 from threadpoolctl import threadpool_limits
 
 from .baselines import (
-    BASELINE_THRESHOLD, BASELINES, auroc, average_precision, baseline_table,
-    hourly_classification_metrics, plot_sirs_threshold_tradeoff, sirs_threshold_sweep,
+    BASELINE_THRESHOLD,
+    BASELINES,
+    auroc,
+    average_precision,
+    baseline_table,
+    hourly_classification_metrics,
+    plot_sirs_threshold_tradeoff,
+    sirs_threshold_sweep,
 )
 from .data import generate_synthetic, load_patients, read_patient, split_patients
-from .hospital_comparison import run_comparison
 from .features import META, build_features, feature_table, select_saved_features
-from .modeling import candidate_models, fit_calibrated
+from .hospital_comparison import run_comparison
+from .manifest import build_manifest, write_manifest
 from .missingness import run_missingness_analysis
-from .monitoring import REPLAY_SPLITS, MonitoringConfig, replay_monitoring, setup_monitoring
-from .policy import apply_policy, summarize, tune_threshold
+from .modeling import (
+    candidate_models,
+    complexity_ranks,
+    fit_calibrated,
+    load_model_config,
+)
+from .monitoring import (
+    REPLAY_SPLITS,
+    MonitoringConfig,
+    replay_monitoring,
+    setup_monitoring,
+)
+from .policy import apply_policy, select_candidate, summarize, tune_threshold
 from .prepare import prepare_parquet, write_summary
 from .report import write_report
-from .scoring import load_bundle
-from .splits import write_splits
-from .tracking import DEFAULT_TRACKING_URI, check_tracking_uri, log_run, require_mlflow, run_metadata
-from .ward import (
-    HELD_OUT_SPLITS, SELECTION_SPLITS, build_payload, check_split, choose_stays,
-    score_locally, score_via_api, write_ward,
-)
 from .schema import extreme_value_counts, validate_hourly
+from .scoring import file_sha256, load_bundle
 from .sirs_failures import failure_tables
 from .splits import load_split_patients, write_splits
+from .tracking import (
+    DEFAULT_TRACKING_URI,
+    check_tracking_uri,
+    log_run,
+    require_mlflow,
+    run_metadata,
+)
+from .ward import (
+    HELD_OUT_SPLITS,
+    SELECTION_SPLITS,
+    build_payload,
+    check_split,
+    choose_stays,
+    score_locally,
+    score_via_api,
+    write_ward,
+)
 
 
 def write_json(path, value):
@@ -84,6 +112,33 @@ def candidate_details(estimator, seconds) -> dict:
             "loss_history": [float(value) for value in history] if history is not None else None}
 
 
+def check_training_data(args) -> None:
+    """Hard schema rules on the whole Parquet table before any model is fitted.
+
+    Also writes the review-flag counts for training stays (small cells hidden).
+    """
+    if getattr(args, "skip_data_checks", False):
+        print("WARNING: data checks skipped (--skip-data-checks)", flush=True)
+        return
+    try:
+        import pandera  # noqa: F401
+    except ImportError as error:
+        raise RuntimeError(
+            "training on a Parquet table runs the data checks, which need the checks extra: "
+            "`pip install -e .[checks]` (or pass --skip-data-checks)"
+        ) from error
+    frame = pd.read_parquet(args.data)
+    validate_hourly(frame)
+    print(f"Data checks passed: {frame.groupby(['hospital', 'patient_id']).ngroups} stays, {len(frame)} rows.",
+          flush=True)
+    splits_path = getattr(args, "splits", None) or args.data.with_name("splits.csv")
+    assigned = pd.read_csv(splits_path, dtype=str)
+    train = assigned.loc[assigned["split"] == "train", ["hospital", "patient_id"]]
+    frame["patient_id"] = frame["patient_id"].astype(str)
+    extreme_value_counts(frame.merge(train, on=["hospital", "patient_id"])).to_csv(
+        args.output / "extreme_value_review_train.csv", index=False)
+
+
 def run_experiment(args):
     if args.output.exists() and any(args.output.iterdir()):
         raise ValueError(f"{args.output} is not empty; use a new output directory")
@@ -109,14 +164,19 @@ def run_experiment(args):
                 "sha256": sha,
             })
     pd.DataFrame(manifest).to_csv(args.output / "split_manifest.csv", index=False)
-    # Only source training/calibration/validation features are built before
-    # selecting the model and threshold. Test outcomes never guide selection.
+    if args.data.is_file():
+        check_training_data(args)
+    # Only training, calibration and validation rows are touched here. The test
+    # splits are scored once per frozen model, by the separate `evaluate` command.
     tables = {name: feature_table(splits[name], args.window) for name in ["train", "calibration", "validation"]}
     columns = [c for c in tables["train"] if c not in META]
+    model_config, model_config_sha = load_model_config(getattr(args, "models_config", None))
     comparisons = []
     fitted = {}
     details = {}
-    for name, estimator in candidate_models(args.seed).items():
+    validation_scores = {}
+    candidates = candidate_models(args.seed, model_config, getattr(args, "include_numpy_models", False))
+    for name, estimator in candidates.items():
         print(f"Training {name}...", flush=True)
         started = time.perf_counter()
         with threadpool_limits(limits=2):
@@ -127,35 +187,16 @@ def run_experiment(args):
         metrics = tune_threshold(validation, args.budget, args.cooldown)
         comparisons.append({"model": name, **metrics})
         fitted[name] = model
-    selected = max(comparisons, key=lambda m: (
-        m["normalized_hourly_utility"], -m["false_alert_events_per_nonseptic_patient_day"],
-        m["average_precision"],
-    ))
+        validation_scores[name] = validation
+    selected, selection = select_candidate(comparisons, complexity_ranks(model_config))
     name, threshold = selected["model"], selected["threshold"]
     pd.DataFrame(comparisons).to_csv(args.output / "validation_models.csv", index=False)
     write_json(args.output / "candidate_details.json", details)
-    bundle = {
-        "model": fitted[name], "model_name": name, "feature_columns": columns,
-        "window": args.window, "threshold": threshold, "cooldown": args.cooldown,
-        "synthetic": synthetic,
-    }
-    joblib.dump(bundle, args.output / "model.joblib")
-    held_out = {}
-    predictions = []
-    for split in ["internal_test", "external_test"]:
-        table = feature_table(splits[split], args.window)
-        predicted = table[META].copy()
-        with threadpool_limits(limits=2):
-            predicted["probability"] = fitted[name].predict_proba(table[columns])[:, 1]
-        predicted = apply_policy(predicted, threshold, args.cooldown)
-        held_out[split] = summarize(predicted)
-        predicted["split"] = split
-        predictions.append(predicted)
     summary = {
         "data_mode": "synthetic_fixture" if synthetic else "physionet",
         "selected_model": name, "threshold": threshold,
         "validation_alarm_budget": args.budget, "cooldown_hours": args.cooldown,
-        "validation_models": comparisons, "held_out": held_out,
+        "selection": selection, "validation_models": comparisons,
     }
     config = {
         "seed": args.seed, "window_hours": args.window, "budget": args.budget,
@@ -163,11 +204,12 @@ def run_experiment(args):
         "python": platform.python_version(), "platform": platform.platform(),
         "packages": {p: importlib.metadata.version(p) for p in ["numpy", "pandas", "scipy", "scikit-learn", "joblib"]},
         "synthetic": synthetic, "feature_columns": columns,
+        "models": model_config, "models_config_sha256": model_config_sha,
     }
     write_json(args.output / "config.json", config)
     write_json(args.output / "metrics.json", summary)
-    # Validation-only copy for tracking, S3 and GET /model; held-out results stay in metrics.json.
-    write_json(args.output / "selection_metrics.json", {k: v for k, v in summary.items() if k != "held_out"})
+    # The same validation-only summary under the name tracking, S3 and GET /model read.
+    write_json(args.output / "selection_metrics.json", summary)
     splits_summary = args.splits_summary
     if splits_summary is None and args.data.is_file():
         splits_path = getattr(args, "splits", None) or args.data.with_name("splits.csv")
@@ -177,18 +219,39 @@ def run_experiment(args):
                 candidate_seed = json.loads(candidate.read_text(encoding="utf-8")).get("seed")
                 if candidate_seed is not None and int(candidate_seed) == int(args.seed):
                     splits_summary = candidate
-            except Exception:
-                pass
-    write_json(args.output / "run_metadata.json", run_metadata(
+            except (OSError, ValueError, TypeError) as error:
+                print(f"WARNING: could not read {candidate} ({error}); the run will not record split hashes",
+                      flush=True)
+    metadata = run_metadata(
         args.seed, synthetic=synthetic, window=args.window, budget=args.budget,
         cooldown=args.cooldown, feature_columns=columns,
         splits_summary=splits_summary, dvc_lock=args.dvc_lock,
-    ))
-    replay = pd.concat(predictions, ignore_index=True)
-    replay.to_csv(args.output / "held_out_predictions.csv", index=False)
-    write_report(args.output / "replay.html", replay, summary, threshold, synthetic)
-    print(f"Selected: {name}; threshold={threshold:.2f}", flush=True)
-    print(f"Replay: {(args.output / 'replay.html').resolve()}", flush=True)
+    )
+    metadata["models_config_sha256"] = model_config_sha
+    write_json(args.output / "run_metadata.json", metadata)
+    manifest = build_manifest(
+        model_name=name, threshold=threshold, cooldown=args.cooldown, window=args.window,
+        synthetic=synthetic, feature_columns=columns, metadata=metadata, validation=selected,
+        models_config_sha256=model_config_sha,
+    )
+    bundle = {
+        "model": fitted[name], "model_name": name, "feature_columns": columns,
+        "window": args.window, "threshold": threshold, "cooldown": args.cooldown,
+        "synthetic": synthetic, "manifest": manifest,
+    }
+    joblib.dump(bundle, args.output / "model.joblib")
+    write_manifest(args.output, manifest, file_sha256(args.output / "model.joblib"))
+    # Replay of validation stays only: these were already used for selection.
+    replay = apply_policy(validation_scores[name], threshold, args.cooldown)
+    replay["split"] = "validation"
+    replay.to_csv(args.output / "validation_predictions.csv", index=False)
+    write_report(args.output / "replay.html", replay,
+                 {**summary, "splits": {"validation": selected}}, threshold, synthetic)
+    print(f"Selected: {name}; threshold={threshold:.2f} "
+          f"(best by utility: {selection['best_by_utility']}; within one standard error: "
+          f"{', '.join(selection['within_one_standard_error'])})", flush=True)
+    print(f"Validation replay: {(args.output / 'replay.html').resolve()}", flush=True)
+    print("Test splits were not scored. After the model is reviewed and frozen, run `evaluate` once.", flush=True)
     if args.mlflow_uri:
         run_id = log_run(args.output, args.mlflow_uri)
         print(f"MLflow run: {run_id}", flush=True)
@@ -277,6 +340,7 @@ def run_server(args):
         service, card, source = load_serving_model(
             model=args.model, model_uri=args.model_uri, model_s3=args.model_s3,
             expected_sha256=args.model_sha256, mlflow_uri=args.mlflow_uri,
+            allow_unverified=args.allow_unverified_model,
         )
     except ModelMismatch as error:
         raise ValueError(str(error)) from error
@@ -381,6 +445,23 @@ def main():
             "--register-model", action="store_true",
             help="Also register the selected bundle in the MLflow registry as @candidate (needs --mlflow-uri)",
         )
+        command.add_argument("--models-config", type=Path, default=None,
+                             help="Candidate models and settings (default: the packaged models.toml)")
+        command.add_argument("--include-numpy-models", action="store_true",
+                             help="Also fit the hand-written NumPy models as candidates (slower)")
+        command.add_argument("--skip-data-checks", action="store_true",
+                             help="Do not run the schema checks on a Parquet table before training")
+    evaluate = sub.add_parser(
+        "evaluate", help="Score the test splits ONCE for a frozen model (never during model development)")
+    evaluate.add_argument("--data", type=Path, required=True, help=DATA_HELP)
+    evaluate.add_argument("--splits", type=Path, default=None, help=SPLITS_HELP)
+    evaluate.add_argument("--seed", type=int, default=42, help="Only for folder data, which is re-split")
+    evaluate_source = evaluate.add_mutually_exclusive_group(required=True)
+    evaluate_source.add_argument("--model", type=Path, help="model.joblib from train (manifest.json beside it)")
+    evaluate_source.add_argument("--model-uri", default=None, help="Registered version, e.g. models:/sepsis-warning/3")
+    evaluate.add_argument("--model-sha256", default=None)
+    evaluate.add_argument("--mlflow-uri", default=DEFAULT_TRACKING_URI, help="MLflow store holding --model-uri")
+    evaluate.add_argument("--output", type=Path, required=True)
     replay = sub.add_parser("replay", help="Score a patient PSV with a saved model")
     replay.add_argument("--model", type=Path, required=True)
     replay.add_argument("--patient", type=Path, required=True)
@@ -477,6 +558,10 @@ def main():
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8000)
     serve.add_argument(
+        "--allow-unverified-model", action="store_true",
+        help="Load a --model file that has no manifest.json and no --model-sha256 (bundles you built yourself)",
+    )
+    serve.add_argument(
         "--allow-non-local-host", action="store_true",
         help="Bind beyond localhost. The API has no authentication; agree this with the team first",
     )
@@ -522,7 +607,7 @@ def main():
                 raise ValueError("window must be positive; budget and cooldown must be nonnegative")
             run_experiment(args)
         elif args.command == "replay":
-            bundle = joblib.load(args.model)
+            bundle = load_bundle(args.model)
             frame = read_patient(args.patient, require_labels=False)
             features = select_saved_features(build_features(frame, bundle["window"]), bundle["feature_columns"])
             table = pd.DataFrame({"patient_id": args.patient.stem, "hour": frame["ICULOS"]})
@@ -533,6 +618,22 @@ def main():
             args.output.parent.mkdir(parents=True, exist_ok=True)
             table.to_csv(args.output, index=False)
             print(args.output.resolve())
+        elif args.command == "evaluate":
+            from .evaluation import run_frozen_evaluation
+
+            if args.model_uri:
+                require_mlflow()
+            result = run_frozen_evaluation(
+                data=args.data, splits=args.splits, seed=args.seed, output=args.output, model=args.model,
+                model_uri=args.model_uri, mlflow_uri=args.mlflow_uri, model_sha256=args.model_sha256,
+            )
+            for split, values in result["splits"].items():
+                print(f"{split}: utility {values['normalized_hourly_utility']:.3f}, AUROC {values['auroc']:.3f}, "
+                      f"false alerts/day {values['false_alert_events_per_nonseptic_patient_day']:.3f}", flush=True)
+            again = ("a synthetic fixture, so it may be repeated" if result["data_mode"] == "synthetic_fixture"
+                     else "this model cannot be evaluated again")
+            print(f"Recorded as evaluated at {result['evaluated_at']}; {again}.\n"
+                  f"Results: {args.output.resolve()}", flush=True)
         elif args.command == "serve":
             run_server(args)
         elif args.command == "publish":

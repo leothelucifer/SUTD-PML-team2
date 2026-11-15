@@ -361,6 +361,19 @@ Sizes are engineering effort for one person who knows the repo.
 
 ### Phase 1: Core codebase refactoring and correctness (about 1 week)
 
+**Status: implemented** (branch `leo/phase1-correctness`). Findings T1, T3, T4,
+T5, T7 and T8 are closed; T2 (promotion gates and approver identity) is Phase 3.
+
+| Task | Where it landed |
+|---|---|
+| 1.1 | `run_experiment` no longer scores test splits; `evaluation.py` and the `evaluate` command score them once per model (registry tag or marker file), only on the training split |
+| 1.2 | `manifest.py`; `manifest.json` and `bundle["manifest"]`; scikit-learn minor check; `serve` needs a verified bundle; `/health` returns the manifest |
+| 1.3 | `check_training_data` runs the Pandera rules before fitting on Parquet input; `checks` extra in the training image and CI |
+| 1.4 | `models.toml` (hash in run metadata), patient-bootstrap intervals, one-standard-error selection |
+| 1.5 | NumPy models are optional candidates (`--include-numpy-models`) with a parity test |
+| 1.6 | `scripts/check_notebooks.py` in CI |
+| 1.7 | Narrowed exception with a warning |
+
 | # | Task | Files to modify / create | Engineering changes | Definition of done |
 |---|---|---|---|---|
 | 1.1 | Remove test-set scoring from training (T1) | `cli.py`, new `evaluation.py`, `tests/test_evaluation.py`, `sagemaker_train.py` | Delete `cli.py:L145-L153`; add `evaluate --model-uri`; one evaluation per version, enforced by a registry tag; separate MLflow experiment | `train` output has no `held_out*` files; second `evaluate` on the same version fails; test proves it |

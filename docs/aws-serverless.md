@@ -111,7 +111,7 @@ hand when the project ends.
   signatures; the function reaches S3 with its IAM role.
 - **Data.** The artifact bucket is private, versioned, KMS-encrypted and denies
   non-TLS access. Training outputs (`model.tar.gz`) contain the full run,
-  including patient-level held-out predictions, so they stay in this bucket
+  including patient-level validation predictions (no test-split results), so they stay in this bucket
   and expire after `TrainingOutputRetentionDays`. Nothing patient-level is
   logged to MLflow, and `/model` serves validation results only.
 - **Least privilege.** The training role reads `data/`, writes

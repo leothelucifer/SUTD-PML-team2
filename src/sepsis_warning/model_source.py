@@ -18,7 +18,7 @@ from pathlib import Path
 from .scoring import file_sha256
 
 BUNDLE_FILE = "model.joblib"
-CARD_FILES = ("selection_metrics.json", "run_metadata.json", "registry.json")
+CARD_FILES = ("selection_metrics.json", "run_metadata.json", "manifest.json", "registry.json")
 
 
 class ModelHashMismatch(ValueError):
@@ -97,11 +97,12 @@ def publish_model(model_uri: str, tracking_uri: str, bucket: str, prefix: str = 
 
 def load_serving_model(*, model: Path | None = None, model_uri: str | None = None, model_s3: str | None = None,
                        expected_sha256: str | None = None, mlflow_uri: str | None = None,
-                       download_dir: Path | None = None, client=None):
+                       download_dir: Path | None = None, client=None, allow_unverified: bool = False):
     """Load one bundle for serving, from a file, the registry or S3. Returns (service, card, source).
 
     Shared by ``serve`` and the Lambda handler so every path checks the hash and
-    builds the same model card.
+    builds the same model card. A local file is verified against the given hash or
+    the one in ``manifest.json`` beside it.
     """
     from .model_card import card_from_run_dir
     from .service import ScoringService
@@ -123,7 +124,15 @@ def load_serving_model(*, model: Path | None = None, model_uri: str | None = Non
         path, expected = fetch_model(model_s3, expected_sha256, target, client), expected_sha256
         source = model_s3
     else:
-        path, expected, source = Path(model), expected_sha256, str(model)
+        from .manifest import recorded_sha256
+
+        path, source = Path(model), str(model)
+        expected = expected_sha256 or recorded_sha256(path)
+        if expected is None and not allow_unverified:
+            raise ValueError(
+                f"{path} has no manifest.json beside it and no SHA-256 was given; pass the hash "
+                "(--model-sha256), or --allow-unverified-model for a bundle you built yourself"
+            )
     service = ScoringService.from_path(path, expected)
     card = card_from_run_dir(Path(path).parent, service.bundle, registry)
     return service, card, source
