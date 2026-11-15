@@ -8,7 +8,7 @@ tracking server or idle container.
 |---|---|---|
 | Experiment tracking and model registry | **SageMaker AI MLflow App** (`AWS::SageMaker::MlflowApp`) | Serverless MLflow at no additional charge; you pay for its S3 storage. Replaces the hourly MLflow tracking server |
 | Training and selection | **SageMaker AI training job** started by `scripts/sagemaker_train.py` | One instance for the length of the job, on **managed spot** capacity by default, with a hard maximum runtime |
-| Scoring API | **AWS Lambda** container image with a **function URL** | Scales to zero; billed per request and millisecond; reserved concurrency caps the cost |
+| Scoring API | **AWS Lambda** container image with a **function URL** | Scales to zero; billed per request and millisecond; optional reserved concurrency caps parallel use |
 | Storage | S3 (KMS), ECR, DynamoDB on demand | Pay per GB or per request; lifecycle rules expire old versions, images and training outputs |
 | Alerts | CloudWatch alarms, SNS email, AWS Budget | Budget alert exists from the first deploy |
 
@@ -16,9 +16,10 @@ The always-on private design from the deck (internal load balancer and Fargate
 in private subnets behind a hospital VPN) is still available as
 `ServingMode=fargate`.
 
-**Status:** written and statically checked (cfn-lint, botocore request
-validation, unit tests, and local container runs of the Lambda and training
-images). Not yet deployed to an AWS account. Deploying needs the L06 owner's
+**Status:** written, statically checked (cfn-lint, botocore request
+validation, unit tests, local container runs of the Lambda and training
+images) and checked against the AWS documentation (list below). Not yet
+deployed to an AWS account. Deploying needs the L06 owner's
 approval of the account, region, budget and data plan, and real patient data
 must not be uploaded until licence, privacy and residency are confirmed.
 
@@ -116,6 +117,26 @@ hand when the project ends.
 - **Least privilege.** The training role reads `data/`, writes
   `training-output/` and calls only this MLflow App. The Lambda role reads only
   `models/`. The MLflow App's role reaches only `mlflow/`.
-- **Unverified in an account.** The IAM action for logging to an MLflow App is
-  `sagemaker:CallMlflowAppApi` (the sagemaker-mlflow plugin signs App requests
-  for the `sagemaker` service). Check it on the first real training run.
+
+## Checked against the AWS documentation (2026-11-15)
+
+| Assumption | What the docs say | Result |
+|---|---|---|
+| `AWS::SageMaker::MlflowApp` properties | `ArtifactStoreUri`, `Name`, `RoleArn` required; `ModelRegistrationMode`, `Tags`, `WeeklyMaintenanceWindowStart` (`Sun:18:00` pattern) optional; `Fn::GetAtt Arn` | Template matches |
+| MLflow Apps in Singapore | Asia Pacific (Singapore) is on the MLflow Apps region list; the artifact bucket must be in the same region | OK |
+| MLflow version | Apps run MLflow 3.16 (Python 3.10+) and update themselves | Training image pins `mlflow==3.16.1` (build arg `MLFLOW_VERSION`) |
+| App role | Trust `sagemaker.amazonaws.com`; permissions `s3:Get*`, `s3:Put*`, `s3:List*` (+ Model Registry actions only for automatic registration) | Role now matches, scoped to the bucket and `mlflow/` |
+| Client permission | The data-plane action for MLflow Apps is `sagemaker:CallMlflowAppApi` | Training role and operator policy grant it |
+| Download limit | SageMaker MLflow has a 200 MB download size limit | Bundles are well under 1 MB on synthetic data; check real ones |
+| Training container | Started as `docker run image train`; hyperparameters in `/opt/ml/input/config/hyperparameters.json` as strings; channels in `/opt/ml/input/data/<channel>`; `/opt/ml/model` uploaded as one tar file; first 1,024 characters of `/opt/ml/output/failure` become `FailureReason` | `sagemaker_train.py` matches |
+| Training role | Documented minimum: CloudWatch metrics, logs, S3 get/put/list on input and output, ECR pull; KMS when keys are set; trust guarded with `aws:SourceArn` on `training-job/*` | Role matches; trust condition now as documented |
+| Managed spot | `MaxWaitTimeInSeconds` must be larger than `MaxRuntimeInSeconds`; checkpointing recommended unless jobs are short | Script keeps wait at least 10 minutes above runtime; a 1-hour job without checkpoints restarts from scratch if interrupted |
+| Function URL auth | `AWS_IAM` requires SigV4; callers need **both** `lambda:InvokeFunctionUrl` and `lambda:InvokeFunction`; another account needs a resource policy as well, with `lambda:InvokedViaFunctionUrl` | Template and operator policy match |
+| Container image | Non-AWS base images work with a runtime interface client; read-only file system except `/tmp`; single-architecture images only; same-account ECR access through the repository policy (`ecr:BatchGetImage`, `ecr:GetDownloadUrlForLayer`) | Image and repository policy match; KMS-encrypted ECR needs no extra Lambda permission (ECR decrypts through its own grants) |
+| Init phase | Limited to 10 seconds | Model loads on first request, not at init (about 2 s locally) |
+| Reserved concurrency | Free; you can reserve only the account's unreserved concurrency minus 100 | Now optional (default 0 = not set): new accounts with a low limit cannot reserve any |
+
+Sources: AWS docs pages for MLflow Apps (setup, IAM, CLI), the CloudFormation
+MlflowApp reference, SageMaker training containers and roles, managed spot
+training, StoppingCondition, Lambda function URLs (auth and invocation),
+Lambda container images and concurrency, and ECR encryption at rest.

@@ -35,10 +35,13 @@ Parameters:
     MaxValue: 4096
   ReservedConcurrency:
     Type: Number
-    Default: 5
-    MinValue: 1
+    Default: 0
+    MinValue: 0
     MaxValue: 50
-    Description: Hard cap on parallel executions, which also caps cost.
+    Description: >-
+      Optional hard cap on parallel executions (0 = not set). Lambda only lets you reserve
+      the account's unreserved concurrency minus 100, so new accounts with a low limit
+      must leave this at 0 or request a quota increase first.
   AllowedInvokerArn:
     Type: String
     Default: ""
@@ -49,6 +52,7 @@ Parameters:
 
 Conditions:
   HasExternalInvoker: !Not [!Equals [!Ref AllowedInvokerArn, ""]]
+  HasReservedConcurrency: !Not [!Equals [!Ref ReservedConcurrency, 0]]
 
 Resources:
   FunctionLogGroup:
@@ -102,7 +106,7 @@ Resources:
         - !Ref Architecture
       MemorySize: !Ref MemorySize
       Timeout: 30
-      ReservedConcurrentExecutions: !Ref ReservedConcurrency
+      ReservedConcurrentExecutions: !If [HasReservedConcurrency, !Ref ReservedConcurrency, !Ref AWS::NoValue]
       LoggingConfig:
         LogGroup: !Ref FunctionLogGroup
         LogFormat: Text

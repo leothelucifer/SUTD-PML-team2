@@ -58,7 +58,8 @@ def build_request(args, config: dict) -> dict:
     bucket = config["bucket"]
     stopping = {"MaxRuntimeInSeconds": args.max_runtime}
     if args.spot:
-        stopping["MaxWaitTimeInSeconds"] = max(args.max_wait, args.max_runtime)
+        # Must be larger than MaxRuntimeInSeconds (managed spot training guide).
+        stopping["MaxWaitTimeInSeconds"] = max(args.max_wait, args.max_runtime + 600)
     hyperparameters = {
         "seed": str(args.seed), "window": str(args.window), "budget": str(args.budget),
         "cooldown": str(args.cooldown), "register_model": "true" if args.register else "false",

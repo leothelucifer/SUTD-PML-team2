@@ -78,10 +78,10 @@ Parameters:
     MaxValue: 4096
   LambdaReservedConcurrency:
     Type: Number
-    Default: 5
-    MinValue: 1
+    Default: 0
+    MinValue: 0
     MaxValue: 50
-    Description: Maximum parallel executions; a hard cap on scoring cost.
+    Description: Optional cap on parallel executions (0 = not set). Needs account concurrency of at least this plus 100.
   AllowedInvokerArn:
     Type: String
     Default: ""

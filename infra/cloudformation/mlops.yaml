@@ -31,6 +31,8 @@ Resources:
     Type: AWS::IAM::Role
     Properties:
       Description: Lets the SageMaker MLflow App use its artifact store.
+      # Trust policy as documented for MLflow Apps (Set up IAM permissions for MLflow Apps).
+      # SageMaker uses this role for as long as the App exists; do not delete it while in use.
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -38,24 +40,24 @@ Resources:
             Principal:
               Service: sagemaker.amazonaws.com
             Action: sts:AssumeRole
-            Condition:
-              StringEquals:
-                "aws:SourceAccount": !Ref AWS::AccountId
       Policies:
+        # The documented App policy is s3:Get*, s3:Put*, s3:List* (plus Model Registry
+        # actions, not needed with automatic registration off), scoped here to the
+        # bucket and its mlflow/ prefix.
         - PolicyName: MlflowArtifactStore
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
               - Effect: Allow
                 Action:
-                  - s3:GetObject
-                  - s3:PutObject
+                  - s3:Get*
+                  - s3:Put*
                   - s3:DeleteObject
                   - s3:AbortMultipartUpload
                 Resource: !Sub "${ArtifactBucketArn}/mlflow/*"
               - Effect: Allow
                 Action:
-                  - s3:ListBucket
+                  - s3:List*
                   - s3:GetBucketLocation
                 Resource: !Ref ArtifactBucketArn
               - Effect: Allow
@@ -88,6 +90,7 @@ Resources:
     Type: AWS::IAM::Role
     Properties:
       Description: Role for sepsis-warning SageMaker AI training jobs.
+      # Confused-deputy guard as documented for SageMaker training jobs.
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -96,8 +99,8 @@ Resources:
               Service: sagemaker.amazonaws.com
             Action: sts:AssumeRole
             Condition:
-              StringEquals:
-                "aws:SourceAccount": !Ref AWS::AccountId
+              ArnLike:
+                "aws:SourceArn": !Sub "arn:${AWS::Partition}:sagemaker:${AWS::Region}:${AWS::AccountId}:training-job/*"
       Policies:
         - PolicyName: TrainingJob
           PolicyDocument:
@@ -226,6 +229,12 @@ Resources:
             Effect: Allow
             Action: ecr:GetAuthorizationToken
             Resource: "*"
+          - Sid: CallScoringFunctionUrl
+            Effect: Allow
+            Action:
+              - lambda:InvokeFunctionUrl
+              - lambda:InvokeFunction
+            Resource: !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${EnvironmentName}-scoring"
           - Sid: ReadStackOutputsAndTrainingLogs
             Effect: Allow
             Action:

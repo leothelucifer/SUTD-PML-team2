@@ -166,16 +166,14 @@ Resources:
       RepositoryPolicyText:
         Version: "2012-10-17"
         Statement:
-          - Sid: LambdaPullFromThisAccount
+          # Minimum same-account policy from the Lambda container-image guide.
+          - Sid: LambdaECRImageRetrievalPolicy
             Effect: Allow
             Principal:
               Service: lambda.amazonaws.com
             Action:
               - ecr:BatchGetImage
               - ecr:GetDownloadUrlForLayer
-            Condition:
-              StringLike:
-                "aws:sourceArn": !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:*"
       Tags:
         - Key: Name
           Value: !Sub "${EnvironmentName}-scoring-lambda"

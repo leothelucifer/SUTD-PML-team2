@@ -417,7 +417,7 @@ footer { font-size: 0.85rem; color: var(--muted); border-top: 1px solid var(--ru
         </div>
         <div class="flowdown">↓ ModelS3Uri + ModelSha256 pinned in the stack</div>
         <div class="svc task"><b>Lambda scoring function <span class="status live">in templates</span></b>
-          <span>The same FastAPI app (<code>/health</code>, <code>/model</code>, <code>/score</code>, <code>/predict</code>) behind an HTTPS function URL that accepts only IAM-signed requests. It loads the bundle from S3 once per warm environment, refuses it if the hash differs, scales to zero, and reserved concurrency caps cost.</span>
+          <span>The same FastAPI app (<code>/health</code>, <code>/model</code>, <code>/score</code>, <code>/predict</code>) behind an HTTPS function URL that accepts only IAM-signed requests. It loads the bundle from S3 once per warm environment, refuses it if the hash differs, and scales to zero; optional reserved concurrency caps parallel use.</span>
           <div class="cf">Same 276 features, same bundle, same answer as training and the local API</div>
         </div>
         <div class="awsrow">

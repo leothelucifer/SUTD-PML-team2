@@ -43,9 +43,12 @@ COPY src/sepsis_warning ./src/sepsis_warning
 # SageMaker AI training job. SageMaker runs the image with the argument
 # "train"; inputs and outputs use the /opt/ml layout (see sagemaker_train.py).
 FROM base AS training
+# Match the MLflow version the SageMaker MLflow App runs (3.16 on 2026-11-15; the
+# App updates itself, so raise this when its version changes).
+ARG MLFLOW_VERSION=3.16.1
 RUN --mount=type=secret,id=extra_ca,required=false \
     if [ -f /run/secrets/extra_ca ]; then export PIP_CERT=/run/secrets/extra_ca; fi; \
-    python -m pip install ".[tracking,aws,sagemaker]" && rm -rf /app/src
+    python -m pip install ".[tracking,aws,sagemaker]" "mlflow==${MLFLOW_VERSION}" && rm -rf /app/src
 ENV MLFLOW_DISABLE_TELEMETRY=true \
     MLFLOW_DISABLE_AGENT_HINT=1 \
     GIT_PYTHON_REFRESH=quiet
