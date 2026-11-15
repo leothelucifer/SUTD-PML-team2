@@ -161,7 +161,34 @@ pre .c { color: var(--muted); }
 .legend { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 0.85rem; color: var(--muted); align-items: center; }
 footer { font-size: 0.85rem; color: var(--muted); border-top: 1px solid var(--rule); padding-top: 16px; display: grid; gap: 6px; }
 
+
+/* AWS section */
+.aws { display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 14px; align-items: stretch; }
+.zone { border-radius: 10px; padding: 14px; display: grid; gap: 10px; align-content: start; min-width: 0; position: relative; }
+.zone > .zl { font-family: var(--mono); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); }
+.zone.hosp { background: var(--sheet); border: 1px solid var(--rule); }
+.zone.acct { background: var(--sheet); border: 2px solid var(--muted); }
+.zone.vpc { border: 2px dashed var(--serve); background: color-mix(in srgb, var(--serve-soft) 45%, transparent); }
+.zone.priv { border: 1px solid var(--rule); background: var(--sheet); }
+.svc { border: 1px solid var(--rule); border-radius: 8px; padding: 10px 12px; background: var(--sheet); display: grid; gap: 4px; min-width: 0; }
+.svc b { font-weight: 600; display: flex; justify-content: space-between; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.svc span { font-size: 0.84rem; color: var(--muted); }
+.svc.plan { border-style: dashed; background: transparent; }
+.svc.plan b { color: var(--muted); }
+.svc.gap { border-color: var(--alert); }
+.svc.task { border: 2px solid var(--serve); }
+.svc.task .cf { background: var(--shared-soft); border-radius: 6px; padding: 4px 8px; font-family: var(--mono); font-size: 0.78rem; color: var(--shared); }
+.awsrow { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; }
+.flowdown { text-align: center; font-family: var(--mono); font-size: 0.75rem; color: var(--muted); }
+.status.gap { background: color-mix(in srgb, var(--alert) 14%, transparent); color: var(--alert); }
+.journey { counter-reset: j; display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.journey li { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; align-items: start; font-size: 0.92rem; }
+.journey li::before { counter-increment: j; content: counter(j); width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-family: var(--mono); font-size: 0.75rem; font-weight: 600; color: var(--sheet); background: var(--serve); }
+.journey.rel li::before { background: var(--train); }
+.banner { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; font-size: 0.88rem; background: var(--tint); border-radius: 8px; padding: 10px 14px; }
+
 @media (max-width: 900px) {
+  .aws { grid-template-columns: 1fr; }
   .lanes { grid-template-columns: 1fr; }
   .core { order: -1; }
   .transform, .example, .two { grid-template-columns: 1fr; }
@@ -355,7 +382,82 @@ footer { font-size: 0.85rem; color: var(--muted); border-top: 1px solid var(--ru
     </div>
   </section>
 
-  <!-- 5. Modules -->
+  <!-- 5. AWS -->
+  <section aria-labelledby="aws-h">
+    <div class="eyebrow">Target deployment · infra/cloudformation</div>
+    <h2 id="aws-h">How the same request runs in AWS</h2>
+    <div class="banner">
+      <span class="status live">in templates</span><span>written in CloudFormation, linted, not yet deployed</span>
+      <span class="status plan">planned</span><span>in the deck design, not in the templates</span>
+      <span class="status gap">gap</span><span>must be fixed before a real deployment</span>
+    </div>
+
+    <div class="aws">
+      <div class="zone hosp">
+        <div class="zl">Hospital network</div>
+        <div class="svc"><b>Chart system / interface engine</b><span>Stores every stay. Each hour it sends hours 1 to now for each bed, as in the request above.</span></div>
+        <div class="flowdown">↓ HTTPS, private only</div>
+        <div class="svc plan"><b>Site-to-Site VPN <span class="status plan">planned</span></b><span>Private link into the VPC; its address range goes into <code>AllowedSourceCidr</code>.</span></div>
+      </div>
+
+      <div class="zone acct">
+        <div class="zl">AWS account · ap-southeast-1 (Singapore)</div>
+        <div class="svc plan"><b>Private API Gateway + OAuth2 <span class="status plan">planned</span></b><span>Authentication for the hospital client. Until it exists the API has none, so only synthetic data may be sent.</span></div>
+
+        <div class="zone vpc">
+          <div class="zl">VPC · 2 availability zones</div>
+          <div class="svc"><b>Internal Application Load Balancer <span class="status live">in templates</span></b><span>Private subnets, no internet entry. HTTP 80, or HTTPS 443 with an ACM certificate. Checks <code>GET /health</code> on each task and sends requests only to healthy ones.</span></div>
+          <div class="flowdown">↓ port 8000, from the load balancer only</div>
+          <div class="zone priv">
+            <div class="zl">Private subnets · no public IP · no NAT</div>
+            <div class="svc task"><b>ECS Fargate scoring task <span class="status live">in templates</span></b>
+              <span>The same Docker image as local: 0.5 vCPU, 1 GB, x86_64, non-root. Runs <code>api.py</code> → <code>service.py</code> → <code>build_features</code> → model → <code>apply_policy</code>.</span>
+              <div class="cf">Same 276 features, same bundle, same answer as training and the local API</div>
+            </div>
+            <div class="flowdown">↓ reaches AWS services through VPC endpoints, never the internet</div>
+            <div class="awsrow">
+              <div class="svc gap"><b>S3 model bucket <span class="status gap">gap</span></b><span>KMS-encrypted, versioned, <code>models/</code> prefix; task may read it. The API does not read <code>MODEL_BUCKET</code> yet, so nothing puts the bundle at <code>/models/model.joblib</code>.</span></div>
+              <div class="svc"><b>ECR image repository <span class="status live">in templates</span></b><span>Scan on push. Fargate pulls the image through private endpoints.</span></div>
+              <div class="svc"><b>DynamoDB stay state <span class="status live">in templates</span></b><span>Encrypted, point-in-time recovery. Unused: the API is stateless.</span></div>
+              <div class="svc"><b>CloudWatch Logs <span class="status live">in templates</span></b><span>Task logs, kept 30 days.</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="awsrow">
+          <div class="svc"><b>CloudWatch alarms → SNS email <span class="status live">in templates</span></b><span>CPU, memory, 5xx errors, response time, healthy task count; plus a monthly budget alert.</span></div>
+          <div class="svc plan"><b>SageMaker training + managed MLflow <span class="status plan">planned</span></b><span>Today training, selection and the registry run on a laptop or the team cluster.</span></div>
+          <div class="svc plan"><b>EventBridge monitoring jobs <span class="status plan">planned</span></b><span>Scheduled drift and calibration checks (M02).</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="two">
+      <div class="card" style="display:grid;gap:12px">
+        <h3>08:00 request for bed 4, end to end</h3>
+        <ol class="journey">
+          <li><span>The chart system sends hours 1–8 for bed 4 (VPN, later API Gateway with an OAuth2 token).</span></li>
+          <li><span>The internal load balancer passes it to a healthy Fargate task.</span></li>
+          <li><span>The task validates the JSON, builds the 276 features for hours 1–8 and scores them with the bundle loaded at start-up.</span></li>
+          <li><span>The alert rule runs over all eight hours; hour 8 is returned with its probability and <code>new_alert</code>.</span></li>
+          <li><span>The task forgets the request. Logs and metrics go to CloudWatch; alarms email the team.</span></li>
+        </ol>
+      </div>
+      <div class="card" style="display:grid;gap:12px">
+        <h3>Releasing a new model</h3>
+        <ol class="journey rel">
+          <li><span><code>train</code> selects a model on validation and registers it as <code>@candidate</code>.</span></li>
+          <li><span>The team reviews it; <code>promote --reviewed-by</code> moves <code>@production</code>.</span></li>
+          <li><span>The bundle goes to S3 <code>models/</code> with its SHA-256; the image is pushed to ECR. <span class="status gap">gap</span> no script does this yet, and the task cannot read S3 yet.</span></li>
+          <li><span>ECS replaces tasks one at a time (100% minimum healthy). Each new task checks the hash before it serves.</span></li>
+          <li><span>A failing rollout is rolled back by the deployment circuit breaker; promoting the previous version rolls back the model.</span></li>
+        </ol>
+        <p class="muted" style="font-size:.85rem">Rehearse this on a laptop with <code>scripts/local_prod.sh</code>: HAProxy stands in for the load balancer and two containers for the tasks.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 6. Modules -->
   <section aria-labelledby="mod-h">
     <div class="eyebrow">src/sepsis_warning</div>
     <h2 id="mod-h">The modules and what each one does</h2>
@@ -392,7 +494,7 @@ footer { font-size: 0.85rem; color: var(--muted); border-top: 1px solid var(--ru
   </section>
 
   <footer>
-    <span>Source: <code>src/sepsis_warning/features.py</code>, <code>service.py</code>, <code>modeling.py</code>, <code>policy.py</code> in the team repository. The heart-rate numbers are the real output of <code>build_features</code> on the example stay shown.</span>
+    <span>Source: <code>src/sepsis_warning/features.py</code>, <code>service.py</code>, <code>modeling.py</code>, <code>policy.py</code> and <code>infra/cloudformation/</code> in the team repository. The heart-rate numbers are the real output of <code>build_features</code> on the example stay shown.</span>
     <span>Research tool on a benchmark label. Not clinically validated and not for patient care.</span>
   </footer>
 </div>
