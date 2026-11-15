@@ -42,7 +42,10 @@ class ApiTests(unittest.TestCase):
         body = {"patient_id": "stay-1", "hours": self.request_hours(patient.frame)}
         response = self.client.post("/score", json=body)
         self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(response.json(), self.service.score("stay-1", body["hours"]))
+        served, direct = response.json(), self.service.score("stay-1", body["hours"])
+        for result in (served, direct):
+            result.pop("scored_at")
+        self.assertEqual(served, direct)
 
     def test_invalid_input_is_422_with_a_reason(self):
         response = self.client.post("/score", json={"patient_id": "s", "hours": [{"ICULOS": 1, "SepsisLabel": 1}]})

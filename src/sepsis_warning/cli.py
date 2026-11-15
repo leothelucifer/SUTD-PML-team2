@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import importlib.metadata
 import json
+import os
 import platform
 import time
 from pathlib import Path
@@ -337,10 +338,19 @@ def run_server(args):
     from .service import ModelMismatch
 
     try:
+        alert_store = None
+        if args.alert_table:
+            from .alert_store import DynamoAlertStore
+
+            alert_store = DynamoAlertStore(args.alert_table)
+        elif args.alert_ledger == "memory":
+            from .alert_store import InMemoryAlertStore
+
+            alert_store = InMemoryAlertStore()
         service, card, source = load_serving_model(
             model=args.model, model_uri=args.model_uri, model_s3=args.model_s3,
             expected_sha256=args.model_sha256, mlflow_uri=args.mlflow_uri,
-            allow_unverified=args.allow_unverified_model,
+            allow_unverified=args.allow_unverified_model, alert_store=alert_store,
         )
     except ModelMismatch as error:
         raise ValueError(str(error)) from error
@@ -351,7 +361,13 @@ def run_server(args):
         print("No selection files next to the bundle; GET /model will not show the selection", flush=True)
     if health["synthetic_model"]:
         print("WARNING: synthetic fixture model; scores are meaningless", flush=True)
-    uvicorn.run(create_app(service, card), host=args.host, port=args.port, workers=1)
+    telemetry = None
+    if args.telemetry or args.prediction_log:
+        from .telemetry import Telemetry
+
+        telemetry = Telemetry(prediction_log=args.prediction_log, environment=args.environment)
+    uvicorn.run(create_app(service, card, telemetry), host=args.host, port=args.port, workers=1,
+                access_log=telemetry is None)
 
 
 def run_sirs_failures(args):
@@ -395,7 +411,7 @@ def run_ward(args):
     cohort = cohorts[args.split]
     stays = choose_stays(cohort, args.beds, args.septic_share, args.max_hours, args.seed)
     if args.api_url:
-        frames, details = score_via_api(args.api_url, stays)
+        frames, details = score_via_api(args.api_url, stays, sign=args.sign)
         if bool(details["synthetic_model"]) != synthetic:
             raise ValueError("The API's model and the data disagree on whether they are synthetic")
         model_name, threshold, cooldown = details["model_name"], details["threshold"], details["cooldown_hours"]
@@ -557,6 +573,15 @@ def main():
     serve.add_argument("--model-sha256", default=None, help="Refuse to start unless the bundle has this SHA-256")
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8000)
+    serve.add_argument("--alert-table", default=os.environ.get("ALERT_TABLE"),
+                       help="DynamoDB alert ledger (records delivered alerts; needs the aws extra)")
+    serve.add_argument("--alert-ledger", choices=["none", "memory"], default="none",
+                       help="memory: keep delivered alerts in this process (lost on restart)")
+    serve.add_argument("--telemetry", action="store_true",
+                       help="Structured JSON request metrics and prediction lines on stdout")
+    serve.add_argument("--prediction-log", type=Path, default=None,
+                       help="Write prediction lines to this JSONL file (input for `monitor-live`)")
+    serve.add_argument("--environment", default=os.environ.get("ENVIRONMENT_NAME", "local"))
     serve.add_argument(
         "--allow-unverified-model", action="store_true",
         help="Load a --model file that has no manifest.json and no --model-sha256 (bundles you built yourself)",
@@ -574,6 +599,8 @@ def main():
     ward = sub.add_parser("ward", help="Write an ICU ward replay page for a saved model (research demo)")
     ward.add_argument("--model", type=Path, help="model.joblib produced by train/demo (not needed with --api-url)")
     ward.add_argument("--api-url", default=None, help="Score through a running API instead, e.g. http://127.0.0.1:8000")
+    ward.add_argument("--sign", action="store_true",
+                      help="Sign --api-url requests with SigV4 (the IAM-protected Lambda URL; aws extra)")
     ward.add_argument("--data", type=Path, required=True, help=DATA_HELP)
     ward.add_argument("--splits", type=Path, help=SPLITS_HELP)
     ward.add_argument("--split", choices=SELECTION_SPLITS + HELD_OUT_SPLITS, default="validation")

@@ -138,8 +138,9 @@ class LambdaTests(unittest.TestCase):
         from sepsis_warning import lambda_app
 
         self.lambda_app = lambda_app
-        lambda_app._adapter = None
+        lambda_app._adapter = lambda_app._failed_at = None
         self.addCleanup(setattr, lambda_app, "_adapter", None)
+        self.addCleanup(setattr, lambda_app, "_failed_at", None)
 
     @staticmethod
     def event(method, path, body=None):
@@ -179,6 +180,18 @@ class LambdaTests(unittest.TestCase):
             os.environ.pop("MODEL_S3_URI", None)
             with self.assertRaises(ModelMismatch):
                 self.lambda_app.handler(self.event("GET", "/health"), None)
+
+    def test_a_failed_load_is_remembered_and_answered_with_503(self):
+        env = {"MODEL_PATH": str(self.run_dir / "model.joblib"), "MODEL_SHA256": "0" * 64}
+        with mock.patch.dict(os.environ, env, clear=False):
+            os.environ.pop("MODEL_S3_URI", None)
+            with self.assertRaises(Exception):  # noqa: B017 - first request surfaces the load error
+                self.lambda_app.handler(self.event("GET", "/health"), None)
+            with mock.patch.object(self.lambda_app, "_build", side_effect=AssertionError("must not reload")):
+                again = self.lambda_app.handler(self.event("GET", "/health"), None)
+        self.assertEqual(again["statusCode"], 503)
+        self.assertEqual(again["headers"]["retry-after"], "60")
+        self.assertNotIn("_reason", again)
 
     def test_missing_configuration_is_an_error(self):
         with mock.patch.dict(os.environ, {}, clear=False):

@@ -97,7 +97,8 @@ def publish_model(model_uri: str, tracking_uri: str, bucket: str, prefix: str = 
 
 def load_serving_model(*, model: Path | None = None, model_uri: str | None = None, model_s3: str | None = None,
                        expected_sha256: str | None = None, mlflow_uri: str | None = None,
-                       download_dir: Path | None = None, client=None, allow_unverified: bool = False):
+                       download_dir: Path | None = None, client=None, allow_unverified: bool = False,
+                       alert_store=None):
     """Load one bundle for serving, from a file, the registry or S3. Returns (service, card, source).
 
     Shared by ``serve`` and the Lambda handler so every path checks the hash and
@@ -133,6 +134,9 @@ def load_serving_model(*, model: Path | None = None, model_uri: str | None = Non
                 f"{path} has no manifest.json beside it and no SHA-256 was given; pass the hash "
                 "(--model-sha256), or --allow-unverified-model for a bundle you built yourself"
             )
-    service = ScoringService.from_path(path, expected)
+    if registry is None and (Path(path).parent / "registry.json").is_file():
+        registry = json.loads((Path(path).parent / "registry.json").read_text(encoding="utf-8"))
+    version = str(registry["version"]) if registry and registry.get("version") is not None else None
+    service = ScoringService.from_path(path, expected, model_version=version, alert_store=alert_store)
     card = card_from_run_dir(Path(path).parent, service.bundle, registry)
     return service, card, source
