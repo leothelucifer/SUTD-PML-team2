@@ -15,10 +15,10 @@ class ApiTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         from fastapi.testclient import TestClient
+        from test_service import make_bundle, request_hours
 
         from sepsis_warning.api import create_app
         from sepsis_warning.service import ScoringService
-        from test_service import make_bundle, request_hours
 
         cls.temp = tempfile.TemporaryDirectory()
         root = Path(cls.temp.name)

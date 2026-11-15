@@ -35,7 +35,7 @@ class Registry(unittest.TestCase):
         cls.temp = tempfile.TemporaryDirectory()
         cls.root = Path(cls.temp.name)
         cls.data = cls.root / "synthetic"
-        generate_synthetic(cls.data, source_size=80, external_size=20)
+        generate_synthetic(cls.data, source_size=160, external_size=20)
         (cls.data / "SYNTHETIC.json").write_text("{}")
         cls.run_dir = cls.root / "run"
         run_experiment(Namespace(

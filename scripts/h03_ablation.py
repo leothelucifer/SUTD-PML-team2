@@ -31,9 +31,9 @@ import pandas as pd
 
 from sepsis_warning.ablation import ARM_NAMES, ARMS, arm_columns, paired_bootstrap, score_table
 from sepsis_warning.features import apply_training_fallback, features_for_windows, fit_training_fallback
+from sepsis_warning.gradient_boosting import NumpyGradientBoosting
 from sepsis_warning.hmm import VITALS, hmm_state_features, load_hmm
 from sepsis_warning.logistic import NumpyLogisticRegression, calibrate_frozen
-from sepsis_warning.gradient_boosting import NumpyGradientBoosting
 from sepsis_warning.policy import tune_threshold
 from sepsis_warning.random_forest import NumpyRandomForest
 from sepsis_warning.signature import WINDOW, fit_signature_scaler, signature_features

@@ -190,6 +190,10 @@ def run_experiment(args):
         fitted[name] = model
         validation_scores[name] = validation
     selected, selection = select_candidate(comparisons, complexity_ranks(model_config))
+    # The rule every model must beat, on the same validation stays and under the same alert
+    # budget (its criteria-count threshold is tuned the same way). A promotion gate reads this.
+    sirs = tune_threshold(baseline_table(splits["validation"], "sirs"), args.budget, args.cooldown)
+    sirs["brier_score"] = None  # the SIRS score is not a probability
     name, threshold = selected["model"], selected["threshold"]
     pd.DataFrame(comparisons).to_csv(args.output / "validation_models.csv", index=False)
     write_json(args.output / "candidate_details.json", details)
@@ -198,6 +202,7 @@ def run_experiment(args):
         "selected_model": name, "threshold": threshold,
         "validation_alarm_budget": args.budget, "cooldown_hours": args.cooldown,
         "selection": selection, "validation_models": comparisons,
+        "reference_baselines": {"sirs": sirs},
     }
     config = {
         "seed": args.seed, "window_hours": args.window, "budget": args.budget,
@@ -258,6 +263,12 @@ def run_experiment(args):
         print(f"MLflow run: {run_id}", flush=True)
         if args.register_model:
             from .registry import MODEL_NAME, register_bundle
+
+            if getattr(args, "require_gates", False):
+                # Pipeline use: a model that cannot be promoted is not registered at all.
+                from .gates import require_gates
+
+                require_gates(summary, require_real_data=getattr(args, "require_real_data", False))
 
             version = register_bundle(args.output, args.mlflow_uri, run_id)
             print(f"Registered {MODEL_NAME} version {version} as @candidate "
@@ -461,6 +472,8 @@ def main():
             "--register-model", action="store_true",
             help="Also register the selected bundle in the MLflow registry as @candidate (needs --mlflow-uri)",
         )
+        command.add_argument("--require-gates", action="store_true",
+                             help="With --register-model: refuse to register a model that fails the promotion gates")
         command.add_argument("--models-config", type=Path, default=None,
                              help="Candidate models and settings (default: the packaged models.toml)")
         command.add_argument("--include-numpy-models", action="store_true",
@@ -561,6 +574,10 @@ def main():
     monitor_replay.add_argument("--reference", type=Path, required=True, help="monitoring_reference.json")
     monitor_replay.add_argument("--split", choices=REPLAY_SPLITS, default="external_test")
     monitor_replay.add_argument("--output", type=Path, default=Path("artifacts/monitoring/replay"))
+    live = sub.add_parser("monitor-live", help="Label-free drift checks on a prediction log (from serve --prediction-log)")
+    live.add_argument("--predictions", type=Path, nargs="+", required=True, help="JSONL files or folders")
+    live.add_argument("--reference", type=Path, required=True, help="monitoring_reference.json from monitor-setup")
+    live.add_argument("--output", type=Path, default=Path("artifacts/monitoring/live"))
     serve = sub.add_parser("serve", help="Local research scoring API for a saved model (needs the serve extra)")
     serve_source = serve.add_mutually_exclusive_group(required=True)
     serve_source.add_argument("--model", type=Path, help="model.joblib produced by train/demo")
@@ -618,6 +635,8 @@ def main():
     promote_cmd.add_argument("--reviewed-by", required=True, help="Name of the teammate who reviewed this version")
     promote_cmd.add_argument("--alias", default="production")
     promote_cmd.add_argument("--mlflow-uri", default=DEFAULT_TRACKING_URI)
+    promote_cmd.add_argument("--require-real-data", action="store_true",
+                             help="Also refuse a model trained on the synthetic fixture (use for real deployments)")
     args = parser.parse_args()
     try:
         if args.command in ["demo", "train"] and args.register_model and not args.mlflow_uri:
@@ -645,6 +664,17 @@ def main():
             args.output.parent.mkdir(parents=True, exist_ok=True)
             table.to_csv(args.output, index=False)
             print(args.output.resolve())
+        elif args.command == "monitor-live":
+            from .live_drift import run_live_drift
+
+            result = run_live_drift(args.predictions, args.reference, args.output)
+            print(f"Live drift status: {result['status']} ({result['rows']} predictions, {result['stays']} stays)")
+            for name, check in result.get("checks", {}).items():
+                print(f"  {name}: {check['value'] if check['value'] is None else round(check['value'], 4)} "
+                      f"[{check['status']}]")
+            if result.get("detail"):
+                print(f"  {result['detail']}")
+            print(f"Result: {(args.output / 'live_drift.json').resolve()}", flush=True)
         elif args.command == "evaluate":
             from .evaluation import run_frozen_evaluation
 
@@ -674,9 +704,13 @@ def main():
             require_mlflow()
             from .registry import MODEL_NAME, promote
 
-            change = promote(args.mlflow_uri, args.version, args.reviewed_by, alias=args.alias)
+            change = promote(args.mlflow_uri, args.version, args.reviewed_by, alias=args.alias,
+                             require_real_data=args.require_real_data)
+            for gate in change["gates"]:
+                print(f"  gate {gate['gate']}: passed ({gate['detail']})", flush=True)
             print(f"{MODEL_NAME}@{change['alias']} -> version {change['version']} "
-                  f"(was {change['previous'] or 'unset'}; reviewed by {change['reviewed_by']})", flush=True)
+                  f"(was {change['previous'] or 'unset'}; reviewed by {change['reviewed_by']}, "
+                  f"approved as {change['approved_by']})", flush=True)
             if change["previous"]:
                 print(f"Roll back with: python -m sepsis_warning promote --version {change['previous']} "
                       f"--alias {change['alias']} --reviewed-by <name>", flush=True)

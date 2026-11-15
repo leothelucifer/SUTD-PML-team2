@@ -20,6 +20,7 @@ import json
 import random
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 
@@ -55,7 +56,7 @@ def sirs_fallback(stays: list[dict], cooldown_hours: int = 6) -> dict:
         alerts = hours[np.flatnonzero(events)]
         predictions.append({
             "patient_id": stay["patient_id"], "hour": float(hours[-1]), "hours_scored": len(hours),
-            "sirs_criteria_met": int(round(score[-1] * len(SIRS_CRITERIA))),
+            "sirs_criteria_met": round(score[-1] * len(SIRS_CRITERIA)),
             "above_threshold": bool(score[-1] >= BASELINE_THRESHOLD), "new_alert": bool(events[-1]),
             "last_alert_hour": float(alerts[-1]) if len(alerts) else None,
         })
@@ -108,7 +109,7 @@ class ScoringClient:
         from botocore.auth import SigV4Auth
         from botocore.awsrequest import AWSRequest
 
-        host = urllib.request.urlparse(url).hostname or ""
+        host = urllib.parse.urlparse(url).hostname or ""
         region = self.region or (host.split(".")[2] if host.endswith(".on.aws") and host.count(".") >= 4 else None)
         if not region:
             raise ValueError("pass region=; it could not be read from the URL")

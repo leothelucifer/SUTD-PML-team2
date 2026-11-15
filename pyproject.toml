@@ -42,3 +42,22 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 sepsis_warning = ["report_template.html", "ward_template.html", "models.toml"]
+
+[tool.ruff]
+line-length = 140
+target-version = "py311"
+
+[tool.ruff.lint]
+# Errors, likely bugs, outdated syntax and import order. Checked in CI on every pull request.
+select = ["F", "E9", "B", "UP", "I"]
+# B905 (zip strict=) and B007 (unused loop variable) would change existing analysis code; reviewed case by case.
+ignore = ["B905", "B007"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["sepsis_warning"]
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+check_untyped_defs = false
+follow_imports = "silent"

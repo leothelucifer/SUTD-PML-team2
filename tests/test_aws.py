@@ -46,6 +46,21 @@ class FakeS3:
             raise error
         shutil.copyfile(source, filename)
 
+    def put_object(self, Bucket, Key, Body, IfNoneMatch=None, Metadata=None):
+        target = self.root / Bucket / Key
+        if IfNoneMatch == "*" and target.exists():
+            error = RuntimeError("exists")
+            error.response = {"Error": {"Code": "PreconditionFailed"}}
+            raise error
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(Body)
+        self.metadata = getattr(self, "metadata", {})
+        self.metadata[(Bucket, Key)] = Metadata or {}
+        self.uploads.append((Key, Metadata))
+
+    def head_object(self, Bucket, Key):
+        return {"Metadata": getattr(self, "metadata", {}).get((Bucket, Key), {})}
+
     def upload_file(self, filename, bucket, key, ExtraArgs=None):
         target = self.root / bucket / key
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -241,6 +256,35 @@ class SageMakerEntryTests(unittest.TestCase):
         self.write_params()
         self.assertEqual(self.run_entry(), 1)
         self.assertIn("no combined.parquet", (self.root / "output" / "failure").read_text())
+
+    def test_pipeline_step_evaluates_once_then_publishes(self):
+        from sepsis_warning import evaluation, model_source
+
+        self.write_params(mode="evaluate_publish", mlflow_tracking_uri="sqlite:///x.db", publish_bucket="bucket",
+                          model_uri="models:/sepsis-warning/4")
+        published = {"model_s3_uri": "s3://bucket/models/v4/model.joblib", "sha256": "a" * 64, "version": "4"}
+        with mock.patch.object(evaluation, "run_frozen_evaluation") as evaluate, \
+                mock.patch.object(model_source, "publish_model", return_value=published) as publish:
+            self.assertEqual(self.run_entry(), 0)
+            self.assertEqual(evaluate.call_args.kwargs["model_uri"], "models:/sepsis-warning/4")
+            publish.assert_called_once_with("models:/sepsis-warning/4", "sqlite:///x.db", "bucket")
+            self.assertEqual(json.loads((self.root / "model" / "publish.json").read_text()), published)
+            # Already evaluated: no second look, but the publish still happens.
+            evaluate.side_effect = evaluation.AlreadyEvaluated("done")
+            self.assertEqual(self.run_entry(), 0)
+            self.assertEqual(publish.call_count, 2)
+        self.write_params(mode="evaluate_publish")
+        self.assertEqual(self.run_entry(), 1)
+        self.assertIn("publish_bucket", (self.root / "output" / "failure").read_text())
+        self.assertFalse((self.root / "model" / "model.joblib").exists())   # this mode never trains
+
+    def test_require_gates_stops_registration_of_a_failing_model(self):
+        from sepsis_warning.sagemaker_train import build_args
+
+        self.write_params(require_gates="true", require_real_data="true", register_model="true",
+                          mlflow_tracking_uri="sqlite:///x.db")
+        args = build_args(self.root)
+        self.assertTrue(args.require_gates and args.require_real_data and args.register_model)
 
     @unittest.skipUnless(HAVE["mlflow"], "needs the tracking extra")
     def test_training_logs_and_registers_with_a_tracking_uri(self):
