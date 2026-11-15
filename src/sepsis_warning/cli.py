@@ -166,6 +166,8 @@ def run_experiment(args):
     }
     write_json(args.output / "config.json", config)
     write_json(args.output / "metrics.json", summary)
+    # Validation-only copy for tracking, S3 and GET /model; held-out results stay in metrics.json.
+    write_json(args.output / "selection_metrics.json", {k: v for k, v in summary.items() if k != "held_out"})
     splits_summary = args.splits_summary
     if splits_summary is None and args.data.is_file():
         splits_path = getattr(args, "splits", None) or args.data.with_name("splits.csv")
@@ -268,22 +270,17 @@ def run_server(args):
         from .api import create_app
     except ImportError as error:
         raise RuntimeError("the API needs the serve extra; run `pip install -e .[serve]`") from error
-    from .model_card import card_from_run_dir
-    from .service import ModelMismatch, ScoringService
+    from .model_source import load_serving_model
+    from .service import ModelMismatch
 
-    model_path, expected, registry = args.model, args.model_sha256, None
-    if args.model_uri:
-        from .registry import resolve_model
-
-        model_path, expected, tags = resolve_model(args.model_uri, args.mlflow_uri)
-        registry = {"model_uri": args.model_uri, "version": tags["version"],
-                    "reviewed_by": tags.get("production_reviewed_by"), "promoted_at": tags.get("production_promoted_at")}
-        print(f"Resolved {args.model_uri} to version {tags['version']} (bundle {expected[:12]})", flush=True)
     try:
-        service = ScoringService.from_path(model_path, expected)
-        card = card_from_run_dir(Path(model_path).parent, service.bundle, registry)
-    except (ModelMismatch, ValueError) as error:
+        service, card, source = load_serving_model(
+            model=args.model, model_uri=args.model_uri, model_s3=args.model_s3,
+            expected_sha256=args.model_sha256, mlflow_uri=args.mlflow_uri,
+        )
+    except ModelMismatch as error:
         raise ValueError(str(error)) from error
+    print(f"Loaded {source}", flush=True)
     health = service.health()
     print(f"Serving {health['model_name']} (bundle {health['bundle_sha256'][:12]}) on {args.host}:{args.port}", flush=True)
     if card is None:
@@ -472,7 +469,10 @@ def main():
     serve_source.add_argument("--model", type=Path, help="model.joblib produced by train/demo")
     serve_source.add_argument("--model-uri", default=None,
                               help="Registered model, e.g. models:/sepsis-warning@production (needs the tracking extra)")
-    serve.add_argument("--mlflow-uri", default=DEFAULT_TRACKING_URI, help="Local MLflow store holding --model-uri")
+    serve_source.add_argument("--model-s3", default=None,
+                              help="Published bundle, s3://bucket/models/v3/model.joblib (needs --model-sha256 and the aws extra)")
+    serve.add_argument("--mlflow-uri", default=DEFAULT_TRACKING_URI,
+                       help="MLflow store holding --model-uri: local SQLite, or the SageMaker MLflow App ARN")
     serve.add_argument("--model-sha256", default=None, help="Refuse to start unless the bundle has this SHA-256")
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8000)
@@ -480,6 +480,12 @@ def main():
         "--allow-non-local-host", action="store_true",
         help="Bind beyond localhost. The API has no authentication; agree this with the team first",
     )
+    publish = sub.add_parser("publish", help="Copy a registered model to S3 for an AWS deployment (aws extra)")
+    publish.add_argument("--model-uri", default="models:/sepsis-warning@production")
+    publish.add_argument("--mlflow-uri", default=DEFAULT_TRACKING_URI,
+                         help="Local SQLite store or the SageMaker MLflow App ARN")
+    publish.add_argument("--bucket", required=True, help="ArtifactBucketName output of the CloudFormation stack")
+    publish.add_argument("--prefix", default="models")
     ward = sub.add_parser("ward", help="Write an ICU ward replay page for a saved model (research demo)")
     ward.add_argument("--model", type=Path, help="model.joblib produced by train/demo (not needed with --api-url)")
     ward.add_argument("--api-url", default=None, help="Score through a running API instead, e.g. http://127.0.0.1:8000")
@@ -529,6 +535,13 @@ def main():
             print(args.output.resolve())
         elif args.command == "serve":
             run_server(args)
+        elif args.command == "publish":
+            require_mlflow()
+            from .model_source import publish_model
+
+            published = publish_model(args.model_uri, args.mlflow_uri, args.bucket, args.prefix)
+            print(f"Published version {published['version']} to {published['model_s3_uri']}", flush=True)
+            print(f"Deploy it with: ModelS3Uri={published['model_s3_uri']} ModelSha256={published['sha256']}", flush=True)
         elif args.command == "promote":
             require_mlflow()
             from .registry import MODEL_NAME, promote

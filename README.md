@@ -460,6 +460,33 @@ deploy and rollback), see [docs/local-production.md](docs/local-production.md):
 bash scripts/local_prod.sh up && bash scripts/local_prod.sh test
 ```
 
+## Deploy to AWS (serverless)
+
+The default AWS design costs nothing while idle (roughly $2-5 a month plus a
+few cents per training run; estimate in the guide). Training runs as a
+SageMaker AI training job on spot capacity, runs and models are tracked in the
+serverless SageMaker AI MLflow App, and scoring runs on AWS Lambda behind an
+IAM-authenticated HTTPS URL. The same images and commands are used as locally.
+Not deployed yet: deployment needs the L06 owner's approval of account, region,
+budget and data plan. Full guide: [docs/aws-serverless.md](docs/aws-serverless.md).
+
+```bash
+pip install -e ".[aws,tracking,sagemaker]"
+bash scripts/aws_deploy.sh stack        # S3, KMS, ECR, MLflow App, roles, alarms, budget
+bash scripts/aws_deploy.sh images       # lambda, training and scoring images
+bash scripts/aws_deploy.sh data         # combined.parquet + splits.csv (after approval)
+bash scripts/aws_deploy.sh train        # SageMaker training job -> @candidate in the MLflow App
+bash scripts/aws_deploy.sh promote 1 "Reviewer Name"
+bash scripts/aws_deploy.sh publish      # @production -> S3 with its SHA-256
+bash scripts/aws_deploy.sh serve        # Lambda scoring API
+bash scripts/aws_deploy.sh call GET /model
+```
+
+Locally, the images can be built and checked without AWS:
+`docker build --target lambda .`, `docker build --target training .`, and
+`serve --model-s3 s3://.../model.joblib --model-sha256 <hash>` for a bundle
+already in S3.
+
 ## Files and artifacts
 
 ```text

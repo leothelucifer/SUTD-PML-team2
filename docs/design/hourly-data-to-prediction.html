@@ -384,50 +384,46 @@ footer { font-size: 0.85rem; color: var(--muted); border-top: 1px solid var(--ru
 
   <!-- 5. AWS -->
   <section aria-labelledby="aws-h">
-    <div class="eyebrow">Target deployment · infra/cloudformation</div>
-    <h2 id="aws-h">How the same request runs in AWS</h2>
+    <div class="eyebrow">Target deployment · infra/cloudformation · serverless by default</div>
+    <h2 id="aws-h">How it runs in AWS, with nothing running between uses</h2>
     <div class="banner">
-      <span class="status live">in templates</span><span>written in CloudFormation, linted, not yet deployed</span>
-      <span class="status plan">planned</span><span>in the deck design, not in the templates</span>
-      <span class="status gap">gap</span><span>must be fixed before a real deployment</span>
+      <span class="status live">in templates</span><span>written, linted and tested locally; not yet deployed</span>
+      <span class="status plan">option / planned</span><span>available by parameter, or in the deck design only</span>
     </div>
 
     <div class="aws">
       <div class="zone hosp">
-        <div class="zl">Hospital network</div>
-        <div class="svc"><b>Chart system / interface engine</b><span>Stores every stay. Each hour it sends hours 1 to now for each bed, as in the request above.</span></div>
-        <div class="flowdown">↓ HTTPS, private only</div>
-        <div class="svc plan"><b>Site-to-Site VPN <span class="status plan">planned</span></b><span>Private link into the VPC; its address range goes into <code>AllowedSourceCidr</code>.</span></div>
+        <div class="zl">Team laptop or CI</div>
+        <div class="svc"><b>Docker images</b><span>One Dockerfile, three targets: <code>training</code>, <code>lambda</code>, <code>scoring</code>. Pushed to ECR with the git commit as the tag.</span></div>
+        <div class="svc"><b>Review and release</b><span><code>promote --reviewed-by</code> moves <code>@production</code>; <code>publish</code> copies it to S3 with its SHA-256.</span></div>
+        <div class="flowdown">↓ hospital side</div>
+        <div class="svc"><b>Chart system / interface engine</b><span>Sends each stay's hours 1 to now, signed with its IAM credentials (SigV4).</span></div>
       </div>
 
       <div class="zone acct">
-        <div class="zl">AWS account · ap-southeast-1 (Singapore)</div>
-        <div class="svc plan"><b>Private API Gateway + OAuth2 <span class="status plan">planned</span></b><span>Authentication for the hospital client. Until it exists the API has none, so only synthetic data may be sent.</span></div>
-
-        <div class="zone vpc">
-          <div class="zl">VPC · 2 availability zones</div>
-          <div class="svc"><b>Internal Application Load Balancer <span class="status live">in templates</span></b><span>Private subnets, no internet entry. HTTP 80, or HTTPS 443 with an ACM certificate. Checks <code>GET /health</code> on each task and sends requests only to healthy ones.</span></div>
-          <div class="flowdown">↓ port 8000, from the load balancer only</div>
-          <div class="zone priv">
-            <div class="zl">Private subnets · no public IP · no NAT</div>
-            <div class="svc task"><b>ECS Fargate scoring task <span class="status live">in templates</span></b>
-              <span>The same Docker image as local: 0.5 vCPU, 1 GB, x86_64, non-root. Runs <code>api.py</code> → <code>service.py</code> → <code>build_features</code> → model → <code>apply_policy</code>.</span>
-              <div class="cf">Same 276 features, same bundle, same answer as training and the local API</div>
-            </div>
-            <div class="flowdown">↓ reaches AWS services through VPC endpoints, never the internet</div>
-            <div class="awsrow">
-              <div class="svc gap"><b>S3 model bucket <span class="status gap">gap</span></b><span>KMS-encrypted, versioned, <code>models/</code> prefix; task may read it. The API does not read <code>MODEL_BUCKET</code> yet, so nothing puts the bundle at <code>/models/model.joblib</code>.</span></div>
-              <div class="svc"><b>ECR image repository <span class="status live">in templates</span></b><span>Scan on push. Fargate pulls the image through private endpoints.</span></div>
-              <div class="svc"><b>DynamoDB stay state <span class="status live">in templates</span></b><span>Encrypted, point-in-time recovery. Unused: the API is stateless.</span></div>
-              <div class="svc"><b>CloudWatch Logs <span class="status live">in templates</span></b><span>Task logs, kept 30 days.</span></div>
-            </div>
+        <div class="zl">AWS account · ap-southeast-1 (Singapore) · pay per use</div>
+        <div class="awsrow">
+          <div class="svc task" style="border-color:var(--train)"><b>SageMaker AI training job <span class="status live">in templates</span></b>
+            <span>Started on demand by <code>scripts/sagemaker_train.py</code>: one <code>ml.m5.xlarge</code> on spot capacity, hard 1-hour limit. Runs the same <code>train</code>: 276 features, every candidate, selection on validation.</span>
+          </div>
+          <div class="svc task" style="border-color:var(--train)"><b>SageMaker AI MLflow App <span class="status live">in templates</span></b>
+            <span>Serverless MLflow, no hourly server. Each job logs a parent run plus one nested run per candidate, and registers the winner as <code>@candidate</code>.</span>
           </div>
         </div>
-
+        <div class="flowdown">↓ review, promote, publish</div>
         <div class="awsrow">
-          <div class="svc"><b>CloudWatch alarms → SNS email <span class="status live">in templates</span></b><span>CPU, memory, 5xx errors, response time, healthy task count; plus a monthly budget alert.</span></div>
-          <div class="svc plan"><b>SageMaker training + managed MLflow <span class="status plan">planned</span></b><span>Today training, selection and the registry run on a laptop or the team cluster.</span></div>
-          <div class="svc plan"><b>EventBridge monitoring jobs <span class="status plan">planned</span></b><span>Scheduled drift and calibration checks (M02).</span></div>
+          <div class="svc"><b>S3 artifact bucket <span class="status live">in templates</span></b><span>KMS-encrypted and versioned. <code>data/</code> for training, <code>training-output/</code> (expires), <code>mlflow/</code>, and <code>models/vN/</code> holding each published bundle.</span></div>
+          <div class="svc"><b>ECR repositories <span class="status live">in templates</span></b><span>Training, Lambda and scoring images; scanned on push, newest 10 kept.</span></div>
+        </div>
+        <div class="flowdown">↓ ModelS3Uri + ModelSha256 pinned in the stack</div>
+        <div class="svc task"><b>Lambda scoring function <span class="status live">in templates</span></b>
+          <span>The same FastAPI app (<code>/health</code>, <code>/model</code>, <code>/score</code>, <code>/predict</code>) behind an HTTPS function URL that accepts only IAM-signed requests. It loads the bundle from S3 once per warm environment, refuses it if the hash differs, scales to zero, and reserved concurrency caps cost.</span>
+          <div class="cf">Same 276 features, same bundle, same answer as training and the local API</div>
+        </div>
+        <div class="awsrow">
+          <div class="svc"><b>CloudWatch → SNS email + Budget <span class="status live">in templates</span></b><span>Lambda errors, throttles, p95 duration; monthly budget alert from the first deploy.</span></div>
+          <div class="svc plan"><b>Fargate + internal ALB in a VPC <span class="status plan">option</span></b><span><code>ServingMode=fargate</code>: always-on private design for a hospital VPN, about $90–100 a month before traffic.</span></div>
+          <div class="svc plan"><b>VPN, OAuth2 API Gateway, EventBridge monitoring <span class="status plan">planned</span></b><span>In the deck design, not in the templates.</span></div>
         </div>
       </div>
     </div>
@@ -436,23 +432,23 @@ footer { font-size: 0.85rem; color: var(--muted); border-top: 1px solid var(--ru
       <div class="card" style="display:grid;gap:12px">
         <h3>08:00 request for bed 4, end to end</h3>
         <ol class="journey">
-          <li><span>The chart system sends hours 1–8 for bed 4 (VPN, later API Gateway with an OAuth2 token).</span></li>
-          <li><span>The internal load balancer passes it to a healthy Fargate task.</span></li>
-          <li><span>The task validates the JSON, builds the 276 features for hours 1–8 and scores them with the bundle loaded at start-up.</span></li>
-          <li><span>The alert rule runs over all eight hours; hour 8 is returned with its probability and <code>new_alert</code>.</span></li>
-          <li><span>The task forgets the request. Logs and metrics go to CloudWatch; alarms email the team.</span></li>
+          <li><span>The chart system signs a request with hours 1–8 for bed 4 and sends it to the function URL.</span></li>
+          <li><span>Lambda checks the IAM signature; an unsigned or unauthorised request gets 403.</span></li>
+          <li><span>A warm environment already has the model; a cold one downloads it from S3 and checks its SHA-256 first (about 2 s).</span></li>
+          <li><span>The app validates the JSON, builds the 276 features for hours 1–8, scores them and applies the alert rule.</span></li>
+          <li><span>Hour 8's probability and <code>new_alert</code> go back. Nothing is stored; logs and metrics go to CloudWatch.</span></li>
         </ol>
       </div>
       <div class="card" style="display:grid;gap:12px">
         <h3>Releasing a new model</h3>
         <ol class="journey rel">
-          <li><span><code>train</code> selects a model on validation and registers it as <code>@candidate</code>.</span></li>
-          <li><span>The team reviews it; <code>promote --reviewed-by</code> moves <code>@production</code>.</span></li>
-          <li><span>The bundle goes to S3 <code>models/</code> with its SHA-256; the image is pushed to ECR. <span class="status gap">gap</span> no script does this yet, and the task cannot read S3 yet.</span></li>
-          <li><span>ECS replaces tasks one at a time (100% minimum healthy). Each new task checks the hash before it serves.</span></li>
-          <li><span>A failing rollout is rolled back by the deployment circuit breaker; promoting the previous version rolls back the model.</span></li>
+          <li><span><code>aws_deploy.sh train</code>: a spot training job selects on validation and registers <code>@candidate</code> in the MLflow App.</span></li>
+          <li><span>The team compares runs in the MLflow UI; <code>promote --reviewed-by</code> moves <code>@production</code>.</span></li>
+          <li><span><code>publish</code> copies that version to <code>s3://…/models/vN/</code> and prints its SHA-256.</span></li>
+          <li><span><code>serve</code> updates the stack with the new S3 URI and hash; new Lambda environments load the new model.</span></li>
+          <li><span>Rollback: promote the previous version, publish, serve.</span></li>
         </ol>
-        <p class="muted" style="font-size:.85rem">Rehearse this on a laptop with <code>scripts/local_prod.sh</code>: HAProxy stands in for the load balancer and two containers for the tasks.</p>
+        <p class="muted" style="font-size:.85rem">Roughly $2–5 a month idle plus cents per training run (estimate in <code>docs/aws-serverless.md</code>).</p>
       </div>
     </div>
   </section>
@@ -480,14 +476,17 @@ footer { font-size: 0.85rem; color: var(--muted); border-top: 1px solid var(--ru
           <tr><td>policy.py</td><td>Turns probabilities into alerts: threshold plus 6-hour cooldown; tunes the threshold to the alert budget; utility score</td><td class="fn">tune_threshold, apply_policy, summarize</td><td><span class="chip b">both</span></td></tr>
           <tr class="group"><td colspan="4">Freeze, track, register</td></tr>
           <tr><td>scoring.py</td><td>The frozen bundle: model, 276 column names, window, threshold, cooldown; loads it only if its SHA-256 matches</td><td class="fn">BUNDLE_KEYS, load_bundle, file_sha256</td><td><span class="chip b">both</span></td></tr>
-          <tr><td>tracking.py</td><td>MLflow selection runs: one nested run per candidate, validation metrics only</td><td class="fn">log_run, run_metadata</td><td><span class="chip t">training</span></td></tr>
+          <tr><td>tracking.py</td><td>MLflow selection runs (local SQLite or the SageMaker MLflow App): one nested run per candidate, validation metrics only</td><td class="fn">log_run, run_metadata</td><td><span class="chip t">training</span></td></tr>
           <tr><td>registry.py</td><td>Registers the bundle as <code>@candidate</code>, promotes to <code>@production</code> after review, resolves it for serving</td><td class="fn">register_bundle, promote, resolve_model</td><td><span class="chip b">both</span></td></tr>
+          <tr><td>model_source.py</td><td>Publishes a registered bundle to S3; loads a bundle from a file, the registry or S3, checking its SHA-256 first</td><td class="fn">publish_model, fetch_model, load_serving_model</td><td><span class="chip b">both</span></td></tr>
+          <tr><td>sagemaker_train.py</td><td>SageMaker training-job entry point: reads <code>/opt/ml</code> hyperparameters and data, runs <code>train</code>, logs to the MLflow App</td><td class="fn">build_args, main</td><td><span class="chip t">training</span></td></tr>
           <tr><td>model_card.py</td><td>What <code>GET /model</code> shows: the winner, the selection rule and every candidate's validation numbers</td><td class="fn">card_from_run_dir</td><td><span class="chip s">prediction</span></td></tr>
           <tr class="group"><td colspan="4">Serving</td></tr>
           <tr><td>service.py</td><td>Validates a request, builds features, scores every hour, applies the alert rule; no state between requests</td><td class="fn">ScoringService.history_frame, score, predict</td><td><span class="chip s">prediction</span></td></tr>
-          <tr><td>api.py</td><td>FastAPI endpoints: <code>/health</code>, <code>/model</code>, <code>/score</code>, <code>/predict</code>; 422 for bad input, 409 for a model mismatch</td><td class="fn">create_app</td><td><span class="chip s">prediction</span></td></tr>
+          <tr><td>api.py</td><td>FastAPI endpoints: <code>/health</code>, <code>/model</code>, <code>/score</code>, <code>/predict</code>; 422 for bad input, 409 for a model mismatch. Same app on a laptop, Fargate and Lambda</td><td class="fn">create_app</td><td><span class="chip s">prediction</span></td></tr>
+          <tr><td>lambda_app.py</td><td>AWS Lambda entry point: the same FastAPI app behind a function URL; loads the pinned bundle from S3 on first use</td><td class="fn">handler</td><td><span class="chip s">prediction</span></td></tr>
           <tr><td>ward.py</td><td>Ward replay page: plays stays hour by hour through the model or the API</td><td class="fn">build_payload, write_ward</td><td><span class="chip s">prediction</span></td></tr>
-          <tr><td>cli.py</td><td>Commands that tie it together: <code>prepare</code>, <code>split</code>, <code>train</code>, <code>demo</code>, <code>promote</code>, <code>serve</code>, <code>ward</code></td><td class="fn">run_experiment, run_server</td><td><span class="chip b">both</span></td></tr>
+          <tr><td>cli.py</td><td>Commands that tie it together: <code>prepare</code>, <code>split</code>, <code>train</code>, <code>demo</code>, <code>promote</code>, <code>publish</code>, <code>serve</code>, <code>ward</code></td><td class="fn">run_experiment, run_server</td><td><span class="chip b">both</span></td></tr>
         </tbody>
       </table>
     </div>

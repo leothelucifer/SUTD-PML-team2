@@ -1,0 +1,246 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Serverless MLOps: SageMaker AI MLflow App (experiment tracking and model registry,
+  no hourly server) and the role SageMaker training jobs run as. Training jobs are
+  started on demand by scripts/sagemaker_train.py; nothing here runs or bills between jobs.
+
+Parameters:
+  EnvironmentName:
+    Type: String
+  ArtifactBucketName:
+    Type: String
+  ArtifactBucketArn:
+    Type: String
+  ArtifactKeyArn:
+    Type: String
+  TrainingRepositoryArn:
+    Type: String
+  LambdaRepositoryArn:
+    Type: String
+  ScoringRepositoryArn:
+    Type: String
+  MlflowMaintenanceWindow:
+    Type: String
+    Default: "Sun:18:00"
+    AllowedPattern: "(Mon|Tue|Wed|Thu|Fri|Sat|Sun):([01]\\d|2[0-3]):([0-5]\\d)"
+    Description: Weekly MLflow App maintenance start in UTC (Sun 18:00 UTC is Mon 02:00 in Singapore).
+
+Resources:
+  # The MLflow App reads and writes run artifacts and registered models under mlflow/.
+  MlflowAppRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: Lets the SageMaker MLflow App use its artifact store.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: sagemaker.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                "aws:SourceAccount": !Ref AWS::AccountId
+      Policies:
+        - PolicyName: MlflowArtifactStore
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:AbortMultipartUpload
+                Resource: !Sub "${ArtifactBucketArn}/mlflow/*"
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                  - s3:GetBucketLocation
+                Resource: !Ref ArtifactBucketArn
+              - Effect: Allow
+                Action:
+                  - kms:Decrypt
+                  - kms:GenerateDataKey
+                Resource: !Ref ArtifactKeyArn
+                Condition:
+                  StringEquals:
+                    "kms:ViaService": !Sub "s3.${AWS::Region}.amazonaws.com"
+
+  # Serverless MLflow: no instance, no hourly charge; storage is the S3 prefix above.
+  MlflowApp:
+    Type: AWS::SageMaker::MlflowApp
+    Properties:
+      Name: !Sub "${EnvironmentName}-mlflow"
+      ArtifactStoreUri: !Sub "s3://${ArtifactBucketName}/mlflow"
+      RoleArn: !GetAtt MlflowAppRole.Arn
+      # The project registers models in MLflow (aliases @candidate/@production),
+      # not in the separate SageMaker Model Registry.
+      ModelRegistrationMode: AutoModelRegistrationDisabled
+      WeeklyMaintenanceWindowStart: !Ref MlflowMaintenanceWindow
+      Tags:
+        - Key: Project
+          Value: sepsis-warning-research
+
+  # SageMaker training jobs run as this role: read data/, write training-output/,
+  # pull the training image, log and register in the MLflow App.
+  SageMakerExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: Role for sepsis-warning SageMaker AI training jobs.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: sagemaker.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                "aws:SourceAccount": !Ref AWS::AccountId
+      Policies:
+        - PolicyName: TrainingJob
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ReadTrainingData
+                Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub "${ArtifactBucketArn}/data/*"
+              - Sid: WriteTrainingOutput
+                Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:AbortMultipartUpload
+                Resource: !Sub "${ArtifactBucketArn}/training-output/*"
+              - Sid: ListBucket
+                Effect: Allow
+                Action: s3:ListBucket
+                Resource: !Ref ArtifactBucketArn
+              - Sid: EncryptedDataAndVolumes
+                Effect: Allow
+                Action:
+                  - kms:Decrypt
+                  - kms:GenerateDataKey
+                  - kms:CreateGrant
+                  - kms:DescribeKey
+                Resource: !Ref ArtifactKeyArn
+              - Sid: PullTrainingImage
+                Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                Resource: !Ref TrainingRepositoryArn
+              - Sid: EcrLogin
+                Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: "*"
+              - Sid: TrainingLogs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:DescribeLogStreams
+                Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/sagemaker/TrainingJobs*"
+              - Sid: TrainingMetrics
+                Effect: Allow
+                Action: cloudwatch:PutMetricData
+                Resource: "*"
+                Condition:
+                  StringLike:
+                    "cloudwatch:namespace": "/aws/sagemaker/*"
+              - Sid: LogToMlflowApp
+                Effect: Allow
+                Action:
+                  - sagemaker:CallMlflowAppApi
+                  - sagemaker:DescribeMlflowApp
+                Resource: !GetAtt MlflowApp.Arn
+
+  # Attach to the team members (or CI role) who build images, start training,
+  # review and promote models, and publish them for serving.
+  TeamOperatorPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: Operate the sepsis-warning research MLOps workflow.
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: UseMlflowApp
+            Effect: Allow
+            Action:
+              - sagemaker:CallMlflowAppApi
+              - sagemaker:DescribeMlflowApp
+              - sagemaker:CreatePresignedMlflowAppUrl
+            Resource: !GetAtt MlflowApp.Arn
+          - Sid: RunTrainingJobs
+            Effect: Allow
+            Action:
+              - sagemaker:CreateTrainingJob
+              - sagemaker:DescribeTrainingJob
+              - sagemaker:StopTrainingJob
+              - sagemaker:AddTags
+            Resource: !Sub "arn:${AWS::Partition}:sagemaker:${AWS::Region}:${AWS::AccountId}:training-job/sepsis-*"
+          - Sid: PassTrainingRole
+            Effect: Allow
+            Action: iam:PassRole
+            Resource: !GetAtt SageMakerExecutionRole.Arn
+            Condition:
+              StringEquals:
+                "iam:PassedToService": sagemaker.amazonaws.com
+          - Sid: DataModelsAndOutputs
+            Effect: Allow
+            Action:
+              - s3:GetObject
+              - s3:PutObject
+            Resource:
+              - !Sub "${ArtifactBucketArn}/data/*"
+              - !Sub "${ArtifactBucketArn}/models/*"
+              - !Sub "${ArtifactBucketArn}/training-output/*"
+          - Sid: ListArtifactBucket
+            Effect: Allow
+            Action: s3:ListBucket
+            Resource: !Ref ArtifactBucketArn
+          - Sid: UseArtifactKey
+            Effect: Allow
+            Action:
+              - kms:Decrypt
+              - kms:GenerateDataKey
+            Resource: !Ref ArtifactKeyArn
+          - Sid: PushImages
+            Effect: Allow
+            Action:
+              - ecr:BatchCheckLayerAvailability
+              - ecr:BatchGetImage
+              - ecr:CompleteLayerUpload
+              - ecr:InitiateLayerUpload
+              - ecr:PutImage
+              - ecr:UploadLayerPart
+              - ecr:DescribeImages
+            Resource:
+              - !Ref TrainingRepositoryArn
+              - !Ref LambdaRepositoryArn
+              - !Ref ScoringRepositoryArn
+          - Sid: EcrLogin
+            Effect: Allow
+            Action: ecr:GetAuthorizationToken
+            Resource: "*"
+          - Sid: ReadStackOutputsAndTrainingLogs
+            Effect: Allow
+            Action:
+              - cloudformation:DescribeStacks
+              - logs:GetLogEvents
+              - logs:DescribeLogStreams
+            Resource:
+              - !Sub "arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${EnvironmentName}*"
+              - !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/sagemaker/TrainingJobs*"
+
+Outputs:
+  MlflowAppArn:
+    Description: Tracking URI for MLflow (with the sagemaker-mlflow plugin).
+    Value: !GetAtt MlflowApp.Arn
+  SageMakerExecutionRoleArn:
+    Value: !GetAtt SageMakerExecutionRole.Arn
+  TeamOperatorPolicyArn:
+    Value: !Ref TeamOperatorPolicy
