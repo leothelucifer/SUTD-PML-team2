@@ -42,10 +42,10 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
 
-      - name: Install package with the API and tracking extras
+      - name: Install package with the API, tracking and AWS extras
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[serve,test,tracking]"
+          python -m pip install -e ".[serve,test,tracking,aws,lambda]"
           python -m pip list
 
       - name: Unit tests (synthetic fixtures)
@@ -73,3 +73,24 @@ jobs:
 
       - name: Build and smoke-test the scoring image
         run: bash scripts/docker_smoke_test.sh sepsis-warning:ci
+
+      - name: Build the Lambda and SageMaker training images
+        run: |
+          docker build --target lambda --provenance=false -t sepsis-warning:lambda-ci .
+          docker build --target training --provenance=false -t sepsis-warning:training-ci .
+
+  # CloudFormation structure and resource properties; no AWS credentials, nothing deployed.
+  cloudformation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Lint templates
+        run: |
+          python -m pip install "cfn-lint>=1.40,<2"
+          cfn-lint -t infra/cloudformation/*.yaml --regions ap-southeast-1 --ignore-checks W3002

@@ -74,9 +74,28 @@ scores = model.predict(hourly_rows)   # columns: stay_id, ICULOS and the model i
 
 - A bundle is a Joblib file, which can run code when loaded. It is loaded only
   after its SHA-256 matches the `bundle_sha256` recorded at registration.
-- The model files are written to the local store only. Moving the store to a
-  shared or cloud server (for example SageMaker managed MLflow) needs team
-  approval and a decision on access control.
-- The Docker image does not include MLflow. To serve from the registry inside a
-  container, resolve the model first and mount the bundle, or add the
-  `tracking` extra to the image.
+- Accepted stores are local SQLite or files, a localhost server, and the
+  team's own SageMaker AI MLflow App (below). Any other hosted server needs
+  team approval first.
+- The scoring images do not include MLflow. In AWS, `publish` copies the
+  registered bundle to S3 and the service loads it with its pinned hash.
+
+## On AWS: the serverless SageMaker MLflow App
+
+`infra/cloudformation/mlops.yaml` creates a SageMaker AI **MLflow App**:
+serverless MLflow with no hourly server and no additional charge beyond S3
+storage. Its ARN is the tracking URI, so the commands above work unchanged:
+
+```bash
+pip install -e ".[tracking,sagemaker]"     # sagemaker-mlflow signs requests with your AWS credentials
+ARN=$(aws cloudformation describe-stacks --stack-name sepsis-research \
+      --query "Stacks[0].Outputs[?OutputKey=='MlflowAppArn'].OutputValue" --output text)
+python -m sepsis_warning promote --version 3 --reviewed-by "Kaiyuan" --mlflow-uri "$ARN"
+python -m sepsis_warning publish --mlflow-uri "$ARN" --bucket <ArtifactBucketName>
+aws sagemaker create-presigned-mlflow-app-url --arn "$ARN"   # link to the MLflow UI
+```
+
+SageMaker training jobs (`scripts/sagemaker_train.py`) log the selection run
+and register `@candidate` there directly. The same rules apply: validation
+metrics only, no patient-level files, and `@production` moves only through a
+named review. See [aws-serverless.md](aws-serverless.md).

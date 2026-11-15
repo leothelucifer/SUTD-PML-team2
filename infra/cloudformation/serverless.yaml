@@ -1,0 +1,152 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Serverless scoring API: the same FastAPI app on AWS Lambda behind a function URL with
+  IAM (SigV4) authentication. No VPC, NAT, load balancer or VPC endpoints; it costs
+  nothing while idle. The model bundle is read from S3 and checked against its SHA-256.
+
+Parameters:
+  EnvironmentName:
+    Type: String
+  LambdaImageUri:
+    Type: String
+    Description: Image (Dockerfile target "lambda") in the stack's scoring-lambda ECR repository.
+  ModelS3Uri:
+    Type: String
+    AllowedPattern: "^s3://.+/models/.+\\.joblib$"
+    Description: Published bundle from `python -m sepsis_warning publish`.
+  ModelSha256:
+    Type: String
+    AllowedPattern: "^[0-9a-f]{64}$"
+  ArtifactBucketArn:
+    Type: String
+  ArtifactKeyArn:
+    Type: String
+  Architecture:
+    Type: String
+    Default: x86_64
+    AllowedValues:
+      - x86_64
+      - arm64
+    Description: arm64 (Graviton) is about 20 percent cheaper per GB-second; build the image for it first.
+  MemorySize:
+    Type: Number
+    Default: 1024
+    MinValue: 512
+    MaxValue: 4096
+  ReservedConcurrency:
+    Type: Number
+    Default: 0
+    MinValue: 0
+    MaxValue: 50
+    Description: >-
+      Optional hard cap on parallel executions (0 = not set). Lambda only lets you reserve
+      the account's unreserved concurrency minus 100, so new accounts with a low limit
+      must leave this at 0 or request a quota increase first.
+  AllowedInvokerArn:
+    Type: String
+    Default: ""
+    Description: >-
+      Optional IAM principal (for example the hospital integration role) allowed to call
+      the function URL. Principals in this account need lambda:InvokeFunctionUrl and
+      lambda:InvokeFunction in their own IAM policy.
+
+Conditions:
+  HasExternalInvoker: !Not [!Equals [!Ref AllowedInvokerArn, ""]]
+  HasReservedConcurrency: !Not [!Equals [!Ref ReservedConcurrency, 0]]
+
+Resources:
+  FunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${EnvironmentName}-scoring"
+      RetentionInDays: 30
+
+  FunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ReadModelAndWriteLogs
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub "${ArtifactBucketArn}/models/*"
+              - Effect: Allow
+                Action: kms:Decrypt
+                Resource: !Ref ArtifactKeyArn
+                Condition:
+                  StringEquals:
+                    "kms:ViaService": !Sub "s3.${AWS::Region}.amazonaws.com"
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub "${FunctionLogGroup.Arn}:*"
+
+  ScoringFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${EnvironmentName}-scoring"
+      Description: Sepsis early-warning research scorer (stateless; full stay history per request).
+      PackageType: Image
+      Code:
+        ImageUri: !Ref LambdaImageUri
+      Role: !GetAtt FunctionRole.Arn
+      Architectures:
+        - !Ref Architecture
+      MemorySize: !Ref MemorySize
+      Timeout: 30
+      ReservedConcurrentExecutions: !If [HasReservedConcurrency, !Ref ReservedConcurrency, !Ref AWS::NoValue]
+      LoggingConfig:
+        LogGroup: !Ref FunctionLogGroup
+        LogFormat: Text
+      Environment:
+        Variables:
+          MODEL_S3_URI: !Ref ModelS3Uri
+          MODEL_SHA256: !Ref ModelSha256
+          MPLCONFIGDIR: /tmp/matplotlib
+      Tags:
+        - Key: Project
+          Value: sepsis-warning-research
+
+  # HTTPS endpoint; every request must be SigV4-signed by an allowed IAM principal.
+  FunctionUrl:
+    Type: AWS::Lambda::Url
+    Properties:
+      TargetFunctionArn: !GetAtt ScoringFunction.Arn
+      AuthType: AWS_IAM
+      InvokeMode: BUFFERED
+
+  ExternalInvokeUrlPermission:
+    Type: AWS::Lambda::Permission
+    Condition: HasExternalInvoker
+    Properties:
+      FunctionName: !Ref ScoringFunction
+      Action: lambda:InvokeFunctionUrl
+      Principal: !Ref AllowedInvokerArn
+      FunctionUrlAuthType: AWS_IAM
+
+  ExternalInvokeFunctionPermission:
+    Type: AWS::Lambda::Permission
+    Condition: HasExternalInvoker
+    Properties:
+      FunctionName: !Ref ScoringFunction
+      Action: lambda:InvokeFunction
+      Principal: !Ref AllowedInvokerArn
+      InvokedViaFunctionUrl: true
+
+Outputs:
+  ApiBaseUrl:
+    Value: !GetAtt FunctionUrl.FunctionUrl
+  FunctionName:
+    Value: !Ref ScoringFunction
