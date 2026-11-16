@@ -457,6 +457,36 @@ curl -s localhost:8000/score -H 'content-type: application/json' \
 | `POST /score` | One stay's full history | A probability, threshold crossing and alert flag for every hour |
 | `POST /predict` | Up to 64 stays (a ward), each with its full history | For each stay, its latest hour: probability, whether it is above the threshold, `new_alert` (true only in the hour an alert fires, so hourly polling notifies once) and the last alert hour |
 
+Every scoring response names the `model_version` and `bundle_sha256` that
+produced it, gives each prediction a stable `prediction_id` and a `risk_tier`
+(low, watch, alert: a demonstration scale relative to the threshold), and lists
+`input_warnings` for values outside the review range. Impossible values (for
+example `HR` 9999, or a temperature in Fahrenheit) are rejected with 422, and a
+request over 5 MB or 8,000 hours gets 413. `X-Request-Id` is echoed.
+
+Options for `serve`:
+
+- `--alert-ledger memory` or `--alert-table <DynamoDB table>` records the
+  alerts that were raised, so the history shows what staff actually saw and a
+  model change cannot re-alert inside the cooldown. Without it the cooldown is
+  replayed from the request history.
+- `--telemetry` prints one JSON line per request (latency, hours scored,
+  alerts, errors) and per prediction (hashed stay ID, score, missing inputs;
+  never a measurement value). `--prediction-log file.jsonl` writes the
+  prediction lines to a file for `monitor-live`, which runs the label-free
+  drift checks against a `monitor-setup` reference.
+
+Client code should use `sepsis_warning.client.ScoringClient`: a 5-second
+timeout, retries with jittered backoff on 429/5xx, a circuit breaker, optional
+SigV4 signing, and `predict_or_fallback`, which returns SIRS rule results
+marked `"fallback": true` when the service is unavailable.
+
+Promotion is gated: `promote` refuses a model that does not beat the
+no-model reference and the SIRS rule at the same alert budget, exceeds the
+alert budget or is worse calibrated than the reference, and it records who
+approved. See [docs/mlflow.md](docs/mlflow.md) and the
+[audit and plan](docs/mlops-audit.md).
+
 `/docs` serves interactive documentation. `serve` refuses to start if the run
 folder's selection files describe a different model or threshold from the bundle.
 
