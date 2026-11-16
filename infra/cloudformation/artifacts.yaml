@@ -9,6 +9,11 @@ Parameters:
     Default: 180
     MinValue: 1
     Description: Days to keep SageMaker training outputs (the registry keeps its own copy of registered models).
+  PredictionLogRetentionDays:
+    Type: Number
+    Default: 30
+    MinValue: 1
+    Description: Days to keep the prediction log (hashed stay IDs and scores; no measurement values).
 
 Resources:
   ArtifactKey:
@@ -102,6 +107,13 @@ Resources:
             Status: Enabled
             Prefix: training-output/
             ExpirationInDays: !Ref TrainingOutputRetentionDays
+          - Id: ExpirePredictionLog
+            Status: Enabled
+            Prefix: prediction-log/
+            ExpirationInDays: !Ref PredictionLogRetentionDays
+      LoggingConfiguration:
+        DestinationBucketName: !Ref AccessLogBucket
+        LogFilePrefix: s3-access/
       Tags:
         - Key: Name
           Value: !Sub "${EnvironmentName}-artifacts"
@@ -120,6 +132,72 @@ Resources:
             Resource:
               - !GetAtt ArtifactBucket.Arn
               - !Sub "${ArtifactBucket.Arn}/*"
+            Condition:
+              Bool:
+                "aws:SecureTransport": false
+          # Published models are write-once: an upload must be a conditional write that
+          # fails if the key exists (publish does this), and versions cannot be deleted.
+          - Sid: ModelsAreWriteOnce
+            Effect: Deny
+            Principal: "*"
+            Action: s3:PutObject
+            Resource: !Sub "${ArtifactBucket.Arn}/models/*"
+            Condition:
+              "Null":
+                "s3:if-none-match": "true"
+          - Sid: ModelsAreNotDeleted
+            Effect: Deny
+            Principal: "*"
+            Action:
+              - s3:DeleteObject
+              - s3:DeleteObjectVersion
+            Resource: !Sub "${ArtifactBucket.Arn}/models/*"
+
+  # Who read or wrote what in the artifact bucket (server access logs; 90 days).
+  AccessLogBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub "${EnvironmentName}-${AWS::AccountId}-${AWS::Region}-logs"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireLogs
+            Status: Enabled
+            ExpirationInDays: 90
+
+  AccessLogBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref AccessLogBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: S3ServerAccessLogs
+            Effect: Allow
+            Principal:
+              Service: logging.s3.amazonaws.com
+            Action: s3:PutObject
+            Resource: !Sub "${AccessLogBucket.Arn}/s3-access/*"
+            Condition:
+              StringEquals:
+                "aws:SourceAccount": !Ref AWS::AccountId
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource:
+              - !GetAtt AccessLogBucket.Arn
+              - !Sub "${AccessLogBucket.Arn}/*"
             Condition:
               Bool:
                 "aws:SecureTransport": false

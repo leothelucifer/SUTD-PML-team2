@@ -112,10 +112,9 @@ Resources:
             Version: "2012-10-17"
             Statement:
               - Effect: Allow
+                # Alert ledger only: read a stay's delivered alerts and append new ones.
                 Action:
-                  - dynamodb:DeleteItem
                   - dynamodb:GetItem
-                  - dynamodb:PutItem
                   - dynamodb:UpdateItem
                 Resource: !Ref StateTableArn
               - Effect: Allow
@@ -265,8 +264,10 @@ Resources:
             - ContainerPort: 8000
               Protocol: tcp
           Environment:
-            - Name: STAY_STATE_TABLE
+            - Name: ALERT_TABLE
               Value: !Ref StateTableName
+            - Name: ENVIRONMENT_NAME
+              Value: !Ref EnvironmentName
           LogConfiguration:
             LogDriver: awslogs
             Options:
