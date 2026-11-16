@@ -10,7 +10,14 @@
 #   bash scripts/aws_deploy.sh publish               copy @production to s3://<bucket>/models/vN/
 #   bash scripts/aws_deploy.sh serve                 deploy the published model on Lambda (or Fargate)
 #   bash scripts/aws_deploy.sh call METHOD PATH [JSON]  signed request to the scoring API
+#   bash scripts/aws_deploy.sh pipeline              start the Step Functions pipeline (train -> approval -> evaluate -> publish)
+#   bash scripts/aws_deploy.sh approve TOKEN         approve a waiting pipeline (the token is in the notification email)
+#   bash scripts/aws_deploy.sh reference FILE        upload a monitor-setup reference and switch on the daily drift job
 #   bash scripts/aws_deploy.sh outputs | down
+#
+# ENVIRONMENT=dev|staging|prod picks infra/params/<env>.json and the stack sepsis-<env>
+# (use one AWS account per environment). prod needs CONFIRM_PROD=yes.
+# promote refuses synthetic models unless ALLOW_SYNTHETIC=1 (dev rehearsals).
 #
 # Settings (environment variables): STACK (sepsis-research), AWS_REGION
 # (ap-southeast-1), SERVING_MODE (lambda | fargate), BUDGET_USD and BUDGET_EMAIL
@@ -22,6 +29,11 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ENVIRONMENT="${ENVIRONMENT:-}"
+if [ -n "$ENVIRONMENT" ]; then
+  [ -f "$ROOT/infra/params/$ENVIRONMENT.json" ] || { echo "no infra/params/$ENVIRONMENT.json" >&2; exit 2; }
+  STACK="${STACK:-sepsis-$ENVIRONMENT}"
+fi
 STACK="${STACK:-sepsis-research}"
 export AWS_REGION="${AWS_REGION:-ap-southeast-1}"
 SERVING_MODE="${SERVING_MODE:-lambda}"
@@ -52,6 +64,14 @@ cmd_stack() {
   aws cloudformation package --template-file "$ROOT/infra/cloudformation/root.yaml" \
     --s3-bucket "$templates_bucket" --s3-prefix "$STACK" --output-template-file "$STATE/packaged.yaml" >/dev/null
   local params=("ServingMode=$SERVING_MODE")
+  if [ -n "$ENVIRONMENT" ]; then
+    [ "$ENVIRONMENT" != prod ] || [ "${CONFIRM_PROD:-}" = yes ] || fail "prod changes need CONFIRM_PROD=yes"
+    while IFS= read -r line; do params+=("$line"); done < <("$PYTHON" -c '
+import json, sys
+for key, value in json.load(open(sys.argv[1])).items():
+    if not key.startswith("_"):
+        print(f"{key}={value}")' "$ROOT/infra/params/$ENVIRONMENT.json")
+  fi
   [ -n "${BUDGET_USD:-}" ] && params+=("MonthlyBudgetUsd=$BUDGET_USD" "BudgetEmail=${BUDGET_EMAIL:?set BUDGET_EMAIL}")
   [ -n "${ALERT_EMAIL:-}" ] && params+=("AlertEmail=$ALERT_EMAIL")
   aws cloudformation deploy --stack-name "$STACK" --template-file "$STATE/packaged.yaml" \
@@ -101,7 +121,8 @@ cmd_mlflow_ui() {
 
 cmd_promote() {
   [ $# -eq 2 ] || fail "usage: $0 promote VERSION REVIEWER"
-  "$PYTHON" -m sepsis_warning promote --version "$1" --reviewed-by "$2" --mlflow-uri "$(output MlflowAppArn)"
+  local real=(--require-real-data); [ "${ALLOW_SYNTHETIC:-}" = 1 ] && real=()
+  "$PYTHON" -m sepsis_warning promote --version "$1" --reviewed-by "$2" --mlflow-uri "$(output MlflowAppArn)" "${real[@]}"
 }
 
 cmd_publish() {
@@ -128,6 +149,26 @@ cmd_call() {
   "$PYTHON" "$ROOT/scripts/call_scoring_url.py" --url "$(output ApiBaseUrl)" --region "$AWS_REGION" "$@"
 }
 
+cmd_pipeline() {
+  local arn; arn="$(output PipelineArn)"; [ -n "$arn" ] || fail "stack has no pipeline (EnablePipeline=true)"
+  local real=true; [ "${ALLOW_SYNTHETIC:-}" = 1 ] && real=false
+  aws stepfunctions start-execution --state-machine-arn "$arn" --query executionArn --output text \
+    --input "{\"image_tag\": \"training-$TAG\", \"git_commit\": \"$(git -C "$ROOT" rev-parse HEAD)\", \"require_real_data\": \"$real\"}"
+  echo "The pipeline trains, then emails the alert address and waits for: $0 approve <token>"
+}
+
+cmd_approve() {
+  [ $# -eq 1 ] || fail "usage: $0 approve TASK_TOKEN   (run 'promote' first; a different person from the trainer)"
+  aws stepfunctions send-task-success --task-token "$1" --task-output '{"approved": true}'
+}
+
+cmd_reference() {
+  [ -f "${1:-}" ] || fail "usage: $0 reference artifacts/monitoring/reference/monitoring_reference.json"
+  local bucket; bucket="$(output ArtifactBucketName)"
+  aws s3 cp --only-show-errors "$1" "s3://$bucket/monitoring/reference.json"
+  cmd_stack "DriftReferenceS3Uri=s3://$bucket/monitoring/reference.json"
+}
+
 cmd_down() {
   echo "Deleting stack $STACK. The bucket, KMS key, ECR repositories, DynamoDB table and log groups are"
   echo "retained (DeletionPolicy: Retain); empty and delete them by hand when the project ends."
@@ -146,6 +187,9 @@ case "${1:-}" in
   publish) cmd_publish ;;
   serve) cmd_serve ;;
   call) shift; cmd_call "$@" ;;
+  pipeline) cmd_pipeline ;;
+  approve) shift; cmd_approve "$@" ;;
+  reference) shift; cmd_reference "$@" ;;
   down) cmd_down ;;
-  *) sed -n '2,20p' "$0"; exit 2 ;;
+  *) sed -n '2,26p' "$0"; exit 2 ;;
 esac

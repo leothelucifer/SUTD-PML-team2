@@ -73,31 +73,67 @@ def fetch_model(model_s3_uri: str, expected_sha256: str, destination: Path, clie
     return target
 
 
+class PublishRefused(ValueError):
+    """The version may not be published as it is."""
+
+
+def _put_once(s3, bucket: str, key: str, path: Path, metadata: dict | None = None) -> bool:
+    """Write-once upload (S3 conditional write). Returns False if the key already existed."""
+    try:
+        s3.put_object(Bucket=bucket, Key=key, Body=Path(path).read_bytes(), IfNoneMatch="*",
+                      **({"Metadata": metadata} if metadata else {}))
+        return True
+    except Exception as error:
+        code = str(getattr(error, "response", {}).get("Error", {}).get("Code", ""))
+        if code in ("PreconditionFailed", "412"):
+            return False
+        raise
+
+
 def publish_model(model_uri: str, tracking_uri: str, bucket: str, prefix: str = "models", client=None) -> dict:
-    """Copy a registered version to S3 for deployment. Returns what to pin."""
+    """Copy a registered version to S3 for deployment. Returns what to pin.
+
+    ``models/vN/`` is write-once: publishing the same version again is a no-op,
+    and a different file under an existing version is refused. A real-data
+    version must have had its one frozen evaluation first, so every deployed
+    model has recorded test results.
+    """
+    from .evaluation import EVALUATED_TAG
     from .registry import resolve_model
 
     s3 = _s3(client)
     with tempfile.TemporaryDirectory(prefix="sepsis-publish-") as temp:
         path, sha, tags = resolve_model(model_uri, tracking_uri, Path(temp))
         version = tags["version"]
+        if tags.get("synthetic") != "true" and not tags.get(EVALUATED_TAG):
+            raise PublishRefused(
+                f"version {version} has not had its frozen evaluation; run `evaluate --model-uri "
+                f"models:/<name>/{version}` once before publishing"
+            )
         base = f"{prefix.strip('/')}/v{version}"
         registry = {
             "model_uri": model_uri, "version": version,
-            "reviewed_by": tags.get("production_reviewed_by"), "promoted_at": tags.get("production_promoted_at"),
+            "reviewed_by": tags.get("production_reviewed_by"), "approved_by": tags.get("production_approved_by"),
+            "promoted_at": tags.get("production_promoted_at"), "frozen_evaluated_at": tags.get(EVALUATED_TAG),
         }
         (path.parent / "registry.json").write_text(json.dumps(registry), encoding="utf-8")
-        s3.upload_file(str(path), bucket, f"{base}/{BUNDLE_FILE}",
-                       ExtraArgs={"Metadata": {"sha256": sha, "model-version": str(version)}})
+        key = f"{base}/{BUNDLE_FILE}"
+        created = _put_once(s3, bucket, key, path, {"sha256": sha, "model-version": str(version)})
+        if not created:
+            existing = s3.head_object(Bucket=bucket, Key=key).get("Metadata", {}).get("sha256")
+            if existing != sha:
+                raise PublishRefused(f"s3://{bucket}/{key} already holds a different bundle "
+                                     f"({str(existing)[:12]}…); published versions are immutable")
         for name in CARD_FILES:
             if (path.parent / name).is_file():
-                s3.upload_file(str(path.parent / name), bucket, f"{base}/{name}")
-    return {"model_s3_uri": f"s3://{bucket}/{base}/{BUNDLE_FILE}", "sha256": sha, "version": str(version)}
+                _put_once(s3, bucket, f"{base}/{name}", path.parent / name)
+    return {"model_s3_uri": f"s3://{bucket}/{key}", "sha256": sha, "version": str(version), "created": created}
 
 
 def load_serving_model(*, model: Path | None = None, model_uri: str | None = None, model_s3: str | None = None,
                        expected_sha256: str | None = None, mlflow_uri: str | None = None,
-                       download_dir: Path | None = None, client=None, allow_unverified: bool = False):
+                       download_dir: Path | None = None, client=None, allow_unverified: bool = False,
+                       alert_store=None):
     """Load one bundle for serving, from a file, the registry or S3. Returns (service, card, source).
 
     Shared by ``serve`` and the Lambda handler so every path checks the hash and
@@ -113,7 +149,10 @@ def load_serving_model(*, model: Path | None = None, model_uri: str | None = Non
     if model_uri:
         from .registry import resolve_model
 
-        path, expected, tags = resolve_model(model_uri, mlflow_uri, download_dir)
+        if not mlflow_uri:
+            raise ValueError("a registry URI needs the MLflow store (--mlflow-uri)")
+        path, registry_sha, tags = resolve_model(model_uri, mlflow_uri, download_dir)
+        expected: str | None = registry_sha
         registry = {"model_uri": model_uri, "version": tags["version"],
                     "reviewed_by": tags.get("production_reviewed_by"), "promoted_at": tags.get("production_promoted_at")}
         source = f"{model_uri} (version {tags['version']})"
@@ -126,6 +165,7 @@ def load_serving_model(*, model: Path | None = None, model_uri: str | None = Non
     else:
         from .manifest import recorded_sha256
 
+        assert model is not None  # exactly one source was given (checked above)
         path, source = Path(model), str(model)
         expected = expected_sha256 or recorded_sha256(path)
         if expected is None and not allow_unverified:
@@ -133,6 +173,9 @@ def load_serving_model(*, model: Path | None = None, model_uri: str | None = Non
                 f"{path} has no manifest.json beside it and no SHA-256 was given; pass the hash "
                 "(--model-sha256), or --allow-unverified-model for a bundle you built yourself"
             )
-    service = ScoringService.from_path(path, expected)
+    if registry is None and (Path(path).parent / "registry.json").is_file():
+        registry = json.loads((Path(path).parent / "registry.json").read_text(encoding="utf-8"))
+    version = str(registry["version"]) if registry and registry.get("version") is not None else None
+    service = ScoringService.from_path(path, expected, model_version=version, alert_store=alert_store)
     card = card_from_run_dir(Path(path).parent, service.bundle, registry)
     return service, card, source

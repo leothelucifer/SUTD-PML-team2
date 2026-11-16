@@ -101,6 +101,45 @@ Parameters:
     Type: Number
     Default: 180
     MinValue: 1
+  PredictionLogRetentionDays:
+    Type: Number
+    Default: 30
+    MinValue: 1
+  DeploymentType:
+    Type: String
+    Default: Canary10Percent5Minutes
+    AllowedValues:
+      - Canary10Percent5Minutes
+      - Canary10Percent10Minutes
+      - Linear10PercentEvery1Minute
+      - AllAtOnce
+    Description: How a new Lambda version takes traffic; alarms roll it back. AllAtOnce is for dev.
+  EnablePipeline:
+    Type: String
+    Default: "true"
+    AllowedValues:
+      - "false"
+      - "true"
+    Description: Step Functions training pipeline with gates and a human approval. No standing cost.
+  EnableObservability:
+    Type: String
+    Default: "true"
+    AllowedValues:
+      - "false"
+      - "true"
+    Description: Prediction log to S3 and, with DriftReferenceS3Uri, the daily drift job (Lambda mode).
+  DriftReferenceS3Uri:
+    Type: String
+    Default: ""
+    Description: s3://<bucket>/monitoring/<file> from `monitor-setup` for the deployed model. Empty = no drift job.
+  RetrainImageTag:
+    Type: String
+    Default: ""
+    Description: Training image tag used when a drift alarm starts the pipeline. Empty = no automatic start.
+  PrivateApiVpcEndpointId:
+    Type: String
+    Default: ""
+    Description: Optional execute-api VPC endpoint. When set, a private API Gateway with WAF fronts the Lambda.
   CertificateArn:
     Type: String
     Default: ""
@@ -165,6 +204,15 @@ Conditions:
     - !Condition CreateScoringService
     - !Equals [!Ref ServingMode, fargate]
   CreateMlops: !Equals [!Ref EnableMlops, "true"]
+  CreatePipeline: !And
+    - !Condition CreateMlops
+    - !Equals [!Ref EnablePipeline, "true"]
+  CreateObservability: !And
+    - !Condition UseLambda
+    - !Equals [!Ref EnableObservability, "true"]
+  CreatePrivateApi: !And
+    - !Condition UseLambda
+    - !Not [!Equals [!Ref PrivateApiVpcEndpointId, ""]]
 
 Resources:
   # VPC, subnets and VPC endpoints are only needed for the always-on Fargate design.
@@ -191,6 +239,7 @@ Resources:
       Parameters:
         EnvironmentName: !Ref EnvironmentName
         TrainingOutputRetentionDays: !Ref TrainingOutputRetentionDays
+        PredictionLogRetentionDays: !Ref PredictionLogRetentionDays
       Tags:
         - Key: Project
           Value: sepsis-warning-research
@@ -224,10 +273,63 @@ Resources:
         ModelSha256: !Ref ModelSha256
         ArtifactBucketArn: !GetAtt Artifacts.Outputs.ArtifactBucketArn
         ArtifactKeyArn: !GetAtt Artifacts.Outputs.ArtifactKeyArn
+        StateTableName: !GetAtt Artifacts.Outputs.StateTableName
+        StateTableArn: !GetAtt Artifacts.Outputs.StateTableArn
+        DeploymentType: !Ref DeploymentType
         Architecture: !Ref LambdaArchitecture
         MemorySize: !Ref LambdaMemorySize
         ReservedConcurrency: !Ref LambdaReservedConcurrency
         AllowedInvokerArn: !Ref AllowedInvokerArn
+      Tags:
+        - Key: Project
+          Value: sepsis-warning-research
+
+  Pipeline:
+    Type: AWS::CloudFormation::Stack
+    Condition: CreatePipeline
+    Properties:
+      TemplateURL: pipeline.yaml
+      Parameters:
+        EnvironmentName: !Ref EnvironmentName
+        ArtifactBucketName: !GetAtt Artifacts.Outputs.ArtifactBucketName
+        ArtifactKeyArn: !GetAtt Artifacts.Outputs.ArtifactKeyArn
+        TrainingRepositoryUri: !GetAtt Artifacts.Outputs.TrainingRepositoryUri
+        SageMakerExecutionRoleArn: !GetAtt Mlops.Outputs.SageMakerExecutionRoleArn
+        MlflowAppArn: !GetAtt Mlops.Outputs.MlflowAppArn
+        NotificationTopicArn: !GetAtt Monitoring.Outputs.AlarmTopicArn
+      Tags:
+        - Key: Project
+          Value: sepsis-warning-research
+
+  Observability:
+    Type: AWS::CloudFormation::Stack
+    Condition: CreateObservability
+    Properties:
+      TemplateURL: observability.yaml
+      Parameters:
+        EnvironmentName: !Ref EnvironmentName
+        ArtifactBucketName: !GetAtt Artifacts.Outputs.ArtifactBucketName
+        ArtifactBucketArn: !GetAtt Artifacts.Outputs.ArtifactBucketArn
+        ArtifactKeyArn: !GetAtt Artifacts.Outputs.ArtifactKeyArn
+        FunctionLogGroupName: !GetAtt Serverless.Outputs.FunctionLogGroupName
+        LambdaImageUri: !Ref LambdaImageUri
+        AlarmTopicArn: !GetAtt Monitoring.Outputs.AlarmTopicArn
+        DriftReferenceS3Uri: !Ref DriftReferenceS3Uri
+        PipelineArn: !If [CreatePipeline, !GetAtt Pipeline.Outputs.PipelineArn, ""]
+        RetrainImageTag: !Ref RetrainImageTag
+      Tags:
+        - Key: Project
+          Value: sepsis-warning-research
+
+  PrivateApi:
+    Type: AWS::CloudFormation::Stack
+    Condition: CreatePrivateApi
+    Properties:
+      TemplateURL: apigw.yaml
+      Parameters:
+        EnvironmentName: !Ref EnvironmentName
+        LiveAliasArn: !GetAtt Serverless.Outputs.LiveAliasArn
+        VpcEndpointId: !Ref PrivateApiVpcEndpointId
       Tags:
         - Key: Project
           Value: sepsis-warning-research
@@ -306,7 +408,25 @@ Outputs:
   SageMakerExecutionRoleArn:
     Condition: CreateMlops
     Value: !GetAtt Mlops.Outputs.SageMakerExecutionRoleArn
-  TeamOperatorPolicyArn:
+  TrainerPolicyArn:
     Condition: CreateMlops
-    Description: Attach to the people or CI role that train, promote, publish and deploy.
-    Value: !GetAtt Mlops.Outputs.TeamOperatorPolicyArn
+    Description: Attach to people who upload data and start training.
+    Value: !GetAtt Mlops.Outputs.TrainerPolicyArn
+  ApproverPolicyArn:
+    Condition: CreateMlops
+    Description: Attach to people who review and promote models (not the trainers).
+    Value: !GetAtt Mlops.Outputs.ApproverPolicyArn
+  DeployerPolicyArn:
+    Condition: CreateMlops
+    Description: Attach to the people or CI role that publish and deploy.
+    Value: !GetAtt Mlops.Outputs.DeployerPolicyArn
+  PipelineArn:
+    Condition: CreatePipeline
+    Description: Start with {"image_tag", "git_commit", "require_real_data"}; it waits for an approval.
+    Value: !GetAtt Pipeline.Outputs.PipelineArn
+  PredictionLogPrefix:
+    Condition: CreateObservability
+    Value: !GetAtt Observability.Outputs.PredictionLogPrefix
+  PrivateApiUrl:
+    Condition: CreatePrivateApi
+    Value: !GetAtt PrivateApi.Outputs.PrivateApiUrl
