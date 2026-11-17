@@ -6,14 +6,17 @@
 # Creates the OIDC provider (only if the account lacks one) and one deploy role per
 # GitHub environment (dev, staging, prod) through infra/bootstrap/github-oidc.yaml.
 # Then, if the GitHub CLI is installed and logged in, sets the repository variables
-# AWS_REGION and AWS_DEPLOY_ROLE_ARN for each environment. Otherwise it prints the commands.
+# AWS_ACCOUNT_ID, AWS_REGION (the default region) and AWS_DEPLOY_ROLE_ARN for each environment.
+# Otherwise it prints the commands. Run it once per region: the deploy roles are named
+# github-deploy-<environment>-<region>, and the deploy workflow picks the role for the region
+# chosen when the workflow is started.
 #
 # Needs AWS credentials for the target account in your shell (for example an admin
 # profile, or CloudShell). It creates no access keys and stores no secrets.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-: "${AWS_REGION:?set AWS_REGION, for example ap-southeast-2}"
+: "${AWS_REGION:?set AWS_REGION, ap-southeast-1 (Singapore) or ap-southeast-2 (Sydney)}"
 : "${GITHUB_REPO:?set GITHUB_REPO, for example owner/name}"
 STACK="${BOOTSTRAP_STACK:-sepsis-github-oidc}"
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -42,6 +45,7 @@ declare -A roles=([dev]="$(role_arn DevRoleArn)" [staging]="$(role_arn StagingRo
 if command -v gh >/dev/null && gh auth status >/dev/null 2>&1; then
   for environment in dev staging prod; do
     gh api --method PUT "repos/$GITHUB_REPO/environments/$environment" >/dev/null
+    gh variable set AWS_ACCOUNT_ID --repo "$GITHUB_REPO" --env "$environment" --body "$account"
     gh variable set AWS_REGION --repo "$GITHUB_REPO" --env "$environment" --body "$AWS_REGION"
     gh variable set AWS_DEPLOY_ROLE_ARN --repo "$GITHUB_REPO" --env "$environment" --body "${roles[$environment]}"
     echo "Set variables for GitHub environment $environment"
@@ -50,6 +54,7 @@ if command -v gh >/dev/null && gh auth status >/dev/null 2>&1; then
 else
   echo "GitHub CLI not available or not logged in. Set these, then add reviewers to staging and prod:"
   for environment in dev staging prod; do
+    echo "  gh variable set AWS_ACCOUNT_ID --repo $GITHUB_REPO --env $environment --body $account"
     echo "  gh variable set AWS_REGION --repo $GITHUB_REPO --env $environment --body $AWS_REGION"
     echo "  gh variable set AWS_DEPLOY_ROLE_ARN --repo $GITHUB_REPO --env $environment --body ${roles[$environment]}"
   done
