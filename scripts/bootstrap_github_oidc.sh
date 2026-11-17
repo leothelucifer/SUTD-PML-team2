@@ -25,10 +25,27 @@ command -v aws >/dev/null || fail "AWS CLI v2 is not installed"
 account="$(aws sts get-caller-identity --query Account --output text)" || fail "no AWS credentials in this shell"
 echo "Account $account, region $AWS_REGION, repository $GITHUB_REPO"
 
-provider_exists=$(aws iam list-open-id-connect-providers --query \
-  "OpenIDConnectProviderList[?contains(Arn, 'token.actions.githubusercontent.com')] | length(@)" --output text)
-create_provider=true
-[ "$provider_exists" != "0" ] && create_provider=false && echo "GitHub OIDC provider already exists; reusing it"
+# The OIDC provider is one per account. CREATE_OIDC_PROVIDER=false skips the lookup and the creation:
+# use it when an administrator already created the provider, or when a service control policy
+# (SCP) of your organization denies iam:ListOpenIDConnectProviders to you.
+create_provider="${CREATE_OIDC_PROVIDER:-auto}"
+if [ "$create_provider" = auto ]; then
+  if ! provider_exists=$(aws iam list-open-id-connect-providers --query \
+    "OpenIDConnectProviderList[?contains(Arn, 'token.actions.githubusercontent.com')] | length(@)" --output text); then
+    cat >&2 <<MSG
+
+FAIL: this account does not let you look up OIDC providers. If the message above names a service control
+policy (SCP), your organization blocks it and only its administrator can change that. Ask them to either:
+  1. create the GitHub OIDC provider (https://token.actions.githubusercontent.com, audience sts.amazonaws.com)
+     and allow you to create IAM roles, then run this script again with CREATE_OIDC_PROVIDER=false; or
+  2. allow iam:CreateOpenIDConnectProvider and iam:ListOpenIDConnectProviders for your role.
+Without OIDC you can still deploy from this shell: see "Deploying without GitHub" in docs/deploy-to-any-account.md.
+MSG
+    exit 1
+  fi
+  create_provider=true
+  [ "$provider_exists" != "0" ] && create_provider=false && echo "GitHub OIDC provider already exists; reusing it"
+fi
 
 aws cloudformation deploy --region "$AWS_REGION" --stack-name "$STACK" \
   --template-file "$ROOT/infra/bootstrap/github-oidc.yaml" \
