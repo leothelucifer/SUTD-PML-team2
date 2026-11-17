@@ -229,12 +229,18 @@ bash scripts/aws_deploy.sh reference artifacts/monitoring/monitoring_reference.j
 
 ### B7. Tear down
 
+From GitHub: Actions → **teardown** → pick the environment and region, scope "plan only" first, then "everything"
+with the stack name typed in the confirm box. From the shell:
+
 ```bash
-bash scripts/aws_deploy.sh down
+bash scripts/aws_deploy.sh destroy                              # plan only: lists what would go
+CONFIRM_DESTROY=sepsis-$ENVIRONMENT bash scripts/aws_deploy.sh destroy    # deletes the stack and the retained resources
+bash scripts/aws_deploy.sh down                                 # alternative: stack only, keeps data, keys and images
 ```
 
-Check in the console that no stacks, ECR images you do not want, or S3 objects remain; the artifact bucket is
-retained on purpose and must be emptied by hand.
+Pass: the plan lists the bucket, repositories, table, log groups and KMS key; after "everything" the stack is gone,
+the buckets and repositories no longer exist, and the KMS key shows "pending deletion" (7 days). Check the console
+for anything left, and the Budgets page for the next day's cost.
 
 ## When something fails
 

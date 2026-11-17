@@ -13,7 +13,9 @@
 #   bash scripts/aws_deploy.sh pipeline              start the Step Functions pipeline (train -> approval -> evaluate -> publish)
 #   bash scripts/aws_deploy.sh approve TOKEN         approve a waiting pipeline (the token is in the notification email)
 #   bash scripts/aws_deploy.sh reference FILE        upload a monitor-setup reference and switch on the daily drift job
-#   bash scripts/aws_deploy.sh outputs | down
+#   bash scripts/aws_deploy.sh outputs
+#   bash scripts/aws_deploy.sh down                  delete the stack only (data, keys and images are kept)
+#   bash scripts/aws_deploy.sh destroy               plan a full teardown; CONFIRM_DESTROY=<stack> performs it
 #
 # ENVIRONMENT=dev|staging|prod picks infra/params/<env>.json and the stack sepsis-<env>
 # (use one AWS account per environment). prod needs CONFIRM_PROD=yes.
@@ -180,9 +182,20 @@ cmd_reference() {
 
 cmd_down() {
   echo "Deleting stack $STACK. The bucket, KMS key, ECR repositories, DynamoDB table and log groups are"
-  echo "retained (DeletionPolicy: Retain); empty and delete them by hand when the project ends."
+  echo "retained (DeletionPolicy: Retain). To remove those too: bash scripts/aws_deploy.sh destroy"
   aws cloudformation delete-stack --stack-name "$STACK"
   aws cloudformation wait stack-delete-complete --stack-name "$STACK"
+}
+
+cmd_destroy() {
+  local extra=(--stack "$STACK" --region "$AWS_REGION" --templates-bucket "$STACK-$(account)-$AWS_REGION-cfn")
+  if [ -z "${CONFIRM_DESTROY:-}" ]; then
+    "$PYTHON" "$ROOT/scripts/aws_teardown.py" "${extra[@]}"   # plan only
+    echo "To delete all of this: CONFIRM_DESTROY=$STACK bash scripts/aws_deploy.sh destroy"
+    return 0
+  fi
+  [ "${ENVIRONMENT:-}" != prod ] || [ "${CONFIRM_PROD:-}" = yes ] || fail "prod teardown needs CONFIRM_PROD=yes"
+  "$PYTHON" "$ROOT/scripts/aws_teardown.py" "${extra[@]}" --yes --confirm "$CONFIRM_DESTROY"
 }
 
 case "${1:-}" in
@@ -200,5 +213,6 @@ case "${1:-}" in
   approve) shift; cmd_approve "$@" ;;
   reference) shift; cmd_reference "$@" ;;
   down) cmd_down ;;
+  destroy) cmd_destroy ;;
   *) sed -n '2,26p' "$0"; exit 2 ;;
 esac

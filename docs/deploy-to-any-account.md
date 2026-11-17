@@ -82,6 +82,30 @@ bash scripts/aws_deploy.sh call GET /health     # the bundle hash should match t
 bash scripts/aws_deploy.sh outputs              # every stack output, including the API URL
 ```
 
+## Tearing it down
+
+From GitHub: Actions → **teardown** → Run workflow. Choose the environment and region, then a scope:
+
+| Scope | What it removes |
+|---|---|
+| plan only (default) | Nothing. It lists what would be removed. |
+| stack only | The CloudFormation stack. Models, data, keys, images and logs stay. |
+| everything | The stack plus the retained resources: both S3 buckets with every object version (all published models and training outputs), the ECR repositories, the DynamoDB table, the log groups, and the template bucket. The KMS key is scheduled for deletion in 7 days, the shortest AWS allows. This cannot be undone. |
+
+For anything but "plan only", type the stack name (`sepsis-dev`, `sepsis-staging`, `sepsis-prod`) in the
+confirm box. `staging` and `prod` also wait for their required reviewers. From a shell:
+
+```bash
+export AWS_REGION=ap-southeast-2 ENVIRONMENT=dev
+bash scripts/aws_deploy.sh destroy                       # plan only
+CONFIRM_DESTROY=sepsis-dev bash scripts/aws_deploy.sh destroy   # delete everything (prod also needs CONFIRM_PROD=yes)
+bash scripts/aws_deploy.sh down                          # stack only
+```
+
+The GitHub connection itself (the OIDC provider and deploy roles) is separate: delete the
+`sepsis-github-oidc` stack in each region to remove it. Run the teardown for a region before deleting
+that region's bootstrap stack, because the workflow uses the deploy role.
+
 ## Moving to another account
 
 Repeat step 1 in the new account, with its region. Then run the deploy workflow
@@ -94,7 +118,7 @@ do not change between accounts.
 |---|---|
 | GitHub OIDC provider (IAM) | Lets GitHub Actions obtain short-lived credentials without stored keys |
 | Three deploy roles | One per GitHub environment; the trust policy accepts only jobs in that environment |
-| Stack `sepsis-github-oidc` | Holds the above; delete it to remove the connection |
+| Stack `sepsis-github-oidc` | Holds the above; delete it to remove the connection (after tearing down the deployment) |
 
 ## Troubleshooting
 
