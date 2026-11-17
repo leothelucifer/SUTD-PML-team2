@@ -544,6 +544,8 @@ def main():
     monitor_replay.add_argument("--model", type=Path, required=True)
     monitor_replay.add_argument("--reference", type=Path, required=True, help="monitoring_reference.json")
     monitor_replay.add_argument("--split", choices=REPLAY_SPLITS, default="external_test")
+    monitor_replay.add_argument("--after-freeze", action="store_true",
+                                help="Required for internal_test or external_test: only once the model is frozen")
     monitor_replay.add_argument("--output", type=Path, default=Path("artifacts/monitoring/replay"))
     serve = sub.add_parser("serve", help="Local research scoring API for a saved model (needs the serve extra)")
     serve_source = serve.add_mutually_exclusive_group(required=True)
@@ -720,6 +722,7 @@ def main():
             print("Reference: A train inputs; A validation scores, alerts and performance. No test data used.")
             print(f"Monitoring reference: {(args.output / 'monitoring_reference.json').resolve()}")
         elif args.command == "monitor-replay":
+            check_split(args.split, args.after_freeze)  # M01: test splits only after the model is frozen
             summary = replay_monitoring(args.data, args.model, args.reference, args.split, args.output)
             print("Research replay only; not live clinical monitoring. No automatic retraining.")
             for family, row in summary["families"].items():
