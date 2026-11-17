@@ -275,6 +275,36 @@ def run_experiment(args):
                   f"(models:/{MODEL_NAME}@candidate). Promote only after review.", flush=True)
 
 
+def run_tune(args):
+    """Hyperparameter search on the training split only; writes tuned settings for `train --models-config`."""
+    from . import tuning
+
+    if args.output.exists() and any(args.output.iterdir()):
+        raise ValueError(f"{args.output} is not empty; use a new output directory")
+    cohorts, synthetic = load_cohorts(args)
+    models_config, models_sha = load_model_config(args.models_config)
+    space, space_sha = tuning.load_space(args.space_config)
+    results, summary, tuned = tuning.run_search(
+        cohorts["train"], models_config=models_config, space=space, window=args.window, folds=args.folds,
+        trials=args.trials, seed=args.seed, max_stays=args.max_stays, only=args.models,
+        progress=lambda message: print(message, flush=True),
+    )
+    data_note = "synthetic_fixture" if synthetic else "physionet"
+    tuning.write_outputs(args.output, results, summary, tuned, models_config_sha256=models_sha,
+                         space_sha256=space_sha, data_note=data_note)
+    print("\nBest configuration per model (cross-validated average precision, training split only):")
+    for name, best in summary["models"].items():
+        marker = "kept the reference settings" if best["winner_is_reference"] else f"gain {best['ap_gain_over_reference']:+.4f}"
+        print(f"  {name}: AP {best['cv_ap_mean']:.4f} (reference {best['reference_cv_ap_mean']:.4f}; {marker})")
+    print(f"Tuned settings: {(args.output / 'tuned_models.toml').resolve()}")
+    print("Next: python -m sepsis_warning train --models-config "
+          f"{args.output / 'tuned_models.toml'} ...", flush=True)
+    if args.mlflow_uri:
+        from .tracking import log_tuning
+
+        print(f"MLflow tuning run: {log_tuning(args.output, args.mlflow_uri)}", flush=True)
+
+
 BASELINE_SPLITS = ["validation", "internal_test", "external_test"]
 BASELINE_COLUMNS = [
     "model", "split", "patients", "septic_patients", "hours", "positive_hour_fraction",
@@ -480,6 +510,23 @@ def main():
                              help="Also fit the hand-written NumPy models as candidates (slower)")
         command.add_argument("--skip-data-checks", action="store_true",
                              help="Do not run the schema checks on a Parquet table before training")
+    tune = sub.add_parser(
+        "tune", help="Hyperparameter search with patient-grouped cross-validation on the training split only")
+    tune.add_argument("--data", type=Path, required=True, help=DATA_HELP)
+    tune.add_argument("--splits", type=Path, default=None, help=SPLITS_HELP)
+    tune.add_argument("--output", type=Path, default=Path("artifacts/tuning"))
+    tune.add_argument("--seed", type=int, default=42)
+    tune.add_argument("--window", type=int, default=6)
+    tune.add_argument("--folds", type=int, default=3, help="Patient-grouped cross-validation folds")
+    tune.add_argument("--trials", type=int, default=12,
+                      help="Sampled configurations per model, besides the reference settings")
+    tune.add_argument("--max-stays", type=int, default=None,
+                      help="Search on a seeded random subset of training stays (faster; recorded in the result)")
+    tune.add_argument("--models", nargs="+", default=None, help="Only tune these models (default: all with a space)")
+    tune.add_argument("--models-config", type=Path, default=None, help="Reference settings (default: models.toml)")
+    tune.add_argument("--space-config", type=Path, default=None, help="Search space (default: tuning_space.toml)")
+    tune.add_argument("--mlflow-uri", default=None,
+                      help=f"Log every trial to MLflow, e.g. {DEFAULT_TRACKING_URI} (tracking extra)")
     evaluate = sub.add_parser(
         "evaluate", help="Score the test splits ONCE for a frozen model (never during model development)")
     evaluate.add_argument("--data", type=Path, required=True, help=DATA_HELP)
@@ -677,6 +724,11 @@ def main():
             if result.get("detail"):
                 print(f"  {result['detail']}")
             print(f"Result: {(args.output / 'live_drift.json').resolve()}", flush=True)
+        elif args.command == "tune":
+            if args.mlflow_uri:
+                check_tracking_uri(args.mlflow_uri)
+                require_mlflow()
+            run_tune(args)
         elif args.command == "evaluate":
             from .evaluation import run_frozen_evaluation
 
