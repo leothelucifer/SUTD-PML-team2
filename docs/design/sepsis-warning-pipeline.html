@@ -674,7 +674,7 @@ footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--line)
   <!-- 6. AWS + MLOPS -->
   <section>
     <h2><span class="n">6</span>Deploying on AWS and running MLOps</h2>
-    <p>This is the serverless design that the templates in <code>infra/cloudformation/</code> and the scripts in <code>scripts/</code> build. Nothing is idle: training is a spot job, scoring is a Lambda function, and the MLflow server is a managed app, so nothing bills between uses. The same scripts deploy to any account and region. It is statically checked and run locally in containers; the first real deployment is the test in section 7.</p>
+    <p>This is the serverless design that the templates in <code>infra/cloudformation/</code> and the scripts in <code>scripts/</code> build. Nothing is idle: training is a spot job, scoring is a Lambda function, and the MLflow server is a managed app, so nothing bills between uses. The same scripts deploy to any account, and both Singapore (ap-southeast-1) and Sydney (ap-southeast-2) are supported and checked. It is statically checked and run locally in containers; the first real deployment is the test in section 7.</p>
     <figure>
       <div class="scroll">
       <svg viewBox="0 0 1016 482" role="img" aria-label="AWS architecture as built. Build: GitHub Actions deploys a CloudFormation stack and pushes three images to ECR, with KMS and IAM roles. Train and approve: data in S3 feeds a SageMaker spot training job that logs to the SageMaker MLflow App; a Step Functions pipeline checks the promotion gates, waits for a named approver, evaluates once and publishes a write-once model to S3. Serve: a Lambda function URL with IAM authentication loads that model after a SHA-256 check and answers signed requests. Watch: a daily EventBridge drift job, CloudWatch alarms, SNS email and a monthly budget alert.">
@@ -785,7 +785,7 @@ footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--line)
         <path class="e" d="M498 412H516" marker-end="url(#m7)"/>
         <path class="e" d="M757 338V374" marker-end="url(#m7)" opacity="0"/>
         <g class="m"><text x="20" y="38">BUILD</text><text x="20" y="148">TRAIN AND APPROVE</text><text x="20" y="258">SERVE</text><text x="20" y="368">WATCH</text></g>
-        <text class="m" x="996" y="468" text-anchor="end">your AWS account, one region · nothing runs or bills between uses</text>
+        <text class="m" x="996" y="468" text-anchor="end">your AWS account · Singapore or Sydney · nothing runs or bills between uses</text>
       </svg>
       </div>
       <figcaption>Train and approve is the production route (<code>aws_deploy.sh pipeline</code>): train on SageMaker, check the promotion gates, wait for an approver who is not the trainer, evaluate the frozen model once, then publish a write-once copy to S3. The Lambda function loads that copy only if its SHA-256 matches the pinned value. Icons: AWS Architecture Icons.</figcaption>
@@ -859,7 +859,7 @@ footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--line)
         <path class="e" d="M576 200H590" marker-end="url(#m9)"/>
         <path class="e" d="M766 200H780" marker-end="url(#m9)"/>
         <line class="grid" x1="20" y1="308" x2="940" y2="308"/>
-        <text class="t" x="20" y="340">Part B · AWS (your account, one region)</text>
+        <text class="t" x="20" y="340">Part B · AWS (your account; Singapore or Sydney)</text>
         <rect class="bx" x="20" y="354" width="176" height="92" rx="6"/><text class="m" x="30" y="372">B1</text><text class="t" x="56" y="372">Connect</text><text class="m" x="30" y="394">bootstrap_github_oidc</text><text class="s" x="30" y="416">roles + GitHub</text><text class="s" x="30" y="430">variables set</text>
         <rect class="bx" x="210" y="354" width="176" height="92" rx="6"/><text class="m" x="220" y="372">B2</text><text class="t" x="246" y="372">Stack, images</text><text class="m" x="220" y="394">aws_deploy stack|images</text><text class="s" x="220" y="416">CREATE_COMPLETE;</text><text class="s" x="220" y="430">outputs listed</text>
         <rect class="bx" x="400" y="354" width="176" height="92" rx="6"/><text class="m" x="410" y="372">B3</text><text class="t" x="436" y="372">Rehearse</text><text class="m" x="410" y="394">ALLOW_SYNTHETIC=1 pipeline</text><text class="s" x="410" y="416">synthetic through</text><text class="s" x="410" y="430">approve + publish</text>

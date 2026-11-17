@@ -137,8 +137,9 @@ Pass: replaying hospital B reports the drift you expect from A to B (different p
 
 ## Part B. AWS
 
-Account and region: use the account you own (the examples assume Sydney, `ap-southeast-2`; the SageMaker MLflow
-App must be available in your region: `docs/aws-serverless.md`). Everything is serverless and bills only while it
+Account and region: use the account you own. Both Singapore (`ap-southeast-1`) and Sydney (`ap-southeast-2`) are
+supported; the SageMaker MLflow App is available in both (`docs/aws-serverless.md`). Pick one and use it for every
+command below. Everything is serverless and bills only while it
 runs or stores data. Never put access keys in the repository; the GitHub route uses OIDC.
 
 ### B0. Prerequisites
@@ -146,7 +147,7 @@ runs or stores data. Never put access keys in the repository; the GitHub route u
 AWS CLI v2 logged in as an administrator (CloudShell is fine), Docker, and `pip install -e ".[aws,tracking,sagemaker]"`.
 
 ```bash
-export AWS_REGION=ap-southeast-2 ENVIRONMENT=dev BUDGET_EMAIL=you@example.com
+export AWS_REGION=ap-southeast-2 ENVIRONMENT=dev     # or ap-southeast-1 for Singapore BUDGET_EMAIL=you@example.com
 aws sts get-caller-identity           # confirm it is the account you intend
 ```
 

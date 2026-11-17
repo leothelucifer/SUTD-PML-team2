@@ -150,7 +150,7 @@ hand when the project ends.
 | Assumption | What the docs say | Result |
 |---|---|---|
 | `AWS::SageMaker::MlflowApp` properties | `ArtifactStoreUri`, `Name`, `RoleArn` required; `ModelRegistrationMode`, `Tags`, `WeeklyMaintenanceWindowStart` (`Sun:18:00` pattern) optional; `Fn::GetAtt Arn` | Template matches |
-| MLflow Apps in Singapore | Asia Pacific (Singapore) is on the MLflow Apps region list; the artifact bucket must be in the same region | OK |
+| MLflow Apps in Singapore and Sydney | Asia Pacific (Singapore) and Asia Pacific (Sydney) are both on the MLflow Apps region list; the artifact bucket must be in the same region | OK; both regions are supported, set `AWS_REGION` to `ap-southeast-1` or `ap-southeast-2` |
 | MLflow version | Apps run MLflow 3.16 (Python 3.10+) and update themselves | Training image pins `mlflow==3.16.1` (build arg `MLFLOW_VERSION`) |
 | App role | Trust `sagemaker.amazonaws.com`; permissions `s3:Get*`, `s3:Put*`, `s3:List*` (+ Model Registry actions only for automatic registration) | Role now matches, scoped to the bucket and `mlflow/` |
 | Client permission | The data-plane action for MLflow Apps is `sagemaker:CallMlflowAppApi` | Training role and the trainer, approver and deployer policies grant it |

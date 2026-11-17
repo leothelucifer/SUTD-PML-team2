@@ -13,7 +13,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-: "${AWS_REGION:?set AWS_REGION, for example ap-southeast-2}"
+: "${AWS_REGION:?set AWS_REGION, ap-southeast-1 (Singapore) or ap-southeast-2 (Sydney)}"
 : "${GITHUB_REPO:?set GITHUB_REPO, for example owner/name}"
 STACK="${BOOTSTRAP_STACK:-sepsis-github-oidc}"
 fail() { echo "FAIL: $*" >&2; exit 1; }

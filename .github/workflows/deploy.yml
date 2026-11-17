@@ -3,7 +3,7 @@
 #
 # Works in any AWS account with no edits here. Each GitHub environment (dev, staging, prod)
 # needs two variables, set by scripts/bootstrap_github_oidc.sh or by hand:
-#   AWS_REGION            region of the account, for example ap-southeast-2
+#   AWS_REGION            region of the account, ap-southeast-1 (Singapore) or ap-southeast-2 (Sydney)
 #   AWS_DEPLOY_ROLE_ARN   the deploy role that the bootstrap stack created for that environment
 # Optional: BUDGET_EMAIL (needed when infra/params/<env>.json sets a monthly budget), ALERT_EMAIL.
 # No long-lived AWS keys are used: GitHub's OIDC token is exchanged for a short-lived role.

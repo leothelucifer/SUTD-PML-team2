@@ -36,7 +36,7 @@ if [ -n "$ENVIRONMENT" ]; then
 fi
 STACK="${STACK:-sepsis-research}"
 # No default region: the same scripts deploy to any account, so the region is always explicit.
-: "${AWS_REGION:?set AWS_REGION, for example ap-southeast-2 (the region of your account)}"
+: "${AWS_REGION:?set AWS_REGION, ap-southeast-1 (Singapore) or ap-southeast-2 (Sydney)}"
 export AWS_REGION
 SERVING_MODE="${SERVING_MODE:-lambda}"
 PLATFORM="${PLATFORM:-linux/amd64}"

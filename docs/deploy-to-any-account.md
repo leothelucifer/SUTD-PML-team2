@@ -11,7 +11,7 @@ in any region. Nothing in the repository is specific to one account.
 - The GitHub CLI (`gh`), logged in, if you want the variables set automatically.
   Otherwise the script prints the commands to run.
 - The region you want. The SageMaker MLflow App must be available in it; check
-  the list in `docs/aws-serverless.md`. The examples use `ap-southeast-2` (Sydney).
+  the list in `docs/aws-serverless.md`. Both Singapore (`ap-southeast-1`) and Sydney (`ap-southeast-2`) are supported and checked; the examples use Sydney, so replace it with `ap-southeast-1` for Singapore.
 
 ## 1. Connect GitHub to the account (once per account and region)
 
