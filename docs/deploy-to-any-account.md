@@ -23,8 +23,17 @@ bash scripts/bootstrap_github_oidc.sh
 
 This creates the GitHub OIDC identity provider (only if the account has none),
 and one deploy role each for `dev`, `staging` and `prod`. It sets the GitHub
-variables `AWS_REGION` and `AWS_DEPLOY_ROLE_ARN` for each environment. No access
-keys are created.
+variables `AWS_ACCOUNT_ID`, `AWS_REGION` (the default region) and `AWS_DEPLOY_ROLE_ARN` for each
+environment. No access keys are created. The roles are named `github-deploy-<environment>-<region>`.
+
+**To deploy to both Singapore and Sydney, run the script once per region** (for example with
+`AWS_REGION=ap-southeast-1`, then with `AWS_REGION=ap-southeast-2`). The second run reuses the OIDC
+provider and adds the roles for the second region. The deploy workflow then finds the right role for
+the region you choose.
+
+**Different account per environment:** run the script with credentials for each account in turn.
+The variables are set per GitHub environment, so `dev` can deploy to one account and `prod` to another.
+To target an account by hand, set `AWS_ACCOUNT_ID` for that GitHub environment.
 
 Then, in GitHub, under Settings → Environments, add required reviewers to
 `staging` and `prod`.
@@ -37,7 +46,9 @@ policy: pass `DEPLOY_POLICY_ARN=<arn>` to the script, or edit the role in IAM.
 
 Option A, from GitHub (recommended):
 
-1. Actions → **deploy** → Run workflow, environment `dev`.
+1. Actions → **deploy** → Run workflow. Choose the **environment** (`dev`, `staging` or `prod`) and the
+   **region** (`ap-southeast-1`, `ap-southeast-2`, or "environment default"). `staging` and `prod` pause
+   for the reviewers you set on those GitHub environments. The run summary names the region and role used.
    The first run fails at `publish` if no model has been promoted in this
    account yet. That is expected: step 3 below creates the model first.
 
@@ -87,8 +98,11 @@ do not change between accounts.
 
 ## Troubleshooting
 
-- **"missing AWS_REGION or AWS_DEPLOY_ROLE_ARN"** in the workflow: run step 1
+- **"has neither AWS_ACCOUNT_ID nor AWS_DEPLOY_ROLE_ARN"** in the workflow: run step 1
   for that account, or set the variables for that GitHub environment.
+- **"AWS_DEPLOY_ROLE_ARN belongs to another region"**: you chose a region the bootstrap has not been run
+  for. Run step 1 with that `AWS_REGION`, or set `AWS_ACCOUNT_ID` for the environment.
+- **Role not found for a region**: step 1 has not been run in that region of that account.
 - **"set AWS_REGION"** from a script: export `AWS_REGION` in the shell first.
 - **"this environment sets a monthly budget; set BUDGET_EMAIL"**: set `BUDGET_EMAIL`,
   or set `MonthlyBudgetUsd` to 0 in `infra/params/<env>.json`.

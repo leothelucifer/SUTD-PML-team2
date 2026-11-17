@@ -92,7 +92,7 @@ are linted and unit-tested but **not yet run in an AWS account**.
 | Safe releases | `serverless.yaml` (SAM) | Each change publishes a Lambda version behind the `live` alias and shifts traffic as a canary (`DeploymentType`); error or latency alarms roll it back |
 | Alert ledger | `alert_store.py`, DynamoDB table | Delivered alerts are recorded, so a model change cannot re-alert inside the cooldown |
 | Environments | `infra/params/{dev,staging,prod}.json` | `ENVIRONMENT=dev bash scripts/aws_deploy.sh stack`; one AWS account each; prod needs `CONFIRM_PROD=yes` or the workflow's reviewers |
-| Deploy workflow | `.github/workflows/deploy.yml` | Manual start, GitHub OIDC (no stored keys), dev → staging → prod with a smoke test after each. Inactive until `AWS_DEPLOY_ROLE_ARN` is set |
+| Deploy workflow | `.github/workflows/deploy.yml` | Manual start: choose the environment (dev, staging, prod) and the region (Singapore or Sydney). GitHub OIDC (no stored keys), a smoke test after the deploy. Inactive until the bootstrap has set `AWS_ACCOUNT_ID` for the environment |
 | Telemetry | `telemetry.py` | Request metrics in the `SepsisWarning/Scoring` namespace and prediction lines with hashed stay IDs and no measurement values |
 | Prediction log and drift | `observability.yaml`, `live_drift.py` | Prediction lines go to S3 through a log subscription and Firehose; a daily Lambda runs the label-free checks; the `<env>-drift` alarm emails the owners. `aws_deploy.sh reference <file>` switches it on |
 | Retraining trigger | `observability.yaml` | With `RetrainImageTag`, a drift alarm starts the pipeline, which still stops at the approver |

@@ -158,7 +158,10 @@ export GITHUB_REPO=<owner>/SUTD-PML-team2
 bash scripts/bootstrap_github_oidc.sh
 ```
 
-Then add required reviewers to the `staging` and `prod` GitHub environments. See `docs/deploy-to-any-account.md`.
+Run it once per region you want (Singapore and Sydney each need their own run). Then add required reviewers to the
+`staging` and `prod` GitHub environments. From then on you can deploy from GitHub instead of the shell: Actions →
+**deploy** → Run workflow → pick the environment and the region. B2 to B5 below can all run that way for the
+stack, images, publish and serve steps. See `docs/deploy-to-any-account.md`.
 
 ### B2. Create the stack and images
 
