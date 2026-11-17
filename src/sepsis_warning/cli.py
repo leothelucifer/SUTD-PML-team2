@@ -192,7 +192,8 @@ def run_experiment(args):
     selected, selection = select_candidate(comparisons, complexity_ranks(model_config))
     # The rule every model must beat, on the same validation stays and under the same alert
     # budget (its criteria-count threshold is tuned the same way). A promotion gate reads this.
-    sirs = tune_threshold(baseline_table(splits["validation"], "sirs"), args.budget, args.cooldown)
+    sirs_table = baseline_table(splits["validation"], "sirs")
+    sirs = tune_threshold(sirs_table, args.budget, args.cooldown)
     sirs["brier_score"] = None  # the SIRS score is not a probability
     name, threshold = selected["model"], selected["threshold"]
     pd.DataFrame(comparisons).to_csv(args.output / "validation_models.csv", index=False)
@@ -247,6 +248,16 @@ def run_experiment(args):
     }
     joblib.dump(bundle, args.output / "model.joblib")
     write_manifest(args.output, manifest, file_sha256(args.output / "model.joblib"))
+    # Every candidate's validation scores, plus the SIRS score, so `model-report` can compare all models
+    # and the baseline (precision, recall, F1, PR curves) without refitting. Validation stays only.
+    # Patient-level, so it stays in the run folder (git-ignored) and is never logged to MLflow.
+    all_scores = validation_scores[name][META].copy()
+    for candidate, table in validation_scores.items():
+        all_scores[f"p_{candidate}"] = table["probability"].to_numpy()
+    all_scores = all_scores.merge(
+        sirs_table[["patient_id", "hour", "probability"]].rename(columns={"probability": "sirs_score"}),
+        on=["patient_id", "hour"], how="left", validate="one_to_one")
+    all_scores.to_csv(args.output / "validation_scores.csv", index=False)
     # Replay of validation stays only: these were already used for selection.
     replay = apply_policy(validation_scores[name], threshold, args.cooldown)
     replay["split"] = "validation"
@@ -527,6 +538,16 @@ def main():
     tune.add_argument("--space-config", type=Path, default=None, help="Search space (default: tuning_space.toml)")
     tune.add_argument("--mlflow-uri", default=None,
                       help=f"Log every trial to MLflow, e.g. {DEFAULT_TRACKING_URI} (tracking extra)")
+    report = sub.add_parser(
+        "model-report",
+        help="Metrics table, PR curves and other figures (each with its recreate command) from a finished train run")
+    report.add_argument("--run", type=Path, required=True, help="Folder written by `train` (validation files)")
+    report.add_argument("--output", type=Path, default=Path("reports/results"), help="New, empty folder")
+    report.add_argument("--tuning", type=Path, default=None, help="Folder written by `tune` (adds the search figure)")
+    report.add_argument("--evaluation", type=Path, default=None,
+                        help="Folder written by `evaluate` (adds test-split table and PR curves; reads only)")
+    report.add_argument("--bootstrap", type=int, default=200, help="Stay-grouped bootstrap draws (0 = no intervals)")
+    report.add_argument("--seed", type=int, default=42)
     evaluate = sub.add_parser(
         "evaluate", help="Score the test splits ONCE for a frozen model (never during model development)")
     evaluate.add_argument("--data", type=Path, required=True, help=DATA_HELP)
@@ -729,6 +750,15 @@ def main():
                 check_tracking_uri(args.mlflow_uri)
                 require_mlflow()
             run_tune(args)
+        elif args.command == "model-report":
+            from .model_report import build_report
+
+            manifest = build_report(args.run, args.output, tuning_dir=args.tuning, evaluation_dir=args.evaluation,
+                                    bootstrap=args.bootstrap, seed=args.seed)
+            print(f"Wrote {len(manifest['figures'])} figures and the metrics table to {args.output.resolve()}")
+            for item in manifest["skipped"]:
+                print(f"  skipped {item['title']}: {item['reason']}")
+            print(f"Open {(args.output / 'FIGURES.md').resolve()}", flush=True)
         elif args.command == "evaluate":
             from .evaluation import run_frozen_evaluation
 
