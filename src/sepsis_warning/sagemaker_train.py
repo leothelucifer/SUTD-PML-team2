@@ -5,7 +5,9 @@ SageMaker starts the training image with the argument ``train``. This module:
 1. reads hyperparameters from ``/opt/ml/input/config/hyperparameters.json``
    (all values arrive as strings): ``seed``, ``window``, ``budget``,
    ``cooldown``, ``mlflow_tracking_uri`` (the MLflow App ARN),
-   ``register_model`` ("true"/"false"), ``git_commit``;
+   ``register_model`` ("true"/"false"), ``git_commit``, ``require_gates`` (do
+   not register a model that fails the promotion gates), ``mode`` (``train``,
+   or ``evaluate_publish`` for the pipeline step after approval);
 2. reads the ``data`` channel, ``/opt/ml/input/data/data/``: either
    ``combined.parquet`` with ``splits.csv`` (and optionally
    ``splits.csv.summary.json`` and ``dvc.lock``), or a folder with
@@ -63,7 +65,34 @@ def build_args(root: Path) -> Namespace:
         mlflow_uri=tracking, register_model=_flag(params.get("register_model", "false")) and tracking is not None,
         models_config=None, include_numpy_models=_flag(params.get("include_numpy_models", "false")),
         skip_data_checks=_flag(params.get("skip_data_checks", "false")),
+        require_gates=_flag(params.get("require_gates", "false")),
+        require_real_data=_flag(params.get("require_real_data", "false")),
     )
+
+
+def evaluate_and_publish(root: Path, params: dict, args: Namespace) -> dict:
+    """Pipeline step after approval: the one frozen evaluation, then a write-once publish to S3.
+
+    Hyperparameters: ``mlflow_tracking_uri``, ``publish_bucket`` and optionally
+    ``model_uri`` (default ``models:/sepsis-warning@production``).
+    """
+    from .evaluation import AlreadyEvaluated, run_frozen_evaluation
+    from .model_source import publish_model
+
+    tracking, bucket = params.get("mlflow_tracking_uri"), params.get("publish_bucket")
+    if not tracking or not bucket:
+        raise ValueError("mode evaluate_publish needs mlflow_tracking_uri and publish_bucket")
+    model_uri = params.get("model_uri") or "models:/sepsis-warning@production"
+    try:
+        run_frozen_evaluation(data=args.data, splits=args.splits, seed=args.seed, model_uri=model_uri,
+                              mlflow_uri=tracking, output=root / "model" / "evaluation")
+    except AlreadyEvaluated as error:
+        print(f"Frozen evaluation already recorded ({error}); publishing without a second look.", flush=True)
+    published = publish_model(model_uri, tracking, bucket)
+    (root / "model").mkdir(parents=True, exist_ok=True)
+    (root / "model" / "publish.json").write_text(json.dumps(published, indent=2), encoding="utf-8")
+    print(f"Published {published['model_s3_uri']} sha256 {published['sha256']}", flush=True)
+    return published
 
 
 def main(argv=None) -> int:
@@ -76,6 +105,11 @@ def main(argv=None) -> int:
         if args.mlflow_uri:
             check_tracking_uri(args.mlflow_uri)
             require_mlflow()
+        config = root / "input" / "config" / "hyperparameters.json"
+        params = json.loads(config.read_text(encoding="utf-8")) if config.is_file() else {}
+        if params.get("mode", "train") == "evaluate_publish":
+            evaluate_and_publish(root, params, args)
+            return 0
         print(f"Training on {args.data} (seed {args.seed}); outputs to {args.output}", flush=True)
         run_experiment(args)
         return 0

@@ -30,25 +30,24 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     MPLBACKEND=Agg \
     MPLCONFIGDIR=/tmp/matplotlib
 WORKDIR /app
-# Pinned versions first (cached layer). Behind a TLS-inspecting proxy, pass its
-# CA as a build secret; it is used only during installs and kept in no layer:
+# Each target installs its own hash-locked file (requirements/<target>.txt, made by
+# scripts/lock_requirements.sh) with --require-hashes, so a build is reproducible and a
+# changed package is refused. Behind a TLS-inspecting proxy, pass its CA as a build
+# secret; it is used only during installs and kept in no layer:
 #   docker build --secret id=extra_ca,src=/path/to/proxy-ca.crt ...
-COPY requirements.txt ./
-RUN --mount=type=secret,id=extra_ca,required=false \
-    if [ -f /run/secrets/extra_ca ]; then export PIP_CERT=/run/secrets/extra_ca; fi; \
-    python -m pip install -r requirements.txt
+COPY requirements ./requirements
 COPY pyproject.toml README.md ./
 COPY src/sepsis_warning ./src/sepsis_warning
 
 # SageMaker AI training job. SageMaker runs the image with the argument
 # "train"; inputs and outputs use the /opt/ml layout (see sagemaker_train.py).
 FROM base AS training
-# Match the MLflow version the SageMaker MLflow App runs (3.16 on 2026-11-15; the
-# App updates itself, so raise this when its version changes).
-ARG MLFLOW_VERSION=3.16.1
+# requirements/training.txt pins MLflow to the SageMaker MLflow App's version (3.16 on
+# 2026-11-15; the App updates itself, so re-lock with MLFLOW_VERSION when it changes).
 RUN --mount=type=secret,id=extra_ca,required=false \
     if [ -f /run/secrets/extra_ca ]; then export PIP_CERT=/run/secrets/extra_ca; fi; \
-    python -m pip install ".[tracking,aws,sagemaker,checks]" "mlflow==${MLFLOW_VERSION}" && rm -rf /app/src
+    python -m pip install --require-hashes -r requirements/training.txt && \
+    python -m pip install --no-deps . && rm -rf /app/src /app/requirements
 ENV MLFLOW_DISABLE_TELEMETRY=true \
     MLFLOW_DISABLE_AGENT_HINT=1 \
     GIT_PYTHON_REFRESH=quiet
@@ -59,7 +58,8 @@ ENTRYPOINT ["python", "-m", "sepsis_warning.sagemaker_train"]
 FROM base AS lambda
 RUN --mount=type=secret,id=extra_ca,required=false \
     if [ -f /run/secrets/extra_ca ]; then export PIP_CERT=/run/secrets/extra_ca; fi; \
-    python -m pip install ".[serve,lambda]" && rm -rf /app/src
+    python -m pip install --require-hashes -r requirements/lambda.txt && \
+    python -m pip install --no-deps . && rm -rf /app/src /app/requirements
 ENTRYPOINT ["python", "-m", "awslambdaric"]
 CMD ["sepsis_warning.lambda_app.handler"]
 
@@ -67,7 +67,8 @@ CMD ["sepsis_warning.lambda_app.handler"]
 FROM base AS scoring
 RUN --mount=type=secret,id=extra_ca,required=false \
     if [ -f /run/secrets/extra_ca ]; then export PIP_CERT=/run/secrets/extra_ca; fi; \
-    python -m pip install ".[serve,aws]" && rm -rf /app/src
+    python -m pip install --require-hashes -r requirements/scoring.txt && \
+    python -m pip install --no-deps . && rm -rf /app/src /app/requirements
 # Fixed non-root user; it owns nothing in the image.
 RUN useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin scorer
 USER 10001:10001
@@ -78,5 +79,5 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
 # exposure is controlled by `-p 127.0.0.1:...` on the host, or the load balancer.
 # The model comes from a mounted file (below) or from S3:
 #   --model-s3 s3://<bucket>/models/v3/model.joblib --model-sha256 <hash>
-ENTRYPOINT ["python", "-m", "sepsis_warning", "serve", "--host", "0.0.0.0", "--allow-non-local-host", "--port", "8000"]
+ENTRYPOINT ["python", "-m", "sepsis_warning", "serve", "--host", "0.0.0.0", "--allow-non-local-host", "--port", "8000", "--telemetry"]
 CMD ["--model", "/models/model.joblib"]

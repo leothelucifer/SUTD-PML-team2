@@ -55,6 +55,9 @@ selected for the stack and do not enforce it.
 | `network.yaml` | VPC, subnets, routing and VPC endpoints (Fargate mode only) |
 | `service.yaml` | Internal load balancer, private Fargate service, task roles, logs (Fargate mode only) |
 | `monitoring.yaml` | Lambda or ECS/ALB alarms, optional email subscription, optional AWS Budget (always created) |
+| `pipeline.yaml` | Step Functions training pipeline: train with gates → human approval → frozen evaluation → publish |
+| `observability.yaml` | Prediction log to S3 (log subscription + Firehose), daily drift Lambda, drift alarm, optional retraining trigger |
+| `apigw.yaml` | Optional private API Gateway with IAM auth, throttling and WAF in front of the Lambda |
 
 The default stack is serverless and pay-per-use: nothing bills by the hour.
 Training jobs are started on demand by `scripts/sagemaker_train.py`, and
@@ -68,6 +71,7 @@ a model published to S3 (`ModelS3Uri`, `ModelSha256`).
 Run the static template linter from the repository root:
 
 ```bash
+pip install "cfn-lint[sam]"
 cfn-lint -t infra/cloudformation/*.yaml --regions ap-southeast-1 --ignore-checks W3002
 ```
 
