@@ -214,5 +214,5 @@ case "${1:-}" in
   reference) shift; cmd_reference "$@" ;;
   down) cmd_down ;;
   destroy) cmd_destroy ;;
-  *) sed -n '2,26p' "$0"; exit 2 ;;
+  *) sed -n '2,29p' "$0"; exit 2 ;;
 esac
