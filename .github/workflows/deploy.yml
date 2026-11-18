@@ -84,20 +84,20 @@ jobs:
         with:
           persist-credentials: false
 
-      # The role's trust policy must match this subject exactly (see infra/cloudformation/github-oidc.yaml).
-      # Because the job sets `environment:`, it is never repo:...:ref:refs/heads/main.
-      - name: Show the OIDC subject AWS will check
-        if: steps.wanted.outputs.run == 'true'
-        # Prints only the decoded claims AWS matches on, never the token itself.
+      # The role's trust policy must match these claims exactly. Only the decoded claims are
+      # printed, never the token. Because the job sets `environment:`, sub is
+      # repo:<owner>/<name>:environment:<env> (unless the repo customised its subject template).
+      - name: Show the OIDC claims AWS will check
+        env:
+          ROLE: ${{ steps.target.outputs.role }}
         run: |
-          echo "expected sub: repo:${GITHUB_REPOSITORY}:environment:${{ matrix.environment }}"
-          echo "role:         ${{ vars.AWS_DEPLOY_ROLE_ARN }}"
+          echo "role: $ROLE"
           curl -sSf -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com" | python3 -c '
           import base64, json, sys
           part = json.load(sys.stdin)["value"].split(".")[1]
           claims = json.loads(base64.urlsafe_b64decode(part + "=" * (-len(part) % 4)))
           keys = ("sub", "aud", "iss", "repository", "environment", "ref", "job_workflow_ref")
-          print(json.dumps({k: claims.get(k) for k in keys}, indent=2))' || true
+          print(json.dumps({k: claims.get(k) for k in keys}, indent=2))' | tee -a "$GITHUB_STEP_SUMMARY" || true
 
       - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
         with:
