@@ -92,12 +92,28 @@ jobs:
           ROLE: ${{ steps.target.outputs.role }}
         run: |
           echo "role: $ROLE"
-          curl -sSf -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com" | python3 -c '
-          import base64, json, sys
-          part = json.load(sys.stdin)["value"].split(".")[1]
-          claims = json.loads(base64.urlsafe_b64decode(part + "=" * (-len(part) % 4)))
+          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            echo "::warning title=OIDC claims::no ACTIONS_ID_TOKEN_REQUEST_URL (is id-token: write set?)"
+            exit 0
+          fi
+          resp="$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com" || true)"
+          RESP="$resp" python3 - <<'PY'
+          import base64, json, os
+          try:
+              token = json.loads(os.environ["RESP"])["value"]
+              part = token.split(".")[1]
+              claims = json.loads(base64.urlsafe_b64decode(part + "=" * (-len(part) % 4)))
+          except Exception as exc:
+              print(f"::warning title=OIDC claims::could not read the token: {exc!r}")
+              raise SystemExit(0)
           keys = ("sub", "aud", "iss", "repository", "environment", "ref", "job_workflow_ref")
-          print(json.dumps({k: claims.get(k) for k in keys}, indent=2))' | tee -a "$GITHUB_STEP_SUMMARY" || true
+          shown = {k: claims.get(k) for k in keys}
+          print(json.dumps(shown, indent=2))
+          # Annotations are visible on the run page without signing in; no secret values here.
+          print("::notice title=OIDC claims::" + " | ".join(f"{k}={shown[k]}" for k in keys))
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
+              f.write("```json\n" + json.dumps(shown, indent=2) + "\n```\n")
+          PY
 
       - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
         with:
