@@ -101,7 +101,13 @@ def run(args, session=None) -> int:
     session = session or boto3.Session(region_name=args.region)
     cloudformation = session.client("cloudformation")
     clients = {name: session.client(name) for name in ("s3", "ecr", "dynamodb", "logs", "kms")}
-    resources = collect(cloudformation, args.stack)
+    try:
+        resources = collect(cloudformation, args.stack)
+    except Exception as error:  # noqa: BLE001  botocore ClientError
+        if "does not exist" in str(error):
+            print(f"Stack {args.stack} does not exist in {args.region}: nothing to tear down (credentials work).")
+            return 0
+        raise
     if args.templates_bucket:
         resources.append(("AWS::S3::Bucket", args.templates_bucket))
     print(f"Stack {args.stack} in {args.region} and these leftovers would be removed:")

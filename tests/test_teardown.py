@@ -114,6 +114,16 @@ class TeardownTests(unittest.TestCase):
         self.assertEqual(key["PendingWindowInDays"], 7)
         self.assertNotIn(("bucket", "gone"), session.s3.calls)
 
+    def test_missing_stack_is_not_an_error(self):
+        session = FakeSession()
+
+        def missing(StackName, **_):
+            raise RuntimeError("An error occurred (ValidationError): Stack with id x does not exist")
+
+        session.cfn.list_stack_resources = missing
+        self.assertEqual(teardown.run(Namespace(**ARGS, yes=True, confirm="sepsis-dev"), session), 0)
+        self.assertEqual((session.cfn.deleted, session.s3.calls), ([], []))
+
     def test_script_and_workflow_require_confirmation(self):
         script = (ROOT / "scripts" / "aws_deploy.sh").read_text(encoding="utf-8")
         self.assertIn("CONFIRM_DESTROY", script)

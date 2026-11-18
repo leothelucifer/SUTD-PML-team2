@@ -82,6 +82,28 @@ bash scripts/aws_deploy.sh call GET /health     # the bundle hash should match t
 bash scripts/aws_deploy.sh outputs              # every stack output, including the API URL
 ```
 
+## Deploying without GitHub (when the organization blocks OIDC)
+
+Some accounts (for example a university or company account in an AWS Organization) have a service
+control policy (SCP) that denies `iam:ListOpenIDConnectProviders` or `iam:CreateOpenIDConnectProvider`.
+The error names `an explicit deny in a service control policy`. Nothing in the account can override an
+SCP; only the organization's administrator can. Two ways forward:
+
+1. **Ask the administrator** to create the provider (URL `https://token.actions.githubusercontent.com`,
+   audience `sts.amazonaws.com`) and to allow IAM role creation, or to lift the deny for your role. Then
+   run the bootstrap with `CREATE_OIDC_PROVIDER=false` (it skips the lookup the SCP blocks).
+2. **Deploy from a shell that already has access**, such as CloudShell or an EC2 instance. This needs no
+   OIDC and no stored keys; the shell's own role is used. Use the same scripts the workflow runs:
+
+```bash
+export AWS_REGION=ap-southeast-2 ENVIRONMENT=dev BUDGET_EMAIL=you@example.com
+bash scripts/aws_deploy.sh stack && bash scripts/aws_deploy.sh images
+bash scripts/aws_deploy.sh destroy      # plan of the teardown; CONFIRM_DESTROY=<stack> to delete
+```
+
+The stack itself also creates IAM roles, so if the SCP blocks those as well, the deployment needs the
+administrator's help in either route. Do not work around an SCP with long-lived access keys.
+
 ## Tearing it down
 
 From GitHub: Actions → **teardown** → Run workflow. Choose the environment and region, then a scope:
