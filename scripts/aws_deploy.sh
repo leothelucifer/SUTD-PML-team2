@@ -13,15 +13,17 @@
 #   bash scripts/aws_deploy.sh pipeline              start the Step Functions pipeline (train -> approval -> evaluate -> publish)
 #   bash scripts/aws_deploy.sh approve TOKEN         approve a waiting pipeline (the token is in the notification email)
 #   bash scripts/aws_deploy.sh reference FILE        upload a monitor-setup reference and switch on the daily drift job
-#   bash scripts/aws_deploy.sh outputs | down
+#   bash scripts/aws_deploy.sh outputs
+#   bash scripts/aws_deploy.sh down                  delete the stack only (data, keys and images are kept)
+#   bash scripts/aws_deploy.sh destroy               plan a full teardown; CONFIRM_DESTROY=<stack> performs it
 #   bash scripts/aws_deploy.sh github-oidc OWNER/REPO  one-time: OIDC provider + role for deploy.yml (needs ENVIRONMENT)
 #
 # ENVIRONMENT=dev|staging|prod picks infra/params/<env>.json and the stack sepsis-<env>
 # (use one AWS account per environment). prod needs CONFIRM_PROD=yes.
 # promote refuses synthetic models unless ALLOW_SYNTHETIC=1 (dev rehearsals).
 #
-# Settings (environment variables): STACK (sepsis-research), AWS_REGION
-# (ap-southeast-1), SERVING_MODE (lambda | fargate), BUDGET_USD and BUDGET_EMAIL
+# Settings (environment variables): STACK (sepsis-research), AWS_REGION (required, no default),
+# SERVING_MODE (lambda | fargate), BUDGET_USD and BUDGET_EMAIL
 # (monthly budget alert), ALERT_EMAIL, PLATFORM (linux/amd64), TAG (git short sha),
 # PYTHON (python). Needs the AWS CLI v2, Docker, and `pip install -e ".[aws,tracking,sagemaker]"`.
 #
@@ -36,7 +38,9 @@ if [ -n "$ENVIRONMENT" ]; then
   STACK="${STACK:-sepsis-$ENVIRONMENT}"
 fi
 STACK="${STACK:-sepsis-research}"
-export AWS_REGION="${AWS_REGION:-ap-southeast-1}"
+# No default region: the same scripts deploy to any account, so the region is always explicit.
+: "${AWS_REGION:?set AWS_REGION, ap-southeast-1 (Singapore) or ap-southeast-2 (Sydney)}"
+export AWS_REGION
 SERVING_MODE="${SERVING_MODE:-lambda}"
 PLATFORM="${PLATFORM:-linux/amd64}"
 PYTHON="${PYTHON:-python}"
@@ -73,7 +77,14 @@ for key, value in json.load(open(sys.argv[1])).items():
     if not key.startswith("_"):
         print(f"{key}={value}")' "$ROOT/infra/params/$ENVIRONMENT.json")
   fi
-  [ -n "${BUDGET_USD:-}" ] && params+=("MonthlyBudgetUsd=$BUDGET_USD" "BudgetEmail=${BUDGET_EMAIL:?set BUDGET_EMAIL}")
+  [ -n "${BUDGET_USD:-}" ] && params+=("MonthlyBudgetUsd=$BUDGET_USD")
+  # A budget alert needs an email address; the template refuses a budget without one.
+  budget_on=false
+  for param in "${params[@]}"; do case "$param" in MonthlyBudgetUsd=0|MonthlyBudgetUsd=0.*) ;; MonthlyBudgetUsd=*) budget_on=true ;; esac; done
+  if $budget_on; then
+    [ -n "${BUDGET_EMAIL:-}" ] || fail "this environment sets a monthly budget; set BUDGET_EMAIL (or MonthlyBudgetUsd=0)"
+    params+=("BudgetEmail=$BUDGET_EMAIL")
+  fi
   [ -n "${ALERT_EMAIL:-}" ] && params+=("AlertEmail=$ALERT_EMAIL")
   aws cloudformation deploy --stack-name "$STACK" --template-file "$STATE/packaged.yaml" \
     --capabilities CAPABILITY_IAM CAPABILITY_AUTO_EXPAND --no-fail-on-empty-changeset \
@@ -172,7 +183,7 @@ cmd_reference() {
 
 cmd_down() {
   echo "Deleting stack $STACK. The bucket, KMS key, ECR repositories, DynamoDB table and log groups are"
-  echo "retained (DeletionPolicy: Retain); empty and delete them by hand when the project ends."
+  echo "retained (DeletionPolicy: Retain). To remove those too: bash scripts/aws_deploy.sh destroy"
   aws cloudformation delete-stack --stack-name "$STACK"
   aws cloudformation wait stack-delete-complete --stack-name "$STACK"
 }
@@ -194,6 +205,17 @@ cmd_github_oidc() {  # one-time per account+environment, run with admin credenti
   echo "(token subject trusted: repo:$1:environment:$ENVIRONMENT)"
 }
 
+cmd_destroy() {
+  local extra=(--stack "$STACK" --region "$AWS_REGION" --templates-bucket "$STACK-$(account)-$AWS_REGION-cfn")
+  if [ -z "${CONFIRM_DESTROY:-}" ]; then
+    "$PYTHON" "$ROOT/scripts/aws_teardown.py" "${extra[@]}"   # plan only
+    echo "To delete all of this: CONFIRM_DESTROY=$STACK bash scripts/aws_deploy.sh destroy"
+    return 0
+  fi
+  [ "${ENVIRONMENT:-}" != prod ] || [ "${CONFIRM_PROD:-}" = yes ] || fail "prod teardown needs CONFIRM_PROD=yes"
+  "$PYTHON" "$ROOT/scripts/aws_teardown.py" "${extra[@]}" --yes --confirm "$CONFIRM_DESTROY"
+}
+
 case "${1:-}" in
   stack) shift; cmd_stack "$@" ;;
   outputs) cmd_outputs ;;
@@ -210,5 +232,6 @@ case "${1:-}" in
   reference) shift; cmd_reference "$@" ;;
   down) cmd_down ;;
   github-oidc) shift; cmd_github_oidc "$@" ;;
-  *) sed -n '2,27p' "$0"; exit 2 ;;
+  destroy) cmd_destroy ;;
+  *) sed -n '2,30p' "$0"; exit 2 ;;
 esac
