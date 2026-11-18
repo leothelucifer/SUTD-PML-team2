@@ -29,8 +29,13 @@ on:
         type: choice
         options: [environment default, ap-southeast-1, ap-southeast-2]
         default: environment default
+      steps:
+        description: First deploy in an account has no model yet, so start with "stack and images only"
+        type: choice
+        options: [stack and images only, full deploy]
+        default: stack and images only
       model_uri:
-        description: Registered model to deploy (must already be promoted in that account's MLflow App)
+        description: Registered model to deploy (full deploy only; must already be promoted in that account's MLflow App)
         default: models:/sepsis-warning@production
 
 permissions:
@@ -98,7 +103,7 @@ jobs:
           python -m pip install --no-deps -e .
           python -m pip install "sagemaker-mlflow>=0.5,<1"
 
-      - name: Stack, images, publish, deploy
+      - name: Stack and images
         env:
           ENVIRONMENT: ${{ inputs.environment }}
           # Prod changes need this confirmation; the environment's required reviewers are the approval.
@@ -111,11 +116,24 @@ jobs:
         run: |
           bash scripts/aws_deploy.sh stack
           bash scripts/aws_deploy.sh images
+
+      - name: Publish the promoted model and serve it
+        if: inputs.steps == 'full deploy'
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          CONFIRM_PROD: ${{ inputs.environment == 'prod' && 'yes' || '' }}
+          AWS_REGION: ${{ steps.target.outputs.region }}
+          BUDGET_EMAIL: ${{ vars.BUDGET_EMAIL }}
+          ALERT_EMAIL: ${{ vars.ALERT_EMAIL }}
+          MODEL_URI: ${{ inputs.model_uri }}
+          TAG: ${{ github.sha }}
+        run: |
           bash scripts/aws_deploy.sh publish
           bash scripts/aws_deploy.sh serve
 
       # The canary inside the stack update already rolled back on errors; this checks the result.
       - name: Smoke test the deployed API
+        if: inputs.steps == 'full deploy'
         env:
           ENVIRONMENT: ${{ inputs.environment }}
           AWS_REGION: ${{ steps.target.outputs.region }}

@@ -21,6 +21,12 @@ class DeployWorkflowTests(unittest.TestCase):
         self.assertIn("ap-southeast-2", regions)
         self.assertEqual(self.workflow["jobs"]["deploy"]["environment"], "${{ inputs.environment }}")
 
+    def test_first_deploy_can_stop_before_publishing(self):
+        steps = self.inputs["steps"]
+        self.assertEqual(steps["default"], "stack and images only")
+        gated = [s["name"] for s in self.workflow["jobs"]["deploy"]["steps"] if s.get("if") == "inputs.steps == 'full deploy'"]
+        self.assertEqual(gated, ["Publish the promoted model and serve it", "Smoke test the deployed API"])
+
     def test_credentials_come_from_oidc_only(self):
         self.assertEqual(self.workflow["permissions"]["id-token"], "write")
         self.assertNotIn("secrets.AWS", self.text)
