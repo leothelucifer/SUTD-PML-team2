@@ -39,6 +39,12 @@ class DeployWorkflowTests(unittest.TestCase):
             self.assertIn(f"github-deploy-{environment}-${{AWS::Region}}", template)
         self.assertIn("role/github-deploy-${ENVIRONMENT}-${region}", self.text)
 
+    def test_explicit_role_takes_precedence_over_account_role(self):
+        explicit = self.text.index('if [ -n "$ROLE_ARN_VAR" ]; then')
+        account = self.text.index('elif [ -n "$ACCOUNT_ID" ]; then')
+        self.assertLess(explicit, account)
+        self.assertIn('role="$ROLE_ARN_VAR"', self.text)
+
     def test_untrusted_text_goes_through_env_not_inline(self):
         for step in self.workflow["jobs"]["deploy"]["steps"]:
             self.assertNotIn("inputs.model_uri", step.get("run", ""))

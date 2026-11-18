@@ -67,14 +67,10 @@ jobs:
             ap-southeast-1|ap-southeast-2) ;;
             *) echo "Region '$region' is not supported. Pick ap-southeast-1 or ap-southeast-2, or set AWS_REGION for the '$ENVIRONMENT' environment." >&2; exit 1 ;;
           esac
-          if [ -n "$ACCOUNT_ID" ]; then
-            role="arn:aws:iam::${ACCOUNT_ID}:role/github-deploy-${ENVIRONMENT}-${region}"
-          elif [ -n "$ROLE_ARN_VAR" ]; then
+          if [ -n "$ROLE_ARN_VAR" ]; then
             role="$ROLE_ARN_VAR"
-            case "$role" in
-              *"-${region}") ;;
-              *) echo "AWS_DEPLOY_ROLE_ARN belongs to another region than $region. Set AWS_ACCOUNT_ID for '$ENVIRONMENT' or re-run the bootstrap for $region." >&2; exit 1 ;;
-            esac
+          elif [ -n "$ACCOUNT_ID" ]; then
+            role="arn:aws:iam::${ACCOUNT_ID}:role/github-deploy-${ENVIRONMENT}-${region}"
           else
             echo "The '$ENVIRONMENT' environment has neither AWS_ACCOUNT_ID nor AWS_DEPLOY_ROLE_ARN." >&2
             echo "Run scripts/bootstrap_github_oidc.sh for this account, or set them in GitHub settings." >&2
