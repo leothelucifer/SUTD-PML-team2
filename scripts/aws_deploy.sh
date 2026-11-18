@@ -14,6 +14,7 @@
 #   bash scripts/aws_deploy.sh approve TOKEN         approve a waiting pipeline (the token is in the notification email)
 #   bash scripts/aws_deploy.sh reference FILE        upload a monitor-setup reference and switch on the daily drift job
 #   bash scripts/aws_deploy.sh outputs | down
+#   bash scripts/aws_deploy.sh github-oidc OWNER/REPO  one-time: OIDC provider + role for deploy.yml (needs ENVIRONMENT)
 #
 # ENVIRONMENT=dev|staging|prod picks infra/params/<env>.json and the stack sepsis-<env>
 # (use one AWS account per environment). prod needs CONFIRM_PROD=yes.
@@ -176,6 +177,23 @@ cmd_down() {
   aws cloudformation wait stack-delete-complete --stack-name "$STACK"
 }
 
+cmd_github_oidc() {  # one-time per account+environment, run with admin credentials
+  [ $# -eq 1 ] || fail "usage: ENVIRONMENT=dev $0 github-oidc OWNER/REPO   (the repo that runs deploy.yml)"
+  [ -n "$ENVIRONMENT" ] || fail "set ENVIRONMENT=dev|staging|prod (the GitHub environment the job uses)"
+  local provider_arn="arn:aws:iam::$(account):oidc-provider/token.actions.githubusercontent.com"
+  local create=true
+  local own_stack="github-oidc-$ENVIRONMENT"
+  if aws iam get-open-id-connect-provider --open-id-connect-provider-arn "$provider_arn" >/dev/null 2>&1; then
+    # Keep the provider if this stack created it; otherwise reuse the existing one.
+    aws cloudformation describe-stack-resource --stack-name "$own_stack"       --logical-resource-id GitHubOidcProvider >/dev/null 2>&1 || create=false
+  fi
+  aws cloudformation deploy --stack-name "$own_stack"     --template-file "$ROOT/infra/cloudformation/github-oidc.yaml"     --capabilities CAPABILITY_NAMED_IAM --no-fail-on-empty-changeset     --parameter-overrides "GitHubRepo=$1" "DeployEnvironment=$ENVIRONMENT" "CreateOidcProvider=$create"
+  local arn
+  arn="$(aws cloudformation describe-stacks --stack-name "$own_stack"     --query "Stacks[0].Outputs[?OutputKey=='DeployRoleArn'].OutputValue | [0]" --output text)"
+  echo "Set AWS_DEPLOY_ROLE_ARN=$arn on the GitHub environment '$ENVIRONMENT' of $1"
+  echo "(token subject trusted: repo:$1:environment:$ENVIRONMENT)"
+}
+
 case "${1:-}" in
   stack) shift; cmd_stack "$@" ;;
   outputs) cmd_outputs ;;
@@ -191,5 +209,6 @@ case "${1:-}" in
   approve) shift; cmd_approve "$@" ;;
   reference) shift; cmd_reference "$@" ;;
   down) cmd_down ;;
-  *) sed -n '2,26p' "$0"; exit 2 ;;
+  github-oidc) shift; cmd_github_oidc "$@" ;;
+  *) sed -n '2,27p' "$0"; exit 2 ;;
 esac

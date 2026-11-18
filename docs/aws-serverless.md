@@ -99,6 +99,29 @@ are linted and unit-tested but **not yet run in an AWS account**.
 | Private entry | `apigw.yaml` | With `PrivateApiVpcEndpointId`: private API Gateway (one VPC endpoint only), IAM auth, throttling, WAF rate limit |
 | Runbooks | [runbooks/](runbooks/README.md) | Rollback, scoring errors, drift alarm, proposed service objectives |
 
+### Deploy workflow setup (one time per account and environment)
+
+The workflow signs in to AWS with GitHub's OIDC token, and the IAM role must
+trust the exact token subject. Because the job runs in a GitHub environment, the
+subject is `repo:<owner>/<name>:environment:<env>` (for example
+`repo:leothelucifer/SUTD-PML-team2:environment:dev`), not `...:ref:refs/heads/main`.
+A role made with the console wizard usually trusts the branch form or a different
+repository (a fork has its own owner), and the run fails with
+`Not authorized to perform sts:AssumeRoleWithWebIdentity`.
+
+With admin credentials for the target account:
+
+```bash
+ENVIRONMENT=dev bash scripts/aws_deploy.sh github-oidc <owner>/<name>
+```
+
+This deploys `infra/cloudformation/github-oidc.yaml` (the OIDC provider if the
+account has none, and the role `github-deploy-<env>`) and prints the role ARN.
+In GitHub, under Settings → Environments → `<env>`, set the variable
+`AWS_DEPLOY_ROLE_ARN` to it. Repeat per environment. The workflow's
+"Show the OIDC subject" step prints the subject it sends, to compare with the
+role's trust policy.
+
 Extra cost of these: Firehose and the drift Lambda are pennies at this volume;
 Step Functions bills per state transition (a few per run); the private API
 needs an execute-api VPC endpoint (about $15 a month for two zones) and WAF
