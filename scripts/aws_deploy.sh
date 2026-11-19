@@ -58,6 +58,15 @@ account() { aws sts get-caller-identity --query Account --output text; }
 
 cmd_stack() {
   local extra=("$@")
+  # A first create that failed leaves the stack in ROLLBACK_COMPLETE, which cannot be updated. It holds no
+  # resources, so delete it and start again.
+  local status
+  status="$(aws cloudformation describe-stacks --stack-name "$STACK" --query 'Stacks[0].StackStatus' --output text 2>/dev/null || true)"
+  if [ "$status" = ROLLBACK_COMPLETE ]; then
+    echo "Stack $STACK is in ROLLBACK_COMPLETE (an earlier create failed); deleting the empty stack first"
+    aws cloudformation delete-stack --stack-name "$STACK"
+    aws cloudformation wait stack-delete-complete --stack-name "$STACK"
+  fi
   local templates_bucket="$STACK-$(account)-$AWS_REGION-cfn"
   if ! aws s3api head-bucket --bucket "$templates_bucket" 2>/dev/null; then
     echo "Creating template bucket $templates_bucket"
