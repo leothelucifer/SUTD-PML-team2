@@ -139,6 +139,7 @@ jobs:
           bash scripts/aws_deploy.sh images
 
       - name: Publish the promoted model and serve it
+        id: publish
         if: inputs.steps == 'full deploy'
         env:
           ENVIRONMENT: ${{ inputs.environment }}
@@ -164,7 +165,7 @@ jobs:
             '{"stays": [{"patient_id": "smoke-1", "hours": [{"ICULOS": 1, "HR": 92}, {"ICULOS": 2, "HR": 118}]}]}'
 
       - name: Verify every deployed component
-        if: always() && steps.target.outcome == 'success'
+        if: always() && steps.target.outcome == 'success' && (inputs.steps != 'full deploy' || steps.publish.outcome == 'success')
         env:
           ENVIRONMENT: ${{ inputs.environment }}
           AWS_REGION: ${{ steps.target.outputs.region }}
