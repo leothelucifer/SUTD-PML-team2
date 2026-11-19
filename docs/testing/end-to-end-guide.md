@@ -184,6 +184,10 @@ ALLOW_SYNTHETIC=1 bash scripts/aws_deploy.sh pipeline   # train -> gates -> appr
 bash scripts/aws_deploy.sh approve <token>              # token arrives by email; the approver is not the trainer
 ```
 
+> The pipeline now prepares the data, tunes and trains in AWS by itself: Actions → **pipeline**
+> (see `docs/deploy-to-any-account.md`, "Training and serving the model, all in AWS"). The shell steps in B3 and B4
+> below are the manual alternative.
+
 ### B4. Real data and training on SageMaker
 
 Upload only after the team agrees the data use is allowed. Then:

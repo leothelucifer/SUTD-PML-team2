@@ -114,6 +114,26 @@ bash scripts/aws_deploy.sh destroy      # plan of the teardown; CONFIRM_DESTROY=
 The stack itself also creates IAM roles, so if the SCP blocks those as well, the deployment needs the
 administrator's help in either route. Do not work around an SCP with long-lived access keys.
 
+## Training and serving the model, all in AWS
+
+After "stack and images only", run the model pipeline from GitHub: Actions → **pipeline** → Run workflow
+(environment, region, `data_source`, `trials`). Nothing needs a laptop or a shell. The workflow builds the images
+for the commit, starts the Step Functions pipeline and follows it. Everything else runs in SageMaker:
+
+| Step | What it does | Output in S3 |
+|---|---|---|
+| Prepare data | `synthetic`: the software fixture. `physionet`: downloads the public Challenge 2019 training sets, builds `combined.parquet`, saves the patient split. Untick `prepare` to reuse data already there. | `data/physionet/` |
+| Tune | Patient-grouped cross-validation on the train split only, logged to the MLflow App. `trials` 0 keeps the default settings. | `tuning/<run>/tuned_models.toml` |
+| Train + report | Fits every candidate with the tuned settings, selects on validation, registers `@candidate` (only if the promotion gates pass), then writes the metrics table and PR curves. | `reports/<run>/` |
+| Approval | An email with a token and the report location. A reviewer who is not the trainer runs `aws_deploy.sh promote <version> "<name>"`, then `aws_deploy.sh approve <token>`. | |
+| Evaluate and publish | The one frozen evaluation of `@production`, then a write-once copy of the model. | `models/vN/` |
+
+Then run **deploy** with steps "full deploy" to serve it on Lambda, and **verify** with `expect_model` ticked.
+Rehearse with `synthetic` first (about $0.05–0.20 of SageMaker time); a real PhysioNet run costs more and its search
+takes longer. Start with a small `limit` (for example 2000 stays per hospital) to check the download. The
+approval email needs the `ALERT_EMAIL` subscription to be confirmed. From a shell the same run is
+`DATA_SOURCE=synthetic TRIALS=6 WAIT=1 bash scripts/aws_deploy.sh pipeline`.
+
 ## Checking that everything is deployed
 
 Run **verify**: Actions → **verify** → Run workflow (environment, region; tick "expect_model" after a full deploy).

@@ -85,6 +85,16 @@ class VerifyTests(unittest.TestCase):
         self.assertTrue(result.failed())
         self.assertIn("AccessDenied", result.table())
 
+    def test_the_latest_pipeline_run_is_reported(self):
+        items = [{"type": "AWS::StepFunctions::StateMachine", "physical": "arn:sm"}]
+        for latest, expected in (("SUCCEEDED", "PASS"), ("RUNNING", "WARN"), ("FAILED", "FAIL"), (None, "WARN")):
+            runs = [{"name": "run-1", "status": latest}] if latest else []
+            sfn = Namespace(describe_state_machine=lambda stateMachineArn: {"status": "ACTIVE"},
+                            list_executions=lambda stateMachineArn, maxResults, runs=runs: {"executions": runs})
+            result = verify.Result()
+            verify.check_pipeline(result, sfn, items)
+            self.assertEqual(statuses(result)["Pipeline run"], expected, latest)
+
     def test_missing_outputs_fail(self):
         result = verify.Result()
         verify.check_outputs(result, {"ArtifactBucketName": "b"}, False)
