@@ -45,6 +45,15 @@ class DeployWorkflowTests(unittest.TestCase):
         self.assertLess(explicit, account)
         self.assertIn('role="$ROLE_ARN_VAR"', self.text)
 
+    def test_trust_policy_accepts_the_id_based_subject(self):
+        template = (PATH.parents[2] / "infra" / "bootstrap" / "github-oidc.yaml").read_text(encoding="utf-8")
+        for environment in ("dev", "staging", "prod"):
+            self.assertIn(f"repo:${{GitHubRepository}}:environment:{environment}", template)
+            self.assertIn(f"repo:${{OwnerName}}@${{GitHubOwnerId}}/${{RepoName}}@${{GitHubRepositoryId}}:environment:{environment}", template)
+        script = (PATH.parents[2] / "scripts" / "bootstrap_github_oidc.sh").read_text(encoding="utf-8")
+        self.assertIn("GitHubOwnerId=", script)
+        self.assertIn("GitHubRepositoryId=", script)
+
     def test_untrusted_text_goes_through_env_not_inline(self):
         for step in self.workflow["jobs"]["deploy"]["steps"]:
             self.assertNotIn("inputs.model_uri", step.get("run", ""))
