@@ -34,6 +34,16 @@ def failures(cloudformation, stack: str, seen: set | None = None) -> list[dict]:
     except Exception as error:  # noqa: BLE001  a nested stack we may not be allowed to read
         return [{"stack": stack, "logical": "(events unreadable)", "type": "", "reason": str(error), "time": None}]
     found = []
+    try:
+        page = cloudformation.describe_events(StackName=stack, Filters={"FailedEvents": True})
+        for event in page.get("OperationEvents", []):
+            reason = event.get("ValidationStatusReason") or event.get("ResourceStatusReason")
+            if reason and "cancelled" not in reason.lower():
+                where = event.get("ValidationPath") or event.get("LogicalResourceId") or ""
+                found.append({"stack": stack, "logical": f"{event.get('ValidationName', 'validation')} {where}".strip(),
+                              "type": event.get("ResourceType", "validation"), "reason": reason, "time": event.get("Timestamp")})
+    except Exception:  # noqa: BLE001  an older SDK or stack operation may not support this API
+        pass
     for event in events:
         status, reason = event.get("ResourceStatus", ""), event.get("ResourceStatusReason", "")
         if status.endswith("FAILED") and reason and "cancelled" not in reason.lower():
