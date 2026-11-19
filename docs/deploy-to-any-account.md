@@ -114,6 +114,29 @@ bash scripts/aws_deploy.sh destroy      # plan of the teardown; CONFIRM_DESTROY=
 The stack itself also creates IAM roles, so if the SCP blocks those as well, the deployment needs the
 administrator's help in either route. Do not work around an SCP with long-lived access keys.
 
+## Checking that everything is deployed
+
+Run **verify**: Actions → **verify** → Run workflow (environment, region; tick "expect_model" after a full deploy).
+The deploy workflow also runs it as its last step. From a shell: `bash scripts/aws_deploy.sh verify` (add
+`--expect-model` after a full deploy). It is read-only and prints PASS, WARN or FAIL per component, and writes the
+same table to the run summary:
+
+| Component | What is checked |
+|---|---|
+| Stack | the stack and every nested stack are `CREATE_COMPLETE`/`UPDATE_COMPLETE`, no resource is in a failed state |
+| S3 | the artifact and log buckets exist, are encrypted, block public access, and the artifact bucket is versioned |
+| KMS | the key is enabled with rotation on |
+| ECR | the three repositories each hold an image (tagged with the deployed commit) |
+| DynamoDB | the alert-ledger table is `ACTIVE` |
+| SageMaker MLflow App | status `Created` or `Updated` |
+| Step Functions | the approval pipeline is `ACTIVE` |
+| SNS and CloudWatch | the alert topic has a confirmed email subscription (WARN while it is still pending), and no alarm is firing |
+| Budget | the monthly budget exists |
+| IAM | the trainer, approver and deployer policies and the SageMaker role exist |
+| Scoring API (full deploy) | the Lambda function is `Active`, its URL needs IAM, and a signed `/health` call answers |
+
+WARN means it works but needs a person, for example confirming the alert email. FAIL exits non-zero.
+
 ## Tearing it down
 
 From GitHub: Actions → **teardown** → Run workflow. Choose the environment and region, then a scope:
