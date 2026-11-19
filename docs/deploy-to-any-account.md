@@ -60,6 +60,16 @@ bash scripts/aws_deploy.sh stack          # S3, KMS, ECR, MLflow App, roles, pip
 bash scripts/aws_deploy.sh images         # builds and pushes the three images
 ```
 
+**Check before creating anything.** The deploy workflow first runs `bash scripts/aws_deploy.sh validate`, which
+asks CloudFormation to validate every template and to preview the stack as a change set. CloudFormation runs its
+own checks there (name clashes with leftovers, unsupported syntax), so a mistake fails in seconds with a readable
+reason and nothing is created or billed. Run it yourself before a real deploy from a shell:
+
+```bash
+export AWS_REGION=ap-southeast-2 ENVIRONMENT=dev BUDGET_EMAIL=you@example.com
+bash scripts/aws_deploy.sh validate
+```
+
 ## 3. Train, review and promote a model
 
 The training pipeline is the production route: it trains, checks the promotion
