@@ -12,7 +12,9 @@
 #   bash scripts/aws_deploy.sh publish               copy @production to s3://<bucket>/models/vN/
 #   bash scripts/aws_deploy.sh serve                 deploy the published model on Lambda (or Fargate)
 #   bash scripts/aws_deploy.sh call METHOD PATH [JSON]  signed request to the scoring API
-#   bash scripts/aws_deploy.sh pipeline              start the Step Functions pipeline (train -> approval -> evaluate -> publish)
+#   bash scripts/aws_deploy.sh pipeline              start the pipeline: prepare data -> tune -> train + report -> approval -> evaluate -> publish
+#                                                    (DATA_SOURCE=synthetic|physionet PREPARE=true|false LIMIT=0 TRIALS=6 WAIT=1)
+#   bash scripts/aws_deploy.sh pipeline-wait [ARN]   follow an execution until it needs approval, finishes or fails
 #   bash scripts/aws_deploy.sh approve TOKEN         approve a waiting pipeline (the token is in the notification email)
 #   bash scripts/aws_deploy.sh reference FILE        upload a monitor-setup reference and switch on the daily drift job
 #   bash scripts/aws_deploy.sh outputs
@@ -219,10 +221,46 @@ cmd_call() {
 
 cmd_pipeline() {
   local arn; arn="$(output PipelineArn)"; [ -n "$arn" ] || fail "stack has no pipeline (EnablePipeline=true)"
-  local real=true; [ "${ALLOW_SYNTHETIC:-}" = 1 ] && real=false
-  aws stepfunctions start-execution --state-machine-arn "$arn" --query executionArn --output text \
-    --input "{\"image_tag\": \"training-$TAG\", \"git_commit\": \"$(git -C "$ROOT" rev-parse HEAD)\", \"require_real_data\": \"$real\"}"
-  echo "The pipeline trains, then emails the alert address and waits for: $0 approve <token>"
+  # DATA_SOURCE=synthetic|physionet  PREPARE=true|false (false reuses the data already in S3)
+  # LIMIT=stays per hospital to download (0 = all)  TRIALS=hyperparameter trials per model (0 = defaults)
+  local source="${DATA_SOURCE:-synthetic}" prepare="${PREPARE:-true}" limit="${LIMIT:-0}" trials="${TRIALS:-6}" real=false
+  case "$source" in synthetic) ;; physionet) real=true ;; *) fail "DATA_SOURCE must be synthetic or physionet" ;; esac
+  case "$prepare" in true|false) ;; *) fail "PREPARE must be true or false" ;; esac
+  case "$limit$trials" in *[!0-9]*) fail "LIMIT and TRIALS must be whole numbers" ;; esac
+  local input
+  input="$(printf '{"image_tag": "training-%s", "git_commit": "%s", "require_real_data": "%s", "prepare": "%s", "data_source": "%s", "limit": "%s", "trials": "%s"}' \
+    "$TAG" "$(git -C "$ROOT" rev-parse HEAD)" "$real" "$prepare" "$source" "$limit" "$trials")"
+  local execution
+  execution="$(aws stepfunctions start-execution --state-machine-arn "$arn" --query executionArn --output text --input "$input")"
+  echo "$execution"
+  echo "Pipeline started: data=$source prepare=$prepare trials=$trials. It trains, writes the report, then emails the alert address and waits for: $0 approve <token>"
+  echo "$execution" > "$STATE/pipeline_execution"
+  [ "${WAIT:-}" = 1 ] && cmd_pipeline_wait "$execution"
+  return 0
+}
+
+# Follow a pipeline execution until it needs a person, finishes or fails (WAIT=1 on `pipeline`, or `pipeline-wait [ARN]`).
+cmd_pipeline_wait() {
+  local execution="${1:-$(cat "$STATE/pipeline_execution" 2>/dev/null || true)}" status state last=""
+  [ -n "$execution" ] || fail "no execution; start one with '$0 pipeline'"
+  while true; do
+    status="$(aws stepfunctions describe-execution --execution-arn "$execution" --query status --output text)"
+    state="$(aws stepfunctions get-execution-history --execution-arn "$execution" --reverse-order --max-items 30 \
+      --query "events[?stateEnteredEventDetails.name != null] | [0].stateEnteredEventDetails.name" --output text 2>/dev/null || true)"
+    [ "$state" = "$last" ] || { echo "$(date +%H:%M:%S) $status: $state"; last="$state"; }
+    case "$status" in SUCCEEDED|FAILED|TIMED_OUT|ABORTED) break ;; esac
+    [ "$state" != WaitForApproval ] || break
+    sleep 30
+  done
+  if [ "$status" = RUNNING ] && [ "$state" = WaitForApproval ]; then
+    echo "Waiting for approval. The email with the token and the report location (s3://<bucket>/reports/<run>/) went to the alert address."
+    echo "Then: $0 promote <version> \"<reviewer>\"   and   $0 approve <token>"
+  elif [ "$status" != SUCCEEDED ]; then
+    echo "Pipeline $status. Failed steps:"
+    aws stepfunctions get-execution-history --execution-arn "$execution" \
+      --query "events[?type=='TaskFailed' || type=='ExecutionFailed'].[type, taskFailedEventDetails.resource, taskFailedEventDetails.error, taskFailedEventDetails.cause, executionFailedEventDetails.cause]" --output text | head -20
+    return 1
+  fi
 }
 
 cmd_approve() {
@@ -286,10 +324,11 @@ case "${1:-}" in
   serve) cmd_serve ;;
   call) shift; cmd_call "$@" ;;
   pipeline) cmd_pipeline ;;
+  pipeline-wait) shift; cmd_pipeline_wait "$@" ;;
   approve) shift; cmd_approve "$@" ;;
   reference) shift; cmd_reference "$@" ;;
   down) cmd_down ;;
   github-oidc) shift; cmd_github_oidc "$@" ;;
   destroy) cmd_destroy ;;
-  *) sed -n '2,30p' "$0"; exit 2 ;;
+  *) sed -n '2,35p' "$0"; exit 2 ;;
 esac

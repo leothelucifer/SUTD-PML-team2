@@ -180,6 +180,18 @@ def check_pipeline(result: Result, stepfunctions, items: list[dict]) -> None:
         def check(machine=machine):
             status = stepfunctions.describe_state_machine(stateMachineArn=machine["physical"])["status"]
             result.add("PASS" if status == "ACTIVE" else "FAIL", "Step Functions approval pipeline", status)
+            runs = stepfunctions.list_executions(stateMachineArn=machine["physical"], maxResults=1).get("executions", [])
+            if not runs:
+                result.add("WARN", "Pipeline run", "never run (start the pipeline workflow)")
+                return
+            last = runs[0]["status"]
+            detail = f"latest run {runs[0].get('name', '')[:36]}: {last}"
+            if last == "SUCCEEDED":
+                result.add("PASS", "Pipeline run", detail)
+            elif last == "RUNNING":
+                result.add("WARN", "Pipeline run", detail + " (running, or waiting for the approval)")
+            else:
+                result.add("FAIL", "Pipeline run", detail)
 
         guarded(result, "Step Functions approval pipeline", check)
 
