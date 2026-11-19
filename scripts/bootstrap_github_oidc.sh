@@ -47,10 +47,22 @@ MSG
   [ "$provider_exists" != "0" ] && create_provider=false && echo "GitHub OIDC provider already exists; reusing it"
 fi
 
+# New repositories put numeric IDs in the OIDC subject (repo:owner@ID/name@ID:environment:dev). Look them up
+# (public API, no token) or take GITHUB_OWNER_ID and GITHUB_REPO_ID from the environment.
+if [ -z "${GITHUB_OWNER_ID:-}" ] || [ -z "${GITHUB_REPO_ID:-}" ]; then
+  ids=$(curl -fsS "https://api.github.com/repos/$GITHUB_REPO" 2>/dev/null | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+print(d["owner"]["id"], d["id"])' 2>/dev/null) || ids=""
+  GITHUB_OWNER_ID="${ids%% *}"; GITHUB_REPO_ID="${ids##* }"
+  [ -n "$ids" ] || echo "Could not look up the GitHub IDs (private repository?). Set GITHUB_OWNER_ID and GITHUB_REPO_ID; the deploy log's 'Show the OIDC claims' step prints them in the sub claim." >&2
+fi
+echo "GitHub owner id ${GITHUB_OWNER_ID:-unknown}, repository id ${GITHUB_REPO_ID:-unknown}"
+
 aws cloudformation deploy --region "$AWS_REGION" --stack-name "$STACK" \
   --template-file "$ROOT/infra/bootstrap/github-oidc.yaml" \
   --capabilities CAPABILITY_NAMED_IAM --no-fail-on-empty-changeset \
-  --parameter-overrides "GitHubRepository=$GITHUB_REPO" "CreateOidcProvider=$create_provider" \
+  --parameter-overrides "GitHubRepository=$GITHUB_REPO" "CreateOidcProvider=$create_provider" "GitHubOwnerId=${GITHUB_OWNER_ID:-}" "GitHubRepositoryId=${GITHUB_REPO_ID:-}" \
   ${DEPLOY_POLICY_ARN:+DeployPolicyArn="$DEPLOY_POLICY_ARN"}
 
 role_arn() {  # role_arn OutputKey

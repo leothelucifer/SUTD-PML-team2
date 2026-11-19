@@ -148,6 +148,11 @@ do not change between accounts.
   for that account, or set the variables for that GitHub environment.
 - **"AWS_DEPLOY_ROLE_ARN belongs to another region"**: you chose a region the bootstrap has not been run
   for. Run step 1 with that `AWS_REGION`, or set `AWS_ACCOUNT_ID` for the environment.
+- **"Not authorized to perform sts:AssumeRoleWithWebIdentity" after retrying about 12 times**: compare the `sub`
+  claim printed by the "Show the OIDC claims" step with the role's trust policy. Newer repositories use
+  `repo:owner@<owner id>/name@<repo id>:environment:dev`. The bootstrap now looks the two IDs up and trusts
+  that form as well as the older one; re-run it (`git pull` first) to update an existing stack. If the lookup
+  fails (private repository), pass `GITHUB_OWNER_ID` and `GITHUB_REPO_ID` taken from that `sub` value.
 - **Role not found for a region**: step 1 has not been run in that region of that account.
 - **"set AWS_REGION"** from a script: export `AWS_REGION` in the shell first.
 - **"this environment sets a monthly budget; set BUDGET_EMAIL"**: set `BUDGET_EMAIL`,

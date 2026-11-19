@@ -9,6 +9,17 @@ Parameters:
     Type: String
     AllowedPattern: "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
     Description: owner/name of the repository allowed to deploy, for example leothelucifer/SUTD-PML-team2.
+  GitHubOwnerId:
+    Type: String
+    Default: ""
+    Description: >-
+      Numeric ID of the GitHub account that owns the repository. Newer repositories put it in the OIDC subject
+      (repo:owner@ID/name@ID:environment:dev), so the trust policy must accept that form. The bootstrap script
+      looks it up; leave empty only for older repositories that use repo:owner/name:environment:dev.
+  GitHubRepositoryId:
+    Type: String
+    Default: ""
+    Description: Numeric ID of the repository (see GitHubOwnerId).
   CreateOidcProvider:
     Type: String
     Default: "true"
@@ -50,11 +61,13 @@ Resources:
             "Action": "sts:AssumeRoleWithWebIdentity",
             "Condition": {"StringEquals": {
               "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
-              "token.actions.githubusercontent.com:sub": "repo:${GitHubRepository}:environment:dev"}}}]}
+              "token.actions.githubusercontent.com:sub": ["repo:${GitHubRepository}:environment:dev", "repo:${OwnerName}@${GitHubOwnerId}/${RepoName}@${GitHubRepositoryId}:environment:dev"]}}}]}
         - ProviderArn: !If
             - NeedsProvider
             - !Ref GitHubOidcProvider
             - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com"
+          OwnerName: !Select [0, !Split ["/", !Ref GitHubRepository]]
+          RepoName: !Select [1, !Split ["/", !Ref GitHubRepository]]
 
   StagingDeployRole:
     Type: AWS::IAM::Role
@@ -70,11 +83,13 @@ Resources:
             "Action": "sts:AssumeRoleWithWebIdentity",
             "Condition": {"StringEquals": {
               "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
-              "token.actions.githubusercontent.com:sub": "repo:${GitHubRepository}:environment:staging"}}}]}
+              "token.actions.githubusercontent.com:sub": ["repo:${GitHubRepository}:environment:staging", "repo:${OwnerName}@${GitHubOwnerId}/${RepoName}@${GitHubRepositoryId}:environment:staging"]}}}]}
         - ProviderArn: !If
             - NeedsProvider
             - !Ref GitHubOidcProvider
             - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com"
+          OwnerName: !Select [0, !Split ["/", !Ref GitHubRepository]]
+          RepoName: !Select [1, !Split ["/", !Ref GitHubRepository]]
 
   ProdDeployRole:
     Type: AWS::IAM::Role
@@ -90,11 +105,13 @@ Resources:
             "Action": "sts:AssumeRoleWithWebIdentity",
             "Condition": {"StringEquals": {
               "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
-              "token.actions.githubusercontent.com:sub": "repo:${GitHubRepository}:environment:prod"}}}]}
+              "token.actions.githubusercontent.com:sub": ["repo:${GitHubRepository}:environment:prod", "repo:${OwnerName}@${GitHubOwnerId}/${RepoName}@${GitHubRepositoryId}:environment:prod"]}}}]}
         - ProviderArn: !If
             - NeedsProvider
             - !Ref GitHubOidcProvider
             - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com"
+          OwnerName: !Select [0, !Split ["/", !Ref GitHubRepository]]
+          RepoName: !Select [1, !Split ["/", !Ref GitHubRepository]]
 
 Outputs:
   DevRoleArn:
