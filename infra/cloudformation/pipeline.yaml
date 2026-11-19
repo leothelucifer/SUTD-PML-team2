@@ -210,7 +210,7 @@ Resources:
                 States.Format('The approved model was evaluated once on the test splits and published.
                 publish.json (S3 URI and SHA-256 to deploy) is inside {}. Deploy it with the deploy workflow
                 or "aws_deploy.sh serve".', $.publish.artifacts)
-            ResultPath: null
+            ResultPath: $.notified   # CloudFormation rejects null values in templates, so keep the SNS reply here
             End: true
           NotifyFailure:
             Type: Task
@@ -219,7 +219,7 @@ Resources:
               TopicArn: ${Topic}
               Subject: Sepsis training pipeline stopped
               Message.$: States.JsonToString($.error)
-            ResultPath: null
+            ResultPath: $.notified   # CloudFormation rejects null values in templates, so keep the SNS reply here
             Next: Stopped
           Stopped:
             Type: Fail
