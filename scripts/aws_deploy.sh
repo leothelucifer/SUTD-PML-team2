@@ -2,6 +2,7 @@
 # Serverless AWS workflow for the research platform (see docs/aws-serverless.md).
 #
 #   bash scripts/aws_deploy.sh validate              check every template with CloudFormation and preview the stack (creates nothing)
+#   bash scripts/aws_deploy.sh verify [--expect-model]  check that every deployed component exists and is healthy (read-only)
 #   bash scripts/aws_deploy.sh stack                 create/update the stack (storage, MLflow App, roles, budget)
 #   bash scripts/aws_deploy.sh images                build and push the lambda, training and scoring images
 #   bash scripts/aws_deploy.sh data [DIR]            upload combined.parquet + splits.csv (+ summary) for training
@@ -133,6 +134,11 @@ cmd_validate() {
   fi
   [ "$ok" = 0 ] || exit 1
   echo "OK: the templates are valid and the stack preview passed"
+}
+
+# Read-only check of the deployed components (see scripts/aws_verify.py). Add --expect-model after a full deploy.
+cmd_verify() {
+  "$PYTHON" "$ROOT/scripts/aws_verify.py" --stack "$STACK" --region "$AWS_REGION" --tag "$TAG" "$@"
 }
 
 cmd_outputs() {
@@ -268,6 +274,7 @@ cmd_destroy() {
 
 case "${1:-}" in
   validate) cmd_validate ;;
+  verify) shift; cmd_verify "$@" ;;
   stack) shift; cmd_stack "$@" ;;
   outputs) cmd_outputs ;;
   images) cmd_images ;;
