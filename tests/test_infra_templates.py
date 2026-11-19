@@ -20,6 +20,14 @@ class TemplateTests(unittest.TestCase):
             self.assertNotIn("!Condition", block, f"{path.name}: Fn::Condition is not supported in Rules")
             self.assertNotIn("Fn::Condition", block, f"{path.name}: Fn::Condition is not supported in Rules")
 
+    def test_no_yaml_null_values(self):
+        # CloudFormation rejects "'null' values are not allowed in templates" (for example ResultPath: null
+        # in a Step Functions definition) when the stack is created, and cfn-lint does not.
+        pattern = re.compile(r"^[^#\n]*:\s*(null|~|Null|NULL)\s*(#.*)?$", re.M)
+        for path in TEMPLATES:
+            found = pattern.findall(path.read_text(encoding="utf-8"))
+            self.assertEqual(found, [], f"{path.name} has a YAML null value")
+
     def test_the_budget_rule_still_exists(self):
         text = (Path(__file__).resolve().parents[1] / "infra" / "cloudformation" / "monitoring.yaml").read_text(encoding="utf-8")
         self.assertIn("MonthlyBudgetRequiresEmail", rules_block(text))
