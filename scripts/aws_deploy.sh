@@ -148,9 +148,16 @@ cmd_images() {
   for pair in "lambda:LambdaRepositoryUri" "training:TrainingRepositoryUri" "scoring:EcrRepositoryUri"; do
     target="${pair%%:*}"; repo="$(output "${pair#*:}")"
     [ -n "$repo" ] || fail "stack output ${pair#*:} missing; run '$0 stack' first"
-    echo "Building $target -> $repo:$target-$TAG"
+    local image_tag="$target-$TAG"
+    local repository_name="${repo##*/}"
+    if aws ecr describe-images --repository-name "$repository_name" \
+      --image-ids "imageTag=$image_tag" --query 'imageDetails[0].imageDigest' --output text >/dev/null 2>&1; then
+      echo "Reusing existing $target image -> $repo:$image_tag"
+      continue
+    fi
+    echo "Building $target -> $repo:$image_tag"
     "${build[@]}" --target "$target" -t "$repo:$target-$TAG" "$ROOT" >/dev/null
-    docker push --quiet "$repo:$target-$TAG"
+    docker push --quiet "$repo:$image_tag"
   done
   echo "Pushed images tagged *-$TAG"
 }
