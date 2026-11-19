@@ -88,7 +88,6 @@ Resources:
         Topic: !Ref NotificationTopicArn
         InstanceType: !Ref InstanceType
         DataPrefix: !Ref DataPrefix
-        ApprovalTimeout: !Ref ApprovalTimeoutSeconds
       Definition:
         Comment: >-
           Input: {"image_tag": "training-<git sha>", "git_commit": "<sha>", "require_real_data": "true"}
@@ -143,7 +142,7 @@ Resources:
           WaitForApproval:
             Type: Task
             Resource: arn:aws:states:::sns:publish.waitForTaskToken
-            TimeoutSeconds: ${ApprovalTimeout}
+            TimeoutSeconds: !Ref ApprovalTimeoutSeconds
             Parameters:
               TopicArn: ${Topic}
               Subject: Sepsis model candidate awaiting review
