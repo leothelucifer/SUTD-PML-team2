@@ -24,6 +24,25 @@ def events_of(cloudformation, stack: str) -> list[dict]:
             return found
 
 
+def validation_failures(cloudformation, stack: str) -> list[dict]:
+    """Template checks CloudFormation ran before creating anything (for example "a bucket with this name exists").
+
+    The stack events only say "Validation failed with N error(s)"; the details are in DescribeEvents.
+    """
+    try:
+        page = cloudformation.describe_events(StackName=stack, Filters={"FailedEvents": True})
+    except Exception:  # noqa: BLE001  an older SDK or CLI without this API
+        return []
+    found = []
+    for event in page.get("OperationEvents", []):
+        reason = event.get("ValidationStatusReason") or event.get("ResourceStatusReason")
+        if reason and (event.get("ValidationName") or event.get("ValidationStatus")):
+            where = event.get("ValidationPath") or event.get("LogicalResourceId") or ""
+            found.append({"stack": stack, "logical": f"{event.get('ValidationName', 'validation')} {where}".strip(),
+                          "type": event.get("ResourceType", "validation"), "reason": reason, "time": event.get("Timestamp")})
+    return found
+
+
 def failures(cloudformation, stack: str, seen: set | None = None) -> list[dict]:
     seen = seen if seen is not None else set()
     if stack in seen:
@@ -33,7 +52,7 @@ def failures(cloudformation, stack: str, seen: set | None = None) -> list[dict]:
         events = events_of(cloudformation, stack)
     except Exception as error:  # noqa: BLE001  a nested stack we may not be allowed to read
         return [{"stack": stack, "logical": "(events unreadable)", "type": "", "reason": str(error), "time": None}]
-    found = []
+    found = validation_failures(cloudformation, stack)
     for event in events:
         status, reason = event.get("ResourceStatus", ""), event.get("ResourceStatusReason", "")
         if status.endswith("FAILED") and reason and "cancelled" not in reason.lower():
