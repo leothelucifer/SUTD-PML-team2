@@ -95,9 +95,12 @@ for key, value in json.load(open(sys.argv[1])).items():
     params+=("BudgetEmail=$BUDGET_EMAIL")
   fi
   [ -n "${ALERT_EMAIL:-}" ] && params+=("AlertEmail=$ALERT_EMAIL")
-  aws cloudformation deploy --stack-name "$STACK" --template-file "$STATE/packaged.yaml" \
+  if ! aws cloudformation deploy --stack-name "$STACK" --template-file "$STATE/packaged.yaml" \
     --capabilities CAPABILITY_IAM CAPABILITY_AUTO_EXPAND --no-fail-on-empty-changeset \
-    --parameter-overrides "${params[@]}" "${extra[@]}"
+    --parameter-overrides "${params[@]}" "${extra[@]}"; then
+    "$PYTHON" "$ROOT/scripts/aws_stack_failures.py" --stack "$STACK" --region "$AWS_REGION" || true
+    fail "stack $STACK could not be created or updated; the reasons are listed above"
+  fi
   cmd_outputs
 }
 
