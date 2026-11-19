@@ -81,7 +81,6 @@ Resources:
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
-      BucketName: !Sub "${EnvironmentName}-${AWS::AccountId}-${AWS::Region}-artifacts"
       BucketEncryption:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
@@ -162,7 +161,6 @@ Resources:
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
-      BucketName: !Sub "${EnvironmentName}-${AWS::AccountId}-${AWS::Region}-logs"
       BucketEncryption:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
@@ -210,7 +208,6 @@ Resources:
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
-      RepositoryName: !Sub "${EnvironmentName}/scoring-api"
       ImageScanningConfiguration:
         ScanOnPush: true
       ImageTagMutability: IMMUTABLE
@@ -232,7 +229,6 @@ Resources:
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
-      RepositoryName: !Sub "${EnvironmentName}/scoring-lambda"
       ImageScanningConfiguration:
         ScanOnPush: true
       ImageTagMutability: IMMUTABLE
@@ -265,7 +261,6 @@ Resources:
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
-      RepositoryName: !Sub "${EnvironmentName}/training"
       ImageScanningConfiguration:
         ScanOnPush: true
       ImageTagMutability: IMMUTABLE
@@ -286,7 +281,6 @@ Resources:
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
-      TableName: !Sub "${EnvironmentName}-stay-state"
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
         - AttributeName: stayId
