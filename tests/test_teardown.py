@@ -5,6 +5,7 @@ import sys
 import unittest
 from argparse import Namespace
 from pathlib import Path
+from unittest import mock
 
 import yaml
 
@@ -121,9 +122,57 @@ class TeardownTests(unittest.TestCase):
             raise RuntimeError("An error occurred (ValidationError): Stack with id x does not exist")
 
         session.cfn.list_stack_resources = missing
-        self.assertEqual(teardown.run(Namespace(**ARGS, yes=True, confirm="sepsis-dev"), session), 0)
+        with mock.patch.object(teardown, "leftovers", lambda *args: []):
+            self.assertEqual(teardown.run(Namespace(**ARGS, yes=True, confirm="sepsis-dev"), session), 0)
         self.assertEqual((session.cfn.deleted, session.s3.calls), ([], []))
 
+    def test_leftovers_of_a_failed_first_create_are_found_and_removed(self):
+        session = FakeSession()
+
+        def missing(StackName, **_):
+            raise RuntimeError("Stack with id x does not exist")
+
+        session.cfn.list_stack_resources = missing
+        sts = Namespace(get_caller_identity=lambda: {"Account": "123456789012"})
+
+        def absent(**kwargs):
+            raise RuntimeError("NotFound")
+
+        session.s3.head_bucket = lambda Bucket: None if Bucket.endswith("-artifacts") else absent()
+        recorder = session.client
+        tagged = Namespace(
+            get_paginator=lambda _: Namespace(paginate=lambda: [{"Keys": [{"KeyId": "key-1"}, {"KeyId": "key-2"}]}]),
+            list_resource_tags=lambda KeyId: {"Tags": [{"TagKey": "Name", "TagValue": "sepsis-dev-artifacts-key" if KeyId == "key-1" else "other"}]},
+            describe_key=lambda KeyId: {"KeyMetadata": {"KeyState": "Enabled"}},
+            schedule_key_deletion=lambda **kw: session.log.append(("kms", "schedule_key_deletion", kw)))
+        ecr = Namespace(describe_repositories=lambda repositoryNames: None if repositoryNames[0].endswith("/training") else absent(),
+                        delete_repository=lambda **kw: session.log.append(("ecr", "delete_repository", kw)))
+        dynamodb = Namespace(describe_table=lambda TableName: absent(), update_table=lambda **kw: None, delete_table=lambda **kw: None)
+        logs = Namespace(describe_log_groups=lambda logGroupNamePrefix: {"logGroups": []}, delete_log_group=lambda **kw: None)
+        session.client = lambda name: {"sts": sts, "kms": tagged, "ecr": ecr, "dynamodb": dynamodb, "logs": logs}.get(name) or recorder(name)
+
+        args = dict(stack="sepsis-dev", region="ap-southeast-2", templates_bucket=None)
+        self.assertEqual(teardown.run(Namespace(**args, yes=False, confirm=""), session), 0)
+        self.assertEqual(session.s3.calls, [])  # plan only
+        self.assertEqual(teardown.run(Namespace(**args, yes=True, confirm="sepsis-dev"), session), 0)
+        self.assertEqual(session.cfn.deleted, [])  # there is no stack to delete
+        self.assertIn(("bucket", "sepsis-dev-123456789012-ap-southeast-2-artifacts"), session.s3.calls)
+        self.assertNotIn(("bucket", "sepsis-dev-123456789012-ap-southeast-2-logs"), session.s3.calls)
+        removed = [(m, kw) for n, m, kw in session.log]
+        self.assertIn(("delete_repository", {"repositoryName": "sepsis-dev/training", "force": True}), removed)
+        self.assertEqual([kw["KeyId"] for m, kw in removed if m == "schedule_key_deletion"], ["key-1"])
+
+    def test_validation_failures_come_from_describe_events(self):
+        spec = importlib.util.spec_from_file_location("aws_stack_failures", ROOT / "scripts" / "aws_stack_failures.py")
+        failures = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(failures)
+        cfn = Namespace(describe_events=lambda StackName, Filters: {"OperationEvents": [
+            {"ValidationName": "AWS::EarlyValidation::ResourceExistenceCheck", "ValidationPath": "/Resources/ArtifactBucket",
+             "ValidationStatusReason": "bucket already exists", "ResourceType": "AWS::S3::Bucket"}]},
+            describe_stack_events=lambda StackName, **kw: {"StackEvents": []})
+        text = failures.report(failures.failures(cfn, "arn:aws:cloudformation:r:1:stack/n/x"))
+        self.assertIn("bucket already exists", text)
+        self.assertIn("ArtifactBucket", text)
     def test_change_set_failures_show_the_name_conflicts(self):
         spec = importlib.util.spec_from_file_location("aws_stack_failures", ROOT / "scripts" / "aws_stack_failures.py")
         failures = importlib.util.module_from_spec(spec)

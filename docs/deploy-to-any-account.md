@@ -186,6 +186,11 @@ do not change between accounts.
   `repo:owner@<owner id>/name@<repo id>:environment:dev`. The bootstrap now looks the two IDs up and trusts
   that form as well as the older one; re-run it (`git pull` first) to update an existing stack. If the lookup
   fails (private repository), pass `GITHUB_OWNER_ID` and `GITHUB_REPO_ID` taken from that `sub` value.
+- **"Validation failed with N error(s)" on the Artifacts stack, right after an earlier failed first deploy**: the failed
+  attempt kept the buckets, ECR repositories, DynamoDB table and KMS key it had already made (they are retained on
+  purpose), so their fixed names are taken. Run **teardown** with scope "plan only" to list them, then "everything"
+  with the stack name typed in. It removes these leftovers even though the stack is gone. The deploy log's "Why the
+  stack failed" section shows the details (it reads CloudFormation's `DescribeEvents`).
 - **Role not found for a region**: step 1 has not been run in that region of that account.
 - **"set AWS_REGION"** from a script: export `AWS_REGION` in the shell first.
 - **"this environment sets a monthly budget; set BUDGET_EMAIL"**: set `BUDGET_EMAIL`,

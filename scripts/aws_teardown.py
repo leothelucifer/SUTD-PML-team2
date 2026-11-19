@@ -95,22 +95,71 @@ def purge(clients: dict, resources: list[tuple[str, str]], log=print) -> None:
                 raise
 
 
+def leftovers(clients: dict, prefix: str, region: str) -> list[tuple[str, str]]:
+    """Retained resources of a stack that no longer exists, found by the names the templates give them.
+
+    A first create that fails part-way keeps the buckets, repositories, table and key it had already made
+    (DeletionPolicy: Retain). The next create then fails validation because those names are taken.
+    """
+    found: list[tuple[str, str]] = []
+
+    def exists(call, **kwargs) -> bool:
+        try:
+            call(**kwargs)
+            return True
+        except Exception:  # noqa: BLE001  not found, or not allowed to look: treat as absent
+            return False
+
+    account = ((clients["sts"].get_caller_identity() or {}).get("Account")) if "sts" in clients else None
+    if account:
+        for suffix in ("artifacts", "logs"):
+            bucket = f"{prefix}-{account}-{region}-{suffix}"
+            if exists(clients["s3"].head_bucket, Bucket=bucket):
+                found.append(("AWS::S3::Bucket", bucket))
+    for repo in ("scoring-api", "scoring-lambda", "training"):
+        if exists(clients["ecr"].describe_repositories, repositoryNames=[f"{prefix}/{repo}"]):
+            found.append(("AWS::ECR::Repository", f"{prefix}/{repo}"))
+    table = f"{prefix}-stay-state"
+    if exists(clients["dynamodb"].describe_table, TableName=table):
+        found.append(("AWS::DynamoDB::Table", table))
+    for group in (f"/aws/lambda/{prefix}-scoring", f"/aws/lambda/{prefix}-drift", f"/{prefix}/scoring-api"):
+        described = clients["logs"].describe_log_groups(logGroupNamePrefix=group) or {}
+        if any(g.get("logGroupName") == group for g in described.get("logGroups", [])):
+            found.append(("AWS::Logs::LogGroup", group))
+    try:  # keys carry the tag Name=<prefix>-artifacts-key; the alias is removed by the rollback
+        for page in clients["kms"].get_paginator("list_keys").paginate():
+            for key in page.get("Keys", []):
+                tags = (clients["kms"].list_resource_tags(KeyId=key["KeyId"]) or {}).get("Tags", [])
+                state = (clients["kms"].describe_key(KeyId=key["KeyId"]) or {}).get("KeyMetadata", {}).get("KeyState")
+                if state != "PendingDeletion" and any(t.get("TagKey") == "Name" and t.get("TagValue") == f"{prefix}-artifacts-key" for t in tags):
+                    found.append(("AWS::KMS::Key", key["KeyId"]))
+    except Exception:  # noqa: BLE001  not allowed to list keys: leave them (they cost about $1 a month)
+        pass
+    return sorted(set(found), key=lambda pair: (ORDER[pair[0]], pair[1]))
+
+
 def run(args, session=None) -> int:
     import boto3
 
     session = session or boto3.Session(region_name=args.region)
     cloudformation = session.client("cloudformation")
-    clients = {name: session.client(name) for name in ("s3", "ecr", "dynamodb", "logs", "kms")}
+    clients = {name: session.client(name) for name in ("s3", "ecr", "dynamodb", "logs", "kms", "sts")}
+    stack_exists = True
     try:
         resources = collect(cloudformation, args.stack)
     except Exception as error:  # noqa: BLE001  botocore ClientError
-        if "does not exist" in str(error):
-            print(f"Stack {args.stack} does not exist in {args.region}: nothing to tear down (credentials work).")
+        if "does not exist" not in str(error):
+            raise
+        stack_exists = False
+        resources = leftovers(clients, args.stack, args.region)
+        if not resources:
+            print(f"Stack {args.stack} does not exist in {args.region} and nothing is left over: nothing to tear down (credentials work).")
             return 0
-        raise
+        print(f"Stack {args.stack} does not exist in {args.region}, but an earlier failed create left these behind.")
+        print("They keep their names, so the next create fails validation until they are removed.")
     if args.templates_bucket:
         resources.append(("AWS::S3::Bucket", args.templates_bucket))
-    print(f"Stack {args.stack} in {args.region} and these leftovers would be removed:")
+    print(f"{'Stack ' + args.stack + ' and these' if stack_exists else 'These'} would be removed in {args.region}:")
     for kind, name in resources:
         print(f"  {kind.split('::')[-1]:<12} {name}")
     if not args.yes:
@@ -119,9 +168,10 @@ def run(args, session=None) -> int:
     if args.confirm != args.stack:
         print(f"--confirm must be exactly the stack name ({args.stack}); nothing was deleted.", file=sys.stderr)
         return 2
-    print("Deleting the stack...")
-    cloudformation.delete_stack(StackName=args.stack)
-    cloudformation.get_waiter("stack_delete_complete").wait(StackName=args.stack)
+    if stack_exists:
+        print("Deleting the stack...")
+        cloudformation.delete_stack(StackName=args.stack)
+        cloudformation.get_waiter("stack_delete_complete").wait(StackName=args.stack)
     print("Removing retained resources...")
     purge(clients, resources)
     print("Done. The KMS key is scheduled for deletion in 7 days; the stack and its data are gone.")
