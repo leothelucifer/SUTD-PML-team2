@@ -29,6 +29,7 @@ from pathlib import Path
 
 import mlflow
 import pandas as pd
+from mlflow.exceptions import MlflowException
 from mlflow.tracking import MlflowClient
 
 from .data import DYNAMIC, STATIC
@@ -216,7 +217,15 @@ def resolve_model(model_uri: str, tracking_uri: str, download_dir: Path | None =
     """
     name, alias, version = parse_model_uri(model_uri)
     client = _client(tracking_uri)
-    found = client.get_model_version_by_alias(name, alias) if alias else client.get_model_version(name, version)
+    try:
+        found = client.get_model_version_by_alias(name, alias) if alias else client.get_model_version(name, version)
+    except MlflowException as error:
+        ref = f"{name}@{alias}" if alias else f"{name}/{version}"
+        raise ValueError(
+            f"Registered model ref '{ref}' does not exist or could not be resolved in MLflow: {error}. "
+            "Train and promote a model for this account first; "
+            "use 'stack and images only' for a deployment with no model."
+        ) from error
     expected = found.tags.get("bundle_sha256")
     if not expected:
         raise ValueError(f"{name} version {found.version} has no bundle_sha256 tag; refusing to load it")
