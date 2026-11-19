@@ -137,3 +137,31 @@ class TeardownTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StackFailureTests(unittest.TestCase):
+    def test_reports_nested_failures_and_skips_cancellations(self):
+        spec = importlib.util.spec_from_file_location("aws_stack_failures", ROOT / "scripts" / "aws_stack_failures.py")
+        failures = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(failures)
+
+        nested = "arn:aws:cloudformation:ap-southeast-2:1:stack/sepsis-dev-Pipeline-X/abc"
+        events = {
+            "sepsis-dev": [
+                {"StackName": "sepsis-dev", "LogicalResourceId": "Pipeline", "ResourceType": "AWS::CloudFormation::Stack",
+                 "PhysicalResourceId": nested, "ResourceStatus": "CREATE_FAILED",
+                 "ResourceStatusReason": "Embedded stack was not successfully created"},
+                {"StackName": "sepsis-dev", "LogicalResourceId": "Artifacts", "ResourceType": "AWS::CloudFormation::Stack",
+                 "PhysicalResourceId": "", "ResourceStatus": "CREATE_FAILED", "ResourceStatusReason": "Resource creation cancelled"},
+            ],
+            nested: [
+                {"StackName": "sepsis-dev-Pipeline-X", "LogicalResourceId": "TrainingPipeline", "ResourceType": "AWS::StepFunctions::StateMachine",
+                 "PhysicalResourceId": "", "ResourceStatus": "CREATE_FAILED", "ResourceStatusReason": "'null' values are not allowed"},
+            ],
+        }
+        cfn = Namespace(describe_stack_events=lambda StackName, **kw: {"StackEvents": events[StackName]})
+        items = failures.failures(cfn, "sepsis-dev")
+        text = failures.report(items)
+        self.assertIn("'null' values are not allowed", text)
+        self.assertNotIn("cancelled", text)
+        self.assertIn("TrainingPipeline", text)
