@@ -28,6 +28,12 @@ class TemplateTests(unittest.TestCase):
             found = pattern.findall(path.read_text(encoding="utf-8"))
             self.assertEqual(found, [], f"{path.name} has a YAML null value")
 
+    def test_logged_bucket_waits_for_the_log_bucket_policy(self):
+        text = (Path(__file__).resolve().parents[1] / "infra" / "cloudformation" / "artifacts.yaml").read_text(encoding="utf-8")
+        bucket = text.split("  ArtifactBucket:\n", 1)[1].split("\n  ArtifactBucketPolicy:", 1)[0]
+        self.assertIn("LoggingConfiguration", bucket)
+        self.assertIn("DependsOn: AccessLogBucketPolicy", bucket)
+
     def test_the_budget_rule_still_exists(self):
         text = (Path(__file__).resolve().parents[1] / "infra" / "cloudformation" / "monitoring.yaml").read_text(encoding="utf-8")
         self.assertIn("MonthlyBudgetRequiresEmail", rules_block(text))

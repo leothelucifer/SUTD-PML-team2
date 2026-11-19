@@ -75,6 +75,9 @@ Resources:
 
   ArtifactBucket:
     Type: AWS::S3::Bucket
+    # S3 checks the log destination when the logging setting is applied, so the log bucket's policy must
+    # exist first. Without this the bucket fails with "Unable to validate the following destination configurations".
+    DependsOn: AccessLogBucketPolicy
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
