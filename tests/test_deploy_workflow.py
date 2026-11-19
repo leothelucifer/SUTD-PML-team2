@@ -27,6 +27,13 @@ class DeployWorkflowTests(unittest.TestCase):
         gated = [s["name"] for s in self.workflow["jobs"]["deploy"]["steps"] if s.get("if") == "inputs.steps == 'full deploy'"]
         self.assertEqual(gated, ["Publish the promoted model and serve it", "Smoke test the deployed API"])
 
+    def test_verify_is_not_run_as_a_second_failure_after_publish_fails(self):
+        steps = {step["name"]: step for step in self.workflow["jobs"]["deploy"]["steps"] if "name" in step}
+        publish = steps["Publish the promoted model and serve it"]
+        verify = steps["Verify every deployed component"]
+        self.assertEqual(publish["id"], "publish")
+        self.assertIn("steps.publish.outcome == 'success'", verify["if"])
+
     def test_credentials_come_from_oidc_only(self):
         self.assertEqual(self.workflow["permissions"]["id-token"], "write")
         self.assertNotIn("secrets.AWS", self.text)

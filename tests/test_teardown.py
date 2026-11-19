@@ -173,6 +173,29 @@ class TeardownTests(unittest.TestCase):
         text = failures.report(failures.failures(cfn, "arn:aws:cloudformation:r:1:stack/n/x"))
         self.assertIn("bucket already exists", text)
         self.assertIn("ArtifactBucket", text)
+    def test_change_set_failures_show_the_name_conflicts(self):
+        spec = importlib.util.spec_from_file_location("aws_stack_failures", ROOT / "scripts" / "aws_stack_failures.py")
+        failures = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(failures)
+        cfn = Namespace(
+            describe_change_set=lambda StackName, ChangeSetName: {"StatusReason": "Validation failed with 1 error(s)"},
+            describe_events=lambda StackName, ChangeSetName, Filters: {"OperationEvents": [
+                {"ValidationName": "NAME_CONFLICT_VALIDATION", "ValidationPath": "/Resources/StateTable",
+                 "ValidationStatusReason": "Resource of type 'AWS::DynamoDB::Table' with identifier 'x' already exists.",
+                 "ResourceType": "AWS::DynamoDB::Table"}]})
+        text = failures.report(failures.change_set_failures(cfn, "sepsis-dev", "cs-1"))
+        self.assertIn("already exists", text)
+        self.assertIn("StateTable", text)
+
+    def test_deploy_validates_before_it_creates_anything(self):
+        script = (ROOT / "scripts" / "aws_deploy.sh").read_text(encoding="utf-8")
+        self.assertIn("validate-template", script)
+        self.assertIn("--no-execute-changeset", script)
+        workflow = yaml.safe_load((ROOT / ".github" / "workflows" / "deploy.yml").read_text(encoding="utf-8"))
+        names = [step.get("name", "") for step in workflow["jobs"]["deploy"]["steps"]]
+        validate = next(i for i, n in enumerate(names) if n.startswith("Validate the templates"))
+        stack = names.index("Stack and images")
+        self.assertLess(validate, stack)
 
     def test_script_and_workflow_require_confirmation(self):
         script = (ROOT / "scripts" / "aws_deploy.sh").read_text(encoding="utf-8")

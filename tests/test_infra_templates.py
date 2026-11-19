@@ -34,6 +34,20 @@ class TemplateTests(unittest.TestCase):
         self.assertIn("LoggingConfiguration", bucket)
         self.assertIn("DependsOn: AccessLogBucketPolicy", bucket)
 
+    def test_retained_artifacts_use_cloudformation_managed_names(self):
+        text = (Path(__file__).resolve().parents[1] / "infra" / "cloudformation" / "artifacts.yaml").read_text(encoding="utf-8")
+        for property_name in ("BucketName:", "RepositoryName:", "TableName:"):
+            self.assertIsNone(
+                re.search(rf"^      {property_name}", text, flags=re.M),
+                f"fixed {property_name} prevents a clean retry after rollback",
+            )
+
+    def test_deploy_reuses_existing_immutable_image_tags(self):
+        text = (Path(__file__).resolve().parents[1] / "scripts" / "aws_deploy.sh").read_text(encoding="utf-8")
+        self.assertIn("aws ecr describe-images", text)
+        self.assertIn("Reusing existing $target image", text)
+        self.assertIn("docker push --quiet \"$repo:$image_tag\"", text)
+
     def test_the_budget_rule_still_exists(self):
         text = (Path(__file__).resolve().parents[1] / "infra" / "cloudformation" / "monitoring.yaml").read_text(encoding="utf-8")
         self.assertIn("MonthlyBudgetRequiresEmail", rules_block(text))

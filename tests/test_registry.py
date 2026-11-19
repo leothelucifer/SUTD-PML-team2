@@ -132,6 +132,12 @@ class Registry(unittest.TestCase):
         with self.assertRaises(ValueError):
             resolve_model("runs:/abc/model", self.uri)
 
+    def test_missing_production_alias_has_actionable_error(self):
+        from sepsis_warning.registry import resolve_model
+
+        with self.assertRaisesRegex(ValueError, "does not exist.*MLflow.*stack and images only"):
+            resolve_model("models:/sepsis-warning@production", self.uri)
+
 
 if __name__ == "__main__":
     unittest.main()

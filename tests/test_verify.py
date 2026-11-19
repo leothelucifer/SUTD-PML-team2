@@ -1,0 +1,103 @@
+"""aws_verify: finds missing or unhealthy components without touching AWS."""
+
+import importlib.util
+import unittest
+from argparse import Namespace
+from pathlib import Path
+
+import yaml
+
+ROOT = Path(__file__).resolve().parents[1]
+spec = importlib.util.spec_from_file_location("aws_verify", ROOT / "scripts" / "aws_verify.py")
+verify = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(verify)
+
+
+def summary(type_, logical, physical, status="CREATE_COMPLETE"):
+    return {"ResourceType": type_, "LogicalResourceId": logical, "PhysicalResourceId": physical, "ResourceStatus": status}
+
+
+class FakeCloudFormation:
+    def __init__(self, stacks):
+        self.stacks = stacks
+
+    def list_stack_resources(self, StackName, **_):
+        return {"StackResourceSummaries": self.stacks[StackName]}
+
+
+def statuses(result):
+    return {component: status for status, component, _ in result.rows}
+
+
+class VerifyTests(unittest.TestCase):
+    def test_resources_follow_nested_stacks(self):
+        cfn = FakeCloudFormation({
+            "root": [summary("AWS::CloudFormation::Stack", "Artifacts", "arn:aws:cloudformation:r:1:stack/nested/x")],
+            "arn:aws:cloudformation:r:1:stack/nested/x": [summary("AWS::S3::Bucket", "ArtifactBucket", "b")]})
+        found = verify.resources(cfn, "root")
+        self.assertEqual([i["logical"] for i in found], ["Artifacts", "ArtifactBucket"])
+
+    def test_repositories_need_images_and_the_tag(self):
+        items = [{"type": "AWS::ECR::Repository", "physical": name} for name in ("a", "b", "c")]
+        images = {"a": [], "b": [{"imageTags": ["old"]}], "c": [{"imageTags": ["abc123def456"]}]}
+        ecr = Namespace(describe_images=lambda repositoryName: {"imageDetails": images[repositoryName]})
+        result = verify.Result()
+        verify.check_repositories(result, ecr, items, "abc123def456")
+        self.assertEqual(statuses(result), {"ECR a": "FAIL", "ECR b": "FAIL", "ECR c": "PASS"})
+        self.assertTrue(result.failed())
+
+    def test_pending_email_is_a_warning_not_a_failure(self):
+        items = [{"type": "AWS::SNS::Topic", "logical": "AlarmTopic", "physical": "arn:topic"},
+                 {"type": "AWS::CloudWatch::Alarm", "logical": "A", "physical": "alarm-1"}]
+        sns = Namespace(list_subscriptions_by_topic=lambda TopicArn: {"Subscriptions": [{"SubscriptionArn": "PendingConfirmation"}]})
+        cloudwatch = Namespace(describe_alarms=lambda AlarmNames: {"MetricAlarms": [{"AlarmName": "alarm-1", "StateValue": "INSUFFICIENT_DATA"}]})
+        result = verify.Result()
+        verify.check_alerts(result, sns, cloudwatch, items)
+        self.assertEqual(statuses(result), {"SNS AlarmTopic": "WARN", "CloudWatch alarms": "PASS"})
+        self.assertFalse(result.failed())
+
+    def test_a_firing_alarm_fails(self):
+        items = [{"type": "AWS::CloudWatch::Alarm", "logical": "A", "physical": "alarm-1"}]
+        cloudwatch = Namespace(describe_alarms=lambda AlarmNames: {"MetricAlarms": [{"AlarmName": "alarm-1", "StateValue": "ALARM"}]})
+        result = verify.Result()
+        verify.check_alerts(result, Namespace(), cloudwatch, items)
+        self.assertEqual(statuses(result)["CloudWatch alarms"], "FAIL")
+
+    def test_the_scoring_function_is_only_required_after_a_full_deploy(self):
+        for expect, wanted in ((False, "WARN"), (True, "FAIL")):
+            result = verify.Result()
+            verify.check_function(result, Namespace(), [], {}, expect)
+            self.assertEqual(statuses(result)["Lambda scoring function"], wanted)
+
+    def test_a_healthy_function_and_signed_call_pass(self):
+        items = [{"type": "AWS::Lambda::Function", "logical": "ScoringFunction", "physical": "sepsis-dev-scoring"}]
+        client = Namespace(get_function_configuration=lambda FunctionName: {"State": "Active", "PackageType": "Image"},
+                           get_function_url_config=lambda FunctionName: {"AuthType": "AWS_IAM"})
+        result = verify.Result()
+        verify.check_function(result, client, items, {"ApiBaseUrl": "https://x.lambda-url.r.on.aws/"}, True,
+                              lambda url: {"model_name": "m", "bundle_sha256": "a" * 64, "synthetic_model": False})
+        self.assertEqual(set(statuses(result).values()), {"PASS"})
+
+    def test_an_unreadable_resource_is_reported_not_raised(self):
+        s3 = Namespace(get_bucket_versioning=lambda Bucket: (_ for _ in ()).throw(RuntimeError("AccessDenied")))
+        result = verify.Result()
+        verify.check_buckets(result, s3, [{"type": "AWS::S3::Bucket", "physical": "x-artifacts"}] * 2)
+        self.assertTrue(result.failed())
+        self.assertIn("AccessDenied", result.table())
+
+    def test_missing_outputs_fail(self):
+        result = verify.Result()
+        verify.check_outputs(result, {"ArtifactBucketName": "b"}, False)
+        self.assertTrue(result.failed())
+
+    def test_script_and_workflows(self):
+        self.assertIn("aws_verify.py", (ROOT / "scripts" / "aws_deploy.sh").read_text(encoding="utf-8"))
+        workflow = yaml.safe_load((ROOT / ".github" / "workflows" / "verify.yml").read_text(encoding="utf-8"))
+        self.assertEqual(workflow["permissions"]["id-token"], "write")
+        self.assertIn("ap-southeast-2", workflow[True]["workflow_dispatch"]["inputs"]["region"]["options"])
+        deploy = yaml.safe_load((ROOT / ".github" / "workflows" / "deploy.yml").read_text(encoding="utf-8"))
+        self.assertEqual(deploy["jobs"]["deploy"]["steps"][-1]["name"], "Verify every deployed component")
+
+
+if __name__ == "__main__":
+    unittest.main()

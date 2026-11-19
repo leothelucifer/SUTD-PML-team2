@@ -114,6 +114,16 @@ jobs:
           python -m pip install --no-deps -e .
           python -m pip install "sagemaker-mlflow>=0.5,<1"
 
+      - name: Validate the templates and preview the stack (creates nothing)
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          CONFIRM_PROD: ${{ inputs.environment == 'prod' && 'yes' || '' }}
+          AWS_REGION: ${{ steps.target.outputs.region }}
+          BUDGET_EMAIL: ${{ vars.BUDGET_EMAIL }}
+          ALERT_EMAIL: ${{ vars.ALERT_EMAIL }}
+          TAG: ${{ github.sha }}
+        run: bash scripts/aws_deploy.sh validate
+
       - name: Stack and images
         env:
           ENVIRONMENT: ${{ inputs.environment }}
@@ -129,6 +139,7 @@ jobs:
           bash scripts/aws_deploy.sh images
 
       - name: Publish the promoted model and serve it
+        id: publish
         if: inputs.steps == 'full deploy'
         env:
           ENVIRONMENT: ${{ inputs.environment }}
@@ -152,3 +163,12 @@ jobs:
           bash scripts/aws_deploy.sh call GET /health
           bash scripts/aws_deploy.sh call POST /predict \
             '{"stays": [{"patient_id": "smoke-1", "hours": [{"ICULOS": 1, "HR": 92}, {"ICULOS": 2, "HR": 118}]}]}'
+
+      - name: Verify every deployed component
+        if: always() && steps.target.outcome == 'success' && (inputs.steps != 'full deploy' || steps.publish.outcome == 'success')
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          AWS_REGION: ${{ steps.target.outputs.region }}
+          TAG: ${{ github.sha }}
+          FULL: ${{ inputs.steps == 'full deploy' && '--expect-model' || '' }}
+        run: bash scripts/aws_deploy.sh verify $FULL
