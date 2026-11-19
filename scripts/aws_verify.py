@@ -141,10 +141,11 @@ def check_repositories(result: Result, ecr, items: list[dict], tag: str | None) 
             tags = sorted({t for image in images for t in image.get("imageTags", [])})
             if not images:
                 result.add("FAIL", f"ECR {name}", "no image pushed (run the images step)")
-            elif tag and tag not in tags:
-                result.add("FAIL", f"ECR {name}", f"{len(images)} image(s) but none tagged {tag[:12]}")
+            elif tag and not any(t == tag or t.endswith("-" + tag) for t in tags):
+                # images are tagged <kind>-<commit> (training-, lambda-, scoring-), so match the commit at the end
+                result.add("FAIL", f"ECR {name}", f"{len(images)} image(s) but none for commit {tag[:12]}")
             else:
-                result.add("PASS", f"ECR {name}", f"{len(images)} image(s), tags: {', '.join(t[:12] for t in tags[:3])}")
+                result.add("PASS", f"ECR {name}", f"{len(images)} image(s), including this commit's")
 
         guarded(result, f"ECR {name}", check)
 
