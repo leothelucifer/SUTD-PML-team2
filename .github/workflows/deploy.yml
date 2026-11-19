@@ -114,6 +114,16 @@ jobs:
           python -m pip install --no-deps -e .
           python -m pip install "sagemaker-mlflow>=0.5,<1"
 
+      - name: Validate the templates and preview the stack (creates nothing)
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          CONFIRM_PROD: ${{ inputs.environment == 'prod' && 'yes' || '' }}
+          AWS_REGION: ${{ steps.target.outputs.region }}
+          BUDGET_EMAIL: ${{ vars.BUDGET_EMAIL }}
+          ALERT_EMAIL: ${{ vars.ALERT_EMAIL }}
+          TAG: ${{ github.sha }}
+        run: bash scripts/aws_deploy.sh validate
+
       - name: Stack and images
         env:
           ENVIRONMENT: ${{ inputs.environment }}

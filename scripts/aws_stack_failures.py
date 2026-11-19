@@ -58,14 +58,45 @@ def report(items: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def change_set_failures(cloudformation, stack: str, change_set: str) -> list[dict]:
+    """Why a change set could not be created (for example a name that is already taken)."""
+    found = []
+    try:
+        described = cloudformation.describe_change_set(StackName=stack, ChangeSetName=change_set)
+        if described.get("StatusReason"):
+            found.append({"stack": stack, "logical": f"change set {change_set}", "type": "change set",
+                          "reason": described["StatusReason"], "time": None})
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        page = cloudformation.describe_events(StackName=stack, ChangeSetName=change_set, Filters={"FailedEvents": True})
+    except Exception:  # noqa: BLE001  an older SDK or CLI without this API
+        return found
+    for event in page.get("OperationEvents", []):
+        reason = event.get("ValidationStatusReason") or event.get("ResourceStatusReason")
+        if reason:
+            where = event.get("ValidationPath") or event.get("LogicalResourceId") or ""
+            found.append({"stack": stack, "logical": f"{event.get('ValidationName', 'validation')} {where}".strip(),
+                          "type": event.get("ResourceType", "validation"), "reason": reason, "time": event.get("Timestamp")})
+    return found
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--stack", required=True)
     parser.add_argument("--region", default=None)
+    parser.add_argument("--change-set", default=None, help="A failed change set of the stack to explain")
     args = parser.parse_args(argv)
     import boto3
 
-    text = report(failures(boto3.Session(region_name=args.region).client("cloudformation"), args.stack))
+    cloudformation = boto3.Session(region_name=args.region).client("cloudformation")
+    items = change_set_failures(cloudformation, args.stack, args.change_set) if args.change_set else []
+    try:
+        items += failures(cloudformation, args.stack)
+    except Exception as error:  # noqa: BLE001  a stack that never got created has no events
+        if not items:
+            items.append({"stack": args.stack, "logical": "stack", "type": "", "reason": str(error), "time": None})
+    text = report(items)
     print(text)
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:

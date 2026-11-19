@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Serverless AWS workflow for the research platform (see docs/aws-serverless.md).
 #
+#   bash scripts/aws_deploy.sh validate              check every template with CloudFormation and preview the stack (creates nothing)
 #   bash scripts/aws_deploy.sh stack                 create/update the stack (storage, MLflow App, roles, budget)
 #   bash scripts/aws_deploy.sh images                build and push the lambda, training and scoring images
 #   bash scripts/aws_deploy.sh data [DIR]            upload combined.parquet + splits.csv (+ summary) for training
@@ -98,10 +99,40 @@ for key, value in json.load(open(sys.argv[1])).items():
   if ! aws cloudformation deploy --stack-name "$STACK" --template-file "$STATE/packaged.yaml" \
     --capabilities CAPABILITY_IAM CAPABILITY_AUTO_EXPAND --no-fail-on-empty-changeset \
     --parameter-overrides "${params[@]}" "${extra[@]}"; then
-    "$PYTHON" "$ROOT/scripts/aws_stack_failures.py" --stack "$STACK" --region "$AWS_REGION" || true
+    local failed_set
+    failed_set="$(aws cloudformation list-change-sets --stack-name "$STACK" \
+      --query "Summaries[?Status=='FAILED'] | [-1].ChangeSetName" --output text 2>/dev/null | sed 's/^None$//' || true)"
+    "$PYTHON" "$ROOT/scripts/aws_stack_failures.py" --stack "$STACK" --region "$AWS_REGION" ${failed_set:+--change-set "$failed_set"} || true
     fail "stack $STACK could not be created or updated; the reasons are listed above"
   fi
-  cmd_outputs
+  [ -n "${PREVIEW:-}" ] || cmd_outputs
+}
+
+# Check every template with CloudFormation itself, then preview the stack as a change set. CloudFormation runs its
+# own checks when it builds the change set (for example "a bucket with this name already exists"), so mistakes show
+# up here in seconds and nothing is created or billed. cfn-lint cannot see any of this.
+cmd_validate() {
+  local file
+  for file in "$ROOT"/infra/cloudformation/*.yaml; do
+    echo "validate-template $(basename "$file")"
+    aws cloudformation validate-template --template-body "file://$file" >/dev/null \
+      || fail "$(basename "$file") is not a valid CloudFormation template"
+  done
+  echo "Previewing stack $STACK as a change set (nothing is created)"
+  local ok=0
+  PREVIEW=1 cmd_stack --no-execute-changeset || ok=1
+  # Leave nothing behind: drop the unexecuted change sets, and the empty stack a first preview creates.
+  local name
+  for name in $(aws cloudformation list-change-sets --stack-name "$STACK" \
+      --query "Summaries[?starts_with(ChangeSetName, 'awscli-cloudformation-package-deploy')].ChangeSetName" --output text 2>/dev/null); do
+    aws cloudformation delete-change-set --stack-name "$STACK" --change-set-name "$name" >/dev/null 2>&1 || true
+  done
+  if [ "$(aws cloudformation describe-stacks --stack-name "$STACK" --query 'Stacks[0].StackStatus' --output text 2>/dev/null || true)" = REVIEW_IN_PROGRESS ]; then
+    aws cloudformation delete-stack --stack-name "$STACK"
+    aws cloudformation wait stack-delete-complete --stack-name "$STACK" || true
+  fi
+  [ "$ok" = 0 ] || exit 1
+  echo "OK: the templates are valid and the stack preview passed"
 }
 
 cmd_outputs() {
@@ -229,6 +260,7 @@ cmd_destroy() {
 }
 
 case "${1:-}" in
+  validate) cmd_validate ;;
   stack) shift; cmd_stack "$@" ;;
   outputs) cmd_outputs ;;
   images) cmd_images ;;
