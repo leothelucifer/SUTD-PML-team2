@@ -122,7 +122,7 @@ for the commit, starts the Step Functions pipeline and follows it. Everything el
 
 | Step | What it does | Output in S3 |
 |---|---|---|
-| Prepare data | `synthetic`: the software fixture. `physionet`: downloads the public Challenge 2019 training sets, builds `combined.parquet`, saves the patient split. Untick `prepare` to reuse data already there. | `data/physionet/` |
+| Prepare data | `synthetic`: the software fixture. `physionet`: the workflow first copies the public Challenge 2019 training sets from the AWS Open Data bucket into yours (`aws s3 sync`, a server-side S3-to-S3 copy, no web download), then the job reads that copy, builds `combined.parquet` and saves the patient split. `physionet-web` downloads over HTTPS instead. Untick `prepare` to reuse data already there. | `raw/physionet/`, then `data/physionet/` |
 | Tune | Patient-grouped cross-validation on the train split only, logged to the MLflow App. `trials` 0 keeps the default settings. | `tuning/<run>/tuned_models.toml` |
 | Train + report | Fits every candidate with the tuned settings, selects on validation, registers `@candidate` (only if the promotion gates pass), then writes the metrics table and PR curves. | `reports/<run>/` |
 | Approval | An email with a token and the report location. A reviewer who is not the trainer runs `aws_deploy.sh promote <version> "<name>"`, then `aws_deploy.sh approve <token>`. | |

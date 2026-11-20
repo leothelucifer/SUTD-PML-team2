@@ -106,6 +106,11 @@ class StartScriptTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual((sent["require_real_data"], sent["prepare"], sent["limit"], sent["trials"]), ("true", "false", "500", "0"))
 
+    def test_the_web_download_is_still_available_and_counts_as_real_data(self):
+        result, sent = self.run_script(DATA_SOURCE="physionet-web")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((sent["data_source"], sent["require_real_data"]), ("physionet-web", "true"))
+
     def test_bad_values_are_refused_before_anything_starts(self):
         for env in ({"DATA_SOURCE": "other"}, {"PREPARE": "maybe"}, {"TRIALS": "6; rm -rf /"}, {"LIMIT": "-1"}):
             result, sent = self.run_script(**env)
@@ -113,11 +118,41 @@ class StartScriptTests(unittest.TestCase):
             self.assertIsNone(sent, env)
 
 
+class FetchDataTests(unittest.TestCase):
+    def test_fetch_data_copies_s3_to_s3_and_checks_the_counts(self):
+        with tempfile.TemporaryDirectory() as temp:
+            temp = Path(temp)
+            log = temp / "calls.log"
+            fake = temp / "aws"
+            fake.write_text(
+                "#!/usr/bin/env bash\n"
+                "echo \"$@\" >> \"$CALLS\"\n"
+                "if [ \"$1\" = cloudformation ]; then echo my-artifact-bucket; exit 0; fi\n"
+                "if [ \"$1\" = s3 ] && [ \"$2\" = ls ]; then\n"
+                "  case \"$3\" in *training_setA/) echo 'Total Objects: 20336';; *) echo 'Total Objects: ' $COUNT_B;; esac; exit 0; fi\n"
+                "exit 0\n")
+            fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+            env = {**os.environ, "PATH": f"{temp}:{os.environ['PATH']}", "AWS_REGION": "ap-southeast-2", "ENVIRONMENT": "dev",
+                   "CALLS": str(log), "COUNT_B": "20000"}
+            result = subprocess.run(["bash", str(ROOT / "scripts" / "aws_deploy.sh"), "fetch-data"], env=env,
+                                    capture_output=True, text=True, cwd=ROOT)
+            self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+            calls = log.read_text()
+            self.assertIn("s3 sync s3://physionet-open/challenge-2019/1.0.0/training/training_setA/ "
+                          "s3://my-artifact-bucket/raw/physionet/training/training_setA/ --source-region us-east-1", calls)
+            self.assertNotIn("no-sign-request", calls)  # our credentials write to our bucket
+            env["COUNT_B"] = "19999"
+            short = subprocess.run(["bash", str(ROOT / "scripts" / "aws_deploy.sh"), "fetch-data"], env=env,
+                                   capture_output=True, text=True, cwd=ROOT)
+            self.assertNotEqual(short.returncode, 0)
+            self.assertIn("expected 20000", short.stderr + short.stdout)
+
+
 class WorkflowTests(unittest.TestCase):
     def test_pipeline_workflow(self):
         workflow = yaml.safe_load((ROOT / ".github" / "workflows" / "pipeline.yml").read_text(encoding="utf-8"))
         inputs = workflow[True]["workflow_dispatch"]["inputs"]
-        self.assertEqual(inputs["data_source"]["options"], ["synthetic", "physionet"])
+        self.assertEqual(inputs["data_source"]["options"], ["synthetic", "physionet", "physionet-web"])
         self.assertEqual(inputs["trials"]["default"], "6")
         self.assertEqual(inputs["instance_type"]["default"], "ml.m5.large")
         self.assertEqual(workflow["permissions"]["id-token"], "write")
@@ -125,6 +160,10 @@ class WorkflowTests(unittest.TestCase):
         self.assertLess(names.index("Build the images for this commit (skipped when they already exist)"),
                         names.index("Run the pipeline and follow it"))
         self.assertEqual(workflow["jobs"]["pipeline"]["environment"], "${{ inputs.environment }}")
+        copy = next(step for step in workflow["jobs"]["pipeline"]["steps"] if step.get("name", "").startswith("Copy the PhysioNet data"))
+        self.assertIn("physionet", copy["if"])
+        self.assertIn("fetch-data", copy["run"])
+        self.assertLess(names.index(copy["name"]), names.index("Run the pipeline and follow it"))
 
 
 if __name__ == "__main__":

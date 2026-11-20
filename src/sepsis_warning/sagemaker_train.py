@@ -126,11 +126,45 @@ def _upload(directory: Path, bucket: str, prefix: str, names: set | None = None,
     return uris
 
 
+def fetch_raw_from_s3(bucket: str, prefix: str, destination: Path, limit: int, seed: int, client=None, workers: int = 16) -> int:
+    """Read the PhysioNet records from our own bucket (copied there by `aws_deploy.sh fetch-data`).
+
+    A same-region S3 read, not a web download: ``prefix`` holds training_setA/ and training_setB/. ``limit`` caps
+    stays per hospital (0 = all), sampled with ``seed``. Returns the number of files fetched.
+    """
+    import random
+    from concurrent.futures import ThreadPoolExecutor
+
+    client = client or S3_CLIENT
+    if client is None:
+        import boto3
+
+        client = boto3.client("s3")
+    rng, jobs = random.Random(seed), []
+    for hospital in ("A", "B"):
+        folder = f"{prefix.strip('/')}/training_set{hospital}/"
+        keys = sorted(item["Key"] for page in client.get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix=folder)
+                      for item in page.get("Contents", []) if item["Key"].endswith(".psv"))
+        if not keys:
+            raise ValueError(f"no records under s3://{bucket}/{folder}; run the pipeline workflow (it copies the "
+                             "PhysioNet data first) or `bash scripts/aws_deploy.sh fetch-data`")
+        if limit:
+            keys = sorted(rng.sample(keys, min(limit, len(keys))))
+        target = destination / f"training_set{hospital}"
+        target.mkdir(parents=True, exist_ok=True)
+        jobs += [(key, target / key.rsplit("/", 1)[-1]) for key in keys]
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        list(pool.map(lambda job: client.download_file(bucket, job[0], str(job[1])), jobs))
+    return len(jobs)
+
+
 def prepare_data(root: Path, params: dict, client=None) -> list[str]:
     """Pipeline step 1: build the data in S3 so nothing has to be prepared on a laptop.
 
-    ``data_source`` is ``synthetic`` (the software fixture; ``synthetic_stays`` sets its size) or ``physionet``
-    (downloads the public Challenge 2019 training sets; ``limit`` caps stays per hospital, 0 = all). The records
+    ``data_source`` is ``synthetic`` (the software fixture; ``synthetic_stays`` sets its size), ``physionet`` (the
+    public Challenge 2019 training sets, read from ``raw_prefix`` in our bucket where the pipeline workflow copied
+    them from the open-data bucket) or ``physionet-web`` (downloads them over HTTPS instead). ``limit`` caps stays
+    per hospital, 0 = all. The records
     are combined into ``combined.parquet`` with the saved patient split ``splits.csv`` and uploaded to
     ``data_prefix`` of ``publish_bucket``.
     """
@@ -149,11 +183,15 @@ def prepare_data(root: Path, params: dict, client=None) -> list[str]:
         stays = int(params.get("synthetic_stays", 600))
         generate_synthetic(raw, seed=seed, source_size=stays, external_size=max(1, stays // 2))
     elif source == "physionet":
+        count = fetch_raw_from_s3(bucket, params.get("raw_prefix", "raw/physionet/training"), raw,
+                                  int(params.get("limit", 0)), seed, client=client)
+        print(f"Read {count} records from s3://{bucket}/{params.get('raw_prefix', 'raw/physionet/training')}", flush=True)
+    elif source == "physionet-web":
         from .download import download
 
         download(raw, limit=int(params.get("limit", 0)), seed=seed, workers=8)
     else:
-        raise ValueError(f"data_source must be synthetic or physionet, not {source!r}")
+        raise ValueError(f"data_source must be synthetic, physionet or physionet-web, not {source!r}")
     built = root / "work" / "built"
     built.mkdir(parents=True, exist_ok=True)
     prepare_parquet(raw, built / "combined.parquet")

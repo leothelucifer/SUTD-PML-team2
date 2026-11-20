@@ -5,6 +5,7 @@
 #   bash scripts/aws_deploy.sh verify [--expect-model]  check that every deployed component exists and is healthy (read-only)
 #   bash scripts/aws_deploy.sh stack                 create/update the stack (storage, MLflow App, roles, budget)
 #   bash scripts/aws_deploy.sh images                build and push the lambda, training and scoring images
+#   bash scripts/aws_deploy.sh fetch-data            copy PhysioNet Challenge 2019 from the open-data S3 bucket into ours (server-side copy)
 #   bash scripts/aws_deploy.sh data [DIR]            upload combined.parquet + splits.csv (+ summary) for training
 #   bash scripts/aws_deploy.sh train [ARGS...]       SageMaker training job on spot; registers @candidate
 #   bash scripts/aws_deploy.sh mlflow-ui             print a short-lived link to the MLflow App UI
@@ -179,6 +180,23 @@ cmd_data() {
   echo "Uploaded to s3://$bucket/data/physionet/ (encrypted with the stack's KMS key)"
 }
 
+# Copy the public PhysioNet Challenge 2019 training sets into our own bucket with S3's server-side copy: no web download,
+# nothing passes through this machine. The source is the AWS Open Data bucket (us-east-1, public, CC BY 4.0). Re-running
+# only copies what is missing. The pipeline's `prepare` step then reads these records.
+cmd_fetch_data() {
+  local bucket source="s3://physionet-open/challenge-2019/1.0.0/training" set count
+  bucket="$(output ArtifactBucketName)"; [ -n "$bucket" ] || fail "no ArtifactBucketName output; deploy the stack first"
+  for set in A B; do
+    echo "Copying $source/training_set$set/ to s3://$bucket/raw/physionet/training/training_set$set/"
+    aws s3 sync "$source/training_set$set/" "s3://$bucket/raw/physionet/training/training_set$set/" \
+      --source-region us-east-1 --region "$AWS_REGION" --only-show-errors
+    count="$(aws s3 ls "s3://$bucket/raw/physionet/training/training_set$set/" --recursive --summarize | awk '/Total Objects/ {print $3}')"
+    local expected=20336; [ "$set" = B ] && expected=20000
+    echo "training_set$set: $count records (expected $expected)"
+    [ "$count" = "$expected" ] || fail "training_set$set has $count records, expected $expected; run fetch-data again"
+  done
+}
+
 cmd_train() {
   "$PYTHON" "$ROOT/scripts/sagemaker_train.py" --stack "$STACK" --region "$AWS_REGION" \
     --image-tag "training-$TAG" --wait "$@"
@@ -221,10 +239,11 @@ cmd_call() {
 
 cmd_pipeline() {
   local arn; arn="$(output PipelineArn)"; [ -n "$arn" ] || fail "stack has no pipeline (EnablePipeline=true)"
-  # DATA_SOURCE=synthetic|physionet  PREPARE=true|false (false reuses the data already in S3)
+  # DATA_SOURCE=synthetic|physionet|physionet-web  (physionet reads the copy made by `fetch-data`; physionet-web downloads over HTTPS)
+  # PREPARE=true|false (false reuses the data already in S3)
   # LIMIT=stays per hospital to download (0 = all)  TRIALS=hyperparameter trials per model (0 = defaults)
   local source="${DATA_SOURCE:-synthetic}" prepare="${PREPARE:-true}" limit="${LIMIT:-0}" trials="${TRIALS:-6}" real=false
-  case "$source" in synthetic) ;; physionet) real=true ;; *) fail "DATA_SOURCE must be synthetic or physionet" ;; esac
+  case "$source" in synthetic) ;; physionet|physionet-web) real=true ;; *) fail "DATA_SOURCE must be synthetic, physionet or physionet-web" ;; esac
   case "$prepare" in true|false) ;; *) fail "PREPARE must be true or false" ;; esac
   case "$limit$trials" in *[!0-9]*) fail "LIMIT and TRIALS must be whole numbers" ;; esac
   local instance_type="${INSTANCE_TYPE:-ml.m5.large}"
@@ -319,6 +338,7 @@ case "${1:-}" in
   outputs) cmd_outputs ;;
   images) cmd_images ;;
   data) shift; cmd_data "$@" ;;
+  fetch-data) cmd_fetch_data ;;
   train) shift; cmd_train "$@" ;;
   mlflow-ui) cmd_mlflow_ui ;;
   promote) shift; cmd_promote "$@" ;;

@@ -20,16 +20,16 @@ on:
         options: [environment default, ap-southeast-1, ap-southeast-2]
         default: environment default
       data_source:
-        description: synthetic = the software fixture (a rehearsal); physionet = the real data, downloaded in AWS
+        description: synthetic = the software fixture (a rehearsal); physionet = the real data, copied from the open-data S3 bucket; physionet-web = the real data over HTTPS
         type: choice
-        options: [synthetic, physionet]
+        options: [synthetic, physionet, physionet-web]
         default: synthetic
       prepare:
         description: Build the data first (untick to reuse the data already in S3)
         type: boolean
         default: true
       limit:
-        description: PhysioNet only. Stays per hospital to download, 0 = all
+        description: PhysioNet only. Stays per hospital to use, 0 = all
         default: "0"
       trials:
         description: Hyperparameter trials per model, 0 = keep the default settings
@@ -104,6 +104,13 @@ jobs:
           AWS_REGION: ${{ steps.target.outputs.region }}
           TAG: ${{ github.sha }}
         run: bash scripts/aws_deploy.sh images
+
+      - name: Copy the PhysioNet data into our bucket (S3 to S3, no web download)
+        if: inputs.data_source == 'physionet' && inputs.prepare
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          AWS_REGION: ${{ steps.target.outputs.region }}
+        run: bash scripts/aws_deploy.sh fetch-data
 
       - name: Run the pipeline and follow it
         env:
