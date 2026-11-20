@@ -227,9 +227,11 @@ cmd_pipeline() {
   case "$source" in synthetic) ;; physionet) real=true ;; *) fail "DATA_SOURCE must be synthetic or physionet" ;; esac
   case "$prepare" in true|false) ;; *) fail "PREPARE must be true or false" ;; esac
   case "$limit$trials" in *[!0-9]*) fail "LIMIT and TRIALS must be whole numbers" ;; esac
+  local instance_type="${INSTANCE_TYPE:-ml.m5.large}"
+  case "$instance_type" in ml.*) ;; *) fail "INSTANCE_TYPE must be a SageMaker instance type" ;; esac
   local input
-  input="$(printf '{"image_tag": "training-%s", "git_commit": "%s", "require_real_data": "%s", "prepare": "%s", "data_source": "%s", "limit": "%s", "trials": "%s"}' \
-    "$TAG" "$(git -C "$ROOT" rev-parse HEAD)" "$real" "$prepare" "$source" "$limit" "$trials")"
+  input="$(printf '{"image_tag": "training-%s", "git_commit": "%s", "require_real_data": "%s", "prepare": "%s", "data_source": "%s", "limit": "%s", "trials": "%s", "instance_type": "%s"}' \
+    "$TAG" "$(git -C "$ROOT" rev-parse HEAD)" "$real" "$prepare" "$source" "$limit" "$trials" "$instance_type")"
   local execution
   execution="$(aws stepfunctions start-execution --state-machine-arn "$arn" --query executionArn --output text --input "$input")"
   echo "$execution"

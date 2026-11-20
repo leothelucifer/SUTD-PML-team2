@@ -22,7 +22,7 @@ Parameters:
     Type: String
   InstanceType:
     Type: String
-    Default: ml.m5.xlarge
+    Default: ml.m5.large
   DataPrefix:
     Type: String
     Default: data/physionet
@@ -92,7 +92,8 @@ Resources:
         Comment: >-
           Input (all values are strings): {"image_tag": "training-<git sha>", "git_commit": "<sha>",
           "require_real_data": "true|false", "prepare": "true|false", "data_source": "synthetic|physionet",
-          "limit": "0", "trials": "6"}. prepare=false reuses the data already in S3; trials=0 skips the search.
+          "limit": "0", "trials": "6", "instance_type": "ml.m5.large"}.
+          prepare=false reuses the data already in S3; trials=0 skips the search.
         StartAt: CheckPrepare
         States:
           CheckPrepare:
@@ -127,7 +128,7 @@ Resources:
                 S3OutputPath: s3://${Bucket}/training-output/
                 KmsKeyId: ${KmsKey}
               ResourceConfig:
-                InstanceType: ${InstanceType}
+                InstanceType.$: $.instance_type
                 InstanceCount: 1
                 VolumeSizeInGB: 30
                 VolumeKmsKeyId: ${KmsKey}
@@ -172,7 +173,7 @@ Resources:
                 S3OutputPath: s3://${Bucket}/training-output/
                 KmsKeyId: ${KmsKey}
               ResourceConfig:
-                InstanceType: ${InstanceType}
+                InstanceType.$: $.instance_type
                 InstanceCount: 1
                 VolumeSizeInGB: 30
                 VolumeKmsKeyId: ${KmsKey}
@@ -228,7 +229,7 @@ Resources:
                 S3OutputPath: s3://${Bucket}/training-output/
                 KmsKeyId: ${KmsKey}
               ResourceConfig:
-                InstanceType: ${InstanceType}
+                InstanceType.$: $.instance_type
                 InstanceCount: 1
                 VolumeSizeInGB: 30
                 VolumeKmsKeyId: ${KmsKey}
@@ -291,7 +292,7 @@ Resources:
                 S3OutputPath: s3://${Bucket}/training-output/
                 KmsKeyId: ${KmsKey}
               ResourceConfig:
-                InstanceType: ${InstanceType}
+                InstanceType.$: $.instance_type
                 InstanceCount: 1
                 VolumeSizeInGB: 30
                 VolumeKmsKeyId: ${KmsKey}
