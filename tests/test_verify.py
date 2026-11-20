@@ -95,6 +95,15 @@ class VerifyTests(unittest.TestCase):
             verify.check_pipeline(result, sfn, items)
             self.assertEqual(statuses(result)["Pipeline run"], expected, latest)
 
+    def test_a_zero_training_quota_is_flagged_before_the_pipeline_fails(self):
+        quotas = [{"QuotaName": "ml.m5.xlarge for training job usage", "Value": 0.0},
+                  {"QuotaName": "ml.m5.xlarge for spot training job usage", "Value": 2.0}]
+        client = Namespace(get_paginator=lambda _: Namespace(paginate=lambda ServiceCode: [{"Quotas": quotas}]))
+        result = verify.Result()
+        verify.check_quotas(result, client)
+        self.assertEqual(sorted(statuses(result).values()), ["PASS", "WARN"])
+        self.assertIn("request an increase", result.table())
+
     def test_missing_outputs_fail(self):
         result = verify.Result()
         verify.check_outputs(result, {"ArtifactBucketName": "b"}, False)
