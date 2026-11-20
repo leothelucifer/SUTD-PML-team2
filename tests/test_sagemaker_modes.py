@@ -21,6 +21,21 @@ class FakeS3:
         self.root = root
         self.uploaded = []
 
+    def get_paginator(self, _):
+        outer = self
+
+        class Pages:
+            def paginate(self, Bucket, Prefix):
+                base = outer.root / Bucket
+                keys = sorted(p.relative_to(base).as_posix() for p in base.rglob("*") if p.is_file()
+                              and p.relative_to(base).as_posix().startswith(Prefix))
+                yield {"Contents": [{"Key": key} for key in keys]}
+
+        return Pages()
+
+    def download_file(self, bucket, key, filename):
+        shutil.copyfile(self.root / bucket / key, filename)
+
     def upload_file(self, filename, bucket, key):
         target = self.root / bucket / key
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -84,6 +99,35 @@ class ModeTests(unittest.TestCase):
             out = sagemaker_train.tune_data(root, sagemaker_train._params(root), sagemaker_train.build_args(root), client=s3)
             self.assertIn("logistic_regression", (out / "tuned_models.toml").read_text())
             self.assertIn("bkt/tuning/r/tuned_models.toml", s3.uploaded)
+
+    def test_physionet_is_read_from_our_bucket_not_the_web(self):
+        from sepsis_warning.data import generate_synthetic
+
+        with tempfile.TemporaryDirectory() as temp:
+            temp = Path(temp)
+            s3 = FakeS3(temp / "s3")
+            source = temp / "source"
+            generate_synthetic(source, source_size=100, external_size=40)
+            for hospital in ("A", "B"):  # stands in for the copy made by `aws_deploy.sh fetch-data`
+                for record in sorted((source / f"training_set{hospital}").glob("*.psv")):
+                    target = temp / "s3" / "bkt" / "raw" / "physionet" / "training" / f"training_set{hospital}" / record.name
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(record, target)
+            root = temp / "prepare"
+            with mock.patch("sepsis_warning.download.download", side_effect=AssertionError("no web download")):
+                uris = sagemaker_train.prepare_data(root, {"data_source": "physionet", "publish_bucket": "bkt", "seed": 42}, client=s3)
+            self.assertIn("s3://bkt/data/physionet/combined.parquet", uris)
+            # the same records, capped per hospital
+            limited = sagemaker_train.fetch_raw_from_s3("bkt", "raw/physionet/training", temp / "limited", 5, 42, client=s3)
+            self.assertEqual(limited, 10)
+            self.assertEqual(len(list((temp / "limited" / "training_setA").glob("*.psv"))), 5)
+
+    def test_an_empty_raw_prefix_says_how_to_fill_it(self):
+        with tempfile.TemporaryDirectory() as temp:
+            temp = Path(temp)
+            with self.assertRaises(ValueError) as caught:
+                sagemaker_train.fetch_raw_from_s3("bkt", "raw/physionet/training", temp / "raw", 0, 42, client=FakeS3(temp / "s3"))
+            self.assertIn("fetch-data", str(caught.exception))
 
     def test_unknown_data_source_and_missing_bucket_are_refused(self):
         with tempfile.TemporaryDirectory() as temp:

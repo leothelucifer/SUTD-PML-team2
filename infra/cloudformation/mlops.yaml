@@ -112,6 +112,7 @@ Resources:
                 Resource:
                   - !Sub "${ArtifactBucketArn}/data/*"
                   - !Sub "${ArtifactBucketArn}/tuning/*"
+                  - !Sub "${ArtifactBucketArn}/raw/*"
               # Pipeline steps: prepare builds the data in S3, tune writes tuned settings, train writes the report.
               - Sid: WritePipelineArtifacts
                 Effect: Allow
