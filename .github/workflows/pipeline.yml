@@ -34,6 +34,9 @@ on:
       trials:
         description: Hyperparameter trials per model, 0 = keep the default settings
         default: "6"
+      instance_type:
+        description: SageMaker training instance type
+        default: "ml.m5.large"
 
 permissions:
   contents: read
@@ -111,5 +114,6 @@ jobs:
           PREPARE: ${{ inputs.prepare }}
           LIMIT: ${{ inputs.limit }}
           TRIALS: ${{ inputs.trials }}
+          INSTANCE_TYPE: ${{ inputs.instance_type }}
           WAIT: "1"
         run: bash scripts/aws_deploy.sh pipeline

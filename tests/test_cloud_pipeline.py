@@ -119,6 +119,7 @@ class WorkflowTests(unittest.TestCase):
         inputs = workflow[True]["workflow_dispatch"]["inputs"]
         self.assertEqual(inputs["data_source"]["options"], ["synthetic", "physionet"])
         self.assertEqual(inputs["trials"]["default"], "6")
+        self.assertEqual(inputs["instance_type"]["default"], "ml.m5.large")
         self.assertEqual(workflow["permissions"]["id-token"], "write")
         names = [s.get("name", "") for s in workflow["jobs"]["pipeline"]["steps"]]
         self.assertLess(names.index("Build the images for this commit (skipped when they already exist)"),
