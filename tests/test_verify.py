@@ -39,7 +39,7 @@ class VerifyTests(unittest.TestCase):
 
     def test_repositories_need_images_and_the_tag(self):
         items = [{"type": "AWS::ECR::Repository", "physical": name} for name in ("a", "b", "c")]
-        images = {"a": [], "b": [{"imageTags": ["old"]}], "c": [{"imageTags": ["abc123def456"]}]}
+        images = {"a": [], "b": [{"imageTags": ["training-0ld0ld0ld0ld"]}], "c": [{"imageTags": ["training-abc123def456"]}]}
         ecr = Namespace(describe_images=lambda repositoryName: {"imageDetails": images[repositoryName]})
         result = verify.Result()
         verify.check_repositories(result, ecr, items, "abc123def456")
