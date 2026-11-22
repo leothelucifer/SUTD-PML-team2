@@ -35,7 +35,7 @@ class Registry(unittest.TestCase):
         cls.temp = tempfile.TemporaryDirectory()
         cls.root = Path(cls.temp.name)
         cls.data = cls.root / "synthetic"
-        generate_synthetic(cls.data, source_size=80, external_size=20)
+        generate_synthetic(cls.data, source_size=160, external_size=20)
         (cls.data / "SYNTHETIC.json").write_text("{}")
         cls.run_dir = cls.root / "run"
         run_experiment(Namespace(
@@ -131,6 +131,12 @@ class Registry(unittest.TestCase):
         self.assertFalse((path.parent / "metrics.json").exists())
         with self.assertRaises(ValueError):
             resolve_model("runs:/abc/model", self.uri)
+
+    def test_missing_production_alias_has_actionable_error(self):
+        from sepsis_warning.registry import resolve_model
+
+        with self.assertRaisesRegex(ValueError, "does not exist.*MLflow.*stack and images only"):
+            resolve_model("models:/sepsis-warning@production", self.uri)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,86 @@
+# Checks that a deployment is complete and healthy: the stack and nested stacks, buckets, key, images, table,
+# MLflow App, approval pipeline, alerts, budget, IAM policies and (after a full deploy) the scoring function with a
+# signed /health call. Read-only. Uses the same GitHub environments, variables and OIDC roles as deploy.yml.
+name: verify
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment to check
+        type: choice
+        options: [dev, staging, prod]
+        default: dev
+      region:
+        description: AWS region of the deployment
+        type: choice
+        options: [environment default, ap-southeast-1, ap-southeast-2]
+        default: environment default
+      expect_model:
+        description: Also require the scoring function (after a full deploy)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write   # OIDC token for AWS; no stored credentials
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: ${{ inputs.environment }}
+    steps:
+      - name: Resolve the region and the deploy role
+        id: target
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          REGION_INPUT: ${{ inputs.region }}
+          DEFAULT_REGION: ${{ vars.AWS_REGION }}
+          ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          ROLE_ARN_VAR: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+        run: |
+          region="$REGION_INPUT"
+          [ "$region" != "environment default" ] || region="$DEFAULT_REGION"
+          case "$region" in
+            ap-southeast-1|ap-southeast-2) ;;
+            *) echo "Region '$region' is not supported. Pick ap-southeast-1 or ap-southeast-2, or set AWS_REGION for the '$ENVIRONMENT' environment." >&2; exit 1 ;;
+          esac
+          if [ -n "$ROLE_ARN_VAR" ]; then
+            role="$ROLE_ARN_VAR"
+          elif [ -n "$ACCOUNT_ID" ]; then
+            role="arn:aws:iam::${ACCOUNT_ID}:role/github-deploy-${ENVIRONMENT}-${region}"
+          else
+            echo "The '$ENVIRONMENT' environment has neither AWS_ACCOUNT_ID nor AWS_DEPLOY_ROLE_ARN." >&2
+            echo "Run scripts/bootstrap_github_oidc.sh for this account, or set them in GitHub settings." >&2
+            exit 1
+          fi
+          echo "region=$region" >> "$GITHUB_OUTPUT"
+          echo "role=$role" >> "$GITHUB_OUTPUT"
+          echo "Verification of '$ENVIRONMENT' in $region" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          role-to-assume: ${{ steps.target.outputs.role }}
+          aws-region: ${{ steps.target.outputs.region }}
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+
+      - name: Install the tools (locked)
+        run: |
+          python -m pip install --require-hashes -r requirements/ci.txt
+          python -m pip install --no-deps -e .
+
+      - name: Check every component
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          AWS_REGION: ${{ steps.target.outputs.region }}
+          TAG: ${{ github.sha }}
+          EXPECT: ${{ inputs.expect_model && '--expect-model' || '' }}
+        run: bash scripts/aws_deploy.sh verify --tag "" $EXPECT

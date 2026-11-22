@@ -53,7 +53,7 @@ python -m sepsis_warning serve --model-uri models:/sepsis-warning@production
 | Registered model `sepsis-warning` | One version per registered bundle: calibrated model, feature list, window, threshold and cooldown. |
 | Version tags | `bundle_sha256`, model name, threshold, cooldown, window, synthetic flag, data mode, git commit, feature-contract and split hashes. |
 | `@candidate` | Set automatically to the newest registered bundle. Nothing serves it by default. |
-| `@production` | Moved only by `promote`, which needs `--reviewed-by`. The version records `production_reviewed_by`, `production_promoted_at` and `previous_production`. |
+| `@production` | Moved only by `promote`, which runs the promotion gates (`gates.py`: beats the no-model reference and SIRS at the same alert budget, within the budget, calibrated; `--require-real-data` also refuses synthetic models), needs `--reviewed-by`, and records the approver's identity (`production_approved_by`; on AWS it must differ from `registered_by`). The version records `production_reviewed_by`, `production_promoted_at` and `previous_production`. |
 | Rollback | `promote --version <previous_production> --reviewed-by <name>`; `promote` prints the exact command. |
 
 A registered version is the freeze record: it fixes the model, features,

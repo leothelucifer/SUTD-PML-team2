@@ -22,17 +22,20 @@ local store; nothing here talks to a remote server.
 """
 
 import datetime
+import getpass
 import json
 import tempfile
 from pathlib import Path
 
 import mlflow
 import pandas as pd
+from mlflow.exceptions import MlflowException
 from mlflow.tracking import MlflowClient
 
 from .data import DYNAMIC, STATIC
+from .gates import require_gates
 from .scoring import file_sha256, load_bundle
-from .tracking import check_tracking_uri, package_versions, prepare_store
+from .tracking import check_tracking_uri, is_mlflow_app, package_versions, prepare_store
 
 MODEL_NAME = "sepsis-warning"
 MODEL_EXPERIMENT = "sepsis-warning-selection"
@@ -91,6 +94,12 @@ def register_bundle(run_dir: Path, tracking_uri: str, run_id: str | None = None,
     requirements = [f"{package}=={version}" for package, version in package_versions().items() if version]
 
     with mlflow.start_run(run_id=run_id):
+        if run_id is None:
+            # No selection run to attach to: keep the validation summary with the model anyway,
+            # because the promotion gates and GET /model read it.
+            for artifact in SELECTION_FILES:
+                if (run_dir / artifact).is_file():
+                    mlflow.log_artifact(str(run_dir / artifact))
         info = mlflow.pyfunc.log_model(
             name="model", python_model=BundleModel(), artifacts={"bundle": str(bundle_path)},
             model_config={"bundle_sha256": sha}, pip_requirements=requirements,
@@ -107,6 +116,7 @@ def register_bundle(run_dir: Path, tracking_uri: str, run_id: str | None = None,
         "feature_columns_sha256": metadata.get("feature_columns_sha256", ""),
         "splits_csv_sha256": metadata.get("splits_csv_sha256") or "",
         "research_only": "true",
+        "registered_by": caller_identity(tracking_uri),
     }
     version = mlflow.register_model(info.model_uri, name, tags=tags)
     client = _client(tracking_uri)
@@ -118,9 +128,44 @@ def register_bundle(run_dir: Path, tracking_uri: str, run_id: str | None = None,
     return str(version.version)
 
 
+def caller_identity(tracking_uri: str) -> str:
+    """Who is acting: the AWS principal on the SageMaker MLflow App, else the local user."""
+    if is_mlflow_app(tracking_uri):
+        import boto3
+
+        return boto3.client("sts").get_caller_identity()["Arn"]
+    return f"local:{getpass.getuser()}"
+
+
+def _principal(identity: str) -> str:
+    """An assumed-role ARN without its session name, so two sessions of one role compare equal."""
+    if ":assumed-role/" in identity:
+        return identity.rsplit("/", 1)[0]
+    return identity
+
+
+def selection_summary(client, name: str, version: str) -> dict | None:
+    """The validation summary logged with the version's run, or None."""
+    run_id = client.get_model_version(name, str(version)).run_id
+    if not run_id:
+        return None
+    with tempfile.TemporaryDirectory(prefix="sepsis-gates-") as temp:
+        try:
+            path = mlflow.artifacts.download_artifacts(run_id=run_id, artifact_path="selection_metrics.json",
+                                                       dst_path=temp)
+        except (mlflow.exceptions.MlflowException, OSError):
+            return None
+        return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
 def promote(tracking_uri: str, version: str, reviewed_by: str, name: str = MODEL_NAME,
-            alias: str = "production") -> dict:
-    """Point ``alias`` at ``version`` after a named review. Returns what changed."""
+            alias: str = "production", *, require_real_data: bool = False, identity: str | None = None) -> dict:
+    """Point ``alias`` at ``version`` after the gates pass and a named review. Returns what changed.
+
+    The approver is recorded from the caller's identity, not only the typed
+    name. On AWS the approver must be a different principal from the one that
+    registered the version (the training job's role, or another person).
+    """
     if not reviewed_by or not reviewed_by.strip():
         raise ValueError("promotion needs the name of the reviewer (--reviewed-by)")
     client = _client(tracking_uri)
@@ -132,13 +177,22 @@ def promote(tracking_uri: str, version: str, reviewed_by: str, name: str = MODEL
         previous = None
     if previous == target_version:
         raise ValueError(f"{name}@{alias} already points at version {target_version}")
+    gates = require_gates(selection_summary(client, name, target_version), require_real_data=require_real_data)
+    approver = identity or caller_identity(tracking_uri)
+    registered_by = target.tags.get("registered_by", "")
+    if approver.startswith("arn:") and _principal(approver) == _principal(registered_by):
+        raise ValueError(
+            f"{approver} registered version {target_version} and cannot also approve it; "
+            "a different person or role must promote"
+        )
     now = datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds")
-    client.set_model_version_tag(name, target_version, f"{alias}_reviewed_by", reviewed_by.strip())
-    client.set_model_version_tag(name, target_version, f"{alias}_promoted_at", now)
-    client.set_model_version_tag(name, target_version, f"previous_{alias}", previous or "none")
+    for key, value in ((f"{alias}_reviewed_by", reviewed_by.strip()), (f"{alias}_approved_by", approver),
+                       (f"{alias}_promoted_at", now), (f"previous_{alias}", previous or "none"),
+                       (f"{alias}_gates", json.dumps({g["gate"]: g["detail"] for g in gates})[:4900])):
+        client.set_model_version_tag(name, target_version, key, value)
     client.set_registered_model_alias(name, alias, target_version)
     return {"name": name, "alias": alias, "version": target_version, "previous": previous,
-            "reviewed_by": reviewed_by.strip(), "promoted_at": now}
+            "reviewed_by": reviewed_by.strip(), "approved_by": approver, "promoted_at": now, "gates": gates}
 
 
 def parse_model_uri(model_uri: str) -> tuple[str, str | None, str | None]:
@@ -163,7 +217,15 @@ def resolve_model(model_uri: str, tracking_uri: str, download_dir: Path | None =
     """
     name, alias, version = parse_model_uri(model_uri)
     client = _client(tracking_uri)
-    found = client.get_model_version_by_alias(name, alias) if alias else client.get_model_version(name, version)
+    try:
+        found = client.get_model_version_by_alias(name, alias) if alias else client.get_model_version(name, version)
+    except MlflowException as error:
+        ref = f"{name}@{alias}" if alias else f"{name}/{version}"
+        raise ValueError(
+            f"Registered model ref '{ref}' does not exist or could not be resolved in MLflow: {error}. "
+            "Train and promote a model for this account first; "
+            "use 'stack and images only' for a deployment with no model."
+        ) from error
     expected = found.tags.get("bundle_sha256")
     if not expected:
         raise ValueError(f"{name} version {found.version} has no bundle_sha256 tag; refusing to load it")

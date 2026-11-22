@@ -9,6 +9,11 @@ Parameters:
     Default: 180
     MinValue: 1
     Description: Days to keep SageMaker training outputs (the registry keeps its own copy of registered models).
+  PredictionLogRetentionDays:
+    Type: Number
+    Default: 30
+    MinValue: 1
+    Description: Days to keep the prediction log (hashed stay IDs and scores; no measurement values).
 
 Resources:
   ArtifactKey:
@@ -70,10 +75,12 @@ Resources:
 
   ArtifactBucket:
     Type: AWS::S3::Bucket
+    # S3 checks the log destination when the logging setting is applied, so the log bucket's policy must
+    # exist first. Without this the bucket fails with "Unable to validate the following destination configurations".
+    DependsOn: AccessLogBucketPolicy
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
-      BucketName: !Sub "${EnvironmentName}-${AWS::AccountId}-${AWS::Region}-artifacts"
       BucketEncryption:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
@@ -102,6 +109,13 @@ Resources:
             Status: Enabled
             Prefix: training-output/
             ExpirationInDays: !Ref TrainingOutputRetentionDays
+          - Id: ExpirePredictionLog
+            Status: Enabled
+            Prefix: prediction-log/
+            ExpirationInDays: !Ref PredictionLogRetentionDays
+      LoggingConfiguration:
+        DestinationBucketName: !Ref AccessLogBucket
+        LogFilePrefix: s3-access/
       Tags:
         - Key: Name
           Value: !Sub "${EnvironmentName}-artifacts"
@@ -123,13 +137,77 @@ Resources:
             Condition:
               Bool:
                 "aws:SecureTransport": false
+          # Published models are write-once: an upload must be a conditional write that
+          # fails if the key exists (publish does this), and versions cannot be deleted.
+          - Sid: ModelsAreWriteOnce
+            Effect: Deny
+            Principal: "*"
+            Action: s3:PutObject
+            Resource: !Sub "${ArtifactBucket.Arn}/models/*"
+            Condition:
+              "Null":
+                "s3:if-none-match": "true"
+          - Sid: ModelsAreNotDeleted
+            Effect: Deny
+            Principal: "*"
+            Action:
+              - s3:DeleteObject
+              - s3:DeleteObjectVersion
+            Resource: !Sub "${ArtifactBucket.Arn}/models/*"
+
+  # Who read or wrote what in the artifact bucket (server access logs; 90 days).
+  AccessLogBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireLogs
+            Status: Enabled
+            ExpirationInDays: 90
+
+  AccessLogBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref AccessLogBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: S3ServerAccessLogs
+            Effect: Allow
+            Principal:
+              Service: logging.s3.amazonaws.com
+            Action: s3:PutObject
+            Resource: !Sub "${AccessLogBucket.Arn}/s3-access/*"
+            Condition:
+              StringEquals:
+                "aws:SourceAccount": !Ref AWS::AccountId
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource:
+              - !GetAtt AccessLogBucket.Arn
+              - !Sub "${AccessLogBucket.Arn}/*"
+            Condition:
+              Bool:
+                "aws:SecureTransport": false
 
   EcrRepository:
     Type: AWS::ECR::Repository
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
-      RepositoryName: !Sub "${EnvironmentName}/scoring-api"
       ImageScanningConfiguration:
         ScanOnPush: true
       ImageTagMutability: IMMUTABLE
@@ -151,7 +229,6 @@ Resources:
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
-      RepositoryName: !Sub "${EnvironmentName}/scoring-lambda"
       ImageScanningConfiguration:
         ScanOnPush: true
       ImageTagMutability: IMMUTABLE
@@ -184,7 +261,6 @@ Resources:
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
-      RepositoryName: !Sub "${EnvironmentName}/training"
       ImageScanningConfiguration:
         ScanOnPush: true
       ImageTagMutability: IMMUTABLE
@@ -205,7 +281,6 @@ Resources:
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
-      TableName: !Sub "${EnvironmentName}-stay-state"
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
         - AttributeName: stayId

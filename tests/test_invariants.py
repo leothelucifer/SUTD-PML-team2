@@ -6,23 +6,38 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-
-from sepsis_warning.data import (
-    DYNAMIC, STATIC, generate_synthetic, load_patients, read_patient, split_patients,
-)
 from sklearn.ensemble import HistGradientBoostingClassifier
 
+from sepsis_warning.data import (
+    DYNAMIC,
+    STATIC,
+    generate_synthetic,
+    load_patients,
+    read_patient,
+    split_patients,
+)
 from sepsis_warning.features import (
-    apply_training_fallback, build_features, features_for_windows, fit_training_fallback,
+    apply_training_fallback,
+    build_features,
+    features_for_windows,
+    fit_training_fallback,
+    ordered_stay,
     select_saved_features,
 )
 from sepsis_warning.modeling import candidate_models
-from sepsis_warning.prepare import prepare_parquet
 from sepsis_warning.policy import (
-    UTILITY_BENCHMARK_HOURS, UTILITY_BENCHMARK_PATIENTS, alert_events, apply_policy,
-    benchmark_utility, normalized_utility, summarize, tune_threshold, utility_benchmark_table,
+    UTILITY_BENCHMARK_HOURS,
+    UTILITY_BENCHMARK_PATIENTS,
+    alert_events,
+    apply_policy,
+    benchmark_utility,
+    normalized_utility,
+    summarize,
+    tune_threshold,
+    utility_benchmark_table,
     utility_components,
 )
+from sepsis_warning.prepare import prepare_parquet
 
 
 class ResearchInvariants(unittest.TestCase):
@@ -99,20 +114,42 @@ class ResearchInvariants(unittest.TestCase):
 
     def test_stay_starting_after_hour_one_uses_iculos(self):
         frame = self.patients[0].frame.iloc[:6].copy().reset_index(drop=True)
-        frame["ICULOS"] = [8, 9, 10, 12, 13, 14]
+        frame["ICULOS"] = [8, 9, 10, 11, 12, 13]
         frame["Lactate"] = [np.nan, 1.5, np.nan, np.nan, 2.0, np.nan]
         full = build_features(frame)
         pd.testing.assert_frame_equal(full.iloc[:3], build_features(frame.iloc[:3]))
         self.assertTrue(pd.isna(full.loc[0, "Lactate__hours_since_seen"]))
         self.assertEqual(float(full.loc[1, "Lactate__hours_since_seen"]), 0.0)
-        # ICU hour 12 is three hours after the lactate at hour 9, and only two rows later.
         self.assertEqual(
             float(full.loc[3, "Lactate__hours_since_seen"]),
             float(frame.loc[3, "ICULOS"] - frame.loc[1, "ICULOS"]),
         )
 
+    def test_unsorted_iculos_matches_sorted_stay(self):
+        frame = self.patients[0].frame.iloc[:6].copy().reset_index(drop=True)
+        frame["ICULOS"] = [1, 2, 3, 4, 5, 6]
+        frame["HR"] = [80.0, np.nan, 90.0, np.nan, 100.0, 110.0]
+        shuffled = frame.iloc[[4, 1, 5, 0, 3, 2]].reset_index(drop=True)
+        pd.testing.assert_frame_equal(build_features(shuffled), build_features(frame))
+        pd.testing.assert_frame_equal(ordered_stay(shuffled)[["ICULOS"]], frame[["ICULOS"]])
+
+    def test_nonconsecutive_iculos_is_rejected(self):
+        frame = self.patients[0].frame.iloc[:4].copy().reset_index(drop=True)
+        frame["ICULOS"] = [1, 2, 4, 5]
+        with self.assertRaisesRegex(ValueError, "consecutive hourly"):
+            build_features(frame)
+
+    def test_change_is_blank_until_window_rows_exist(self):
+        frame = self.patients[0].frame.iloc[:7].copy().reset_index(drop=True)
+        frame["HR"] = [80.0, 85.0, 90.0, 95.0, 100.0, 105.0, 110.0]
+        features = build_features(frame, window=6)
+        self.assertTrue(features.loc[:5, "HR__change_6h"].isna().all())
+        self.assertEqual(float(features.loc[6, "HR__change_6h"]), 110.0 - 80.0)
+
     def test_scoring_a_prefix_matches_the_full_stay(self):
-        frame = next(patient.frame for patient in self.patients if patient.frame["SepsisLabel"].nunique() == 2)
+        frame = ordered_stay(next(
+            patient.frame for patient in self.patients if patient.frame["SepsisLabel"].nunique() == 2
+        ))
         full = build_features(frame)
         model = HistGradientBoostingClassifier(max_iter=5, max_depth=3, random_state=0)
         model.fit(full, frame["SepsisLabel"].to_numpy())
@@ -172,6 +209,16 @@ class ResearchInvariants(unittest.TestCase):
         })
         applied = apply_training_fallback(reversed_stays, pd.Series({"HR": 90.0}))
         self.assertEqual(applied.loc[applied["patient_id"] == "b", "HR"].tolist(), [90.0, 90.0])
+
+    def test_fallback_keeps_hospital_and_row_order(self):
+        frame = pd.DataFrame({
+            "hospital": ["A", "B", "A", "B"],
+            "patient_id": ["1", "1", "1", "1"],
+            "HR": [50.0, np.nan, 60.0, np.nan],
+        })
+        applied = apply_training_fallback(frame, pd.Series({"HR": 90.0}))
+        self.assertEqual(applied["hospital"].tolist(), ["A", "B", "A", "B"])
+        self.assertEqual(applied["HR"].tolist(), [50.0, 90.0, 60.0, 90.0])
 
     def test_training_model_imputer_ignores_validation_rows(self):
         train = pd.DataFrame({"HR__last": [80.0, 100.0, np.nan], "label": [0, 1, 0]})

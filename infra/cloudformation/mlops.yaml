@@ -109,13 +109,33 @@ Resources:
               - Sid: ReadTrainingData
                 Effect: Allow
                 Action: s3:GetObject
-                Resource: !Sub "${ArtifactBucketArn}/data/*"
+                Resource:
+                  - !Sub "${ArtifactBucketArn}/data/*"
+                  - !Sub "${ArtifactBucketArn}/tuning/*"
+                  - !Sub "${ArtifactBucketArn}/raw/*"
+              # Pipeline steps: prepare builds the data in S3, tune writes tuned settings, train writes the report.
+              - Sid: WritePipelineArtifacts
+                Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:AbortMultipartUpload
+                Resource:
+                  - !Sub "${ArtifactBucketArn}/data/*"
+                  - !Sub "${ArtifactBucketArn}/tuning/*"
+                  - !Sub "${ArtifactBucketArn}/reports/*"
               - Sid: WriteTrainingOutput
                 Effect: Allow
                 Action:
                   - s3:PutObject
                   - s3:AbortMultipartUpload
                 Resource: !Sub "${ArtifactBucketArn}/training-output/*"
+              # Pipeline step after approval: publish the approved bundle (write-once).
+              - Sid: PublishApprovedModel
+                Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                Resource: !Sub "${ArtifactBucketArn}/models/*"
               - Sid: ListBucket
                 Effect: Allow
                 Action: s3:ListBucket
@@ -161,12 +181,15 @@ Resources:
                   - sagemaker:DescribeMlflowApp
                 Resource: !GetAtt MlflowApp.Arn
 
-  # Attach to the team members (or CI role) who build images, start training,
-  # review and promote models, and publish them for serving.
-  TeamOperatorPolicy:
+  # Three duties, three policies. Attach each to different people (or roles) so the person
+  # who trains a model is not the one who approves it, and neither deploys alone.
+  # Note: IAM cannot tell MLflow API calls apart (one action covers them all), so the
+  # train/approve split inside MLflow is enforced by `promote`, which records the caller
+  # and refuses the principal that registered the version.
+  TrainerPolicy:
     Type: AWS::IAM::ManagedPolicy
     Properties:
-      Description: Operate the sepsis-warning research MLOps workflow.
+      Description: Upload training data, build the training image, start training jobs, log to MLflow.
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -192,15 +215,12 @@ Resources:
             Condition:
               StringEquals:
                 "iam:PassedToService": sagemaker.amazonaws.com
-          - Sid: DataModelsAndOutputs
+          - Sid: UploadTrainingData
             Effect: Allow
             Action:
               - s3:GetObject
               - s3:PutObject
-            Resource:
-              - !Sub "${ArtifactBucketArn}/data/*"
-              - !Sub "${ArtifactBucketArn}/models/*"
-              - !Sub "${ArtifactBucketArn}/training-output/*"
+            Resource: !Sub "${ArtifactBucketArn}/data/*"
           - Sid: ListArtifactBucket
             Effect: Allow
             Action: s3:ListBucket
@@ -211,7 +231,90 @@ Resources:
               - kms:Decrypt
               - kms:GenerateDataKey
             Resource: !Ref ArtifactKeyArn
-          - Sid: PushImages
+          - Sid: PushTrainingImage
+            Effect: Allow
+            Action:
+              - ecr:BatchCheckLayerAvailability
+              - ecr:BatchGetImage
+              - ecr:CompleteLayerUpload
+              - ecr:InitiateLayerUpload
+              - ecr:PutImage
+              - ecr:UploadLayerPart
+              - ecr:DescribeImages
+            Resource: !Ref TrainingRepositoryArn
+          - Sid: EcrLogin
+            Effect: Allow
+            Action: ecr:GetAuthorizationToken
+            Resource: "*"
+          - Sid: ReadStackOutputsAndTrainingLogs
+            Effect: Allow
+            Action:
+              - cloudformation:DescribeStacks
+              - logs:GetLogEvents
+              - logs:DescribeLogStreams
+            Resource:
+              - !Sub "arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${EnvironmentName}*"
+              - !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/sagemaker/TrainingJobs*"
+
+  ApproverPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: Review runs in MLflow, promote a version, approve a waiting pipeline. Cannot train or deploy.
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: UseMlflowApp
+            Effect: Allow
+            Action:
+              - sagemaker:CallMlflowAppApi
+              - sagemaker:DescribeMlflowApp
+              - sagemaker:CreatePresignedMlflowAppUrl
+            Resource: !GetAtt MlflowApp.Arn
+          - Sid: ApprovePipeline
+            Effect: Allow
+            Action:
+              - states:SendTaskSuccess
+              - states:SendTaskFailure
+              - states:DescribeExecution
+              - states:ListExecutions
+            Resource: "*"
+          - Sid: ReadStackOutputs
+            Effect: Allow
+            Action: cloudformation:DescribeStacks
+            Resource: !Sub "arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${EnvironmentName}*"
+
+  DeployerPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: >-
+        Publish an approved model, push serving images, call the scoring API. Reads MLflow to
+        resolve @production; `promote` still refuses a deployer who registered the version.
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: ReadMlflowApp
+            Effect: Allow
+            Action:
+              - sagemaker:CallMlflowAppApi
+              - sagemaker:DescribeMlflowApp
+            Resource: !GetAtt MlflowApp.Arn
+          - Sid: PublishModels
+            Effect: Allow
+            Action:
+              - s3:GetObject
+              - s3:PutObject
+            Resource: !Sub "${ArtifactBucketArn}/models/*"
+          - Sid: ListArtifactBucket
+            Effect: Allow
+            Action: s3:ListBucket
+            Resource: !Ref ArtifactBucketArn
+          - Sid: UseArtifactKey
+            Effect: Allow
+            Action:
+              - kms:Decrypt
+              - kms:GenerateDataKey
+            Resource: !Ref ArtifactKeyArn
+          - Sid: PushServingImages
             Effect: Allow
             Action:
               - ecr:BatchCheckLayerAvailability
@@ -222,7 +325,6 @@ Resources:
               - ecr:UploadLayerPart
               - ecr:DescribeImages
             Resource:
-              - !Ref TrainingRepositoryArn
               - !Ref LambdaRepositoryArn
               - !Ref ScoringRepositoryArn
           - Sid: EcrLogin
@@ -234,16 +336,13 @@ Resources:
             Action:
               - lambda:InvokeFunctionUrl
               - lambda:InvokeFunction
-            Resource: !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${EnvironmentName}-scoring"
-          - Sid: ReadStackOutputsAndTrainingLogs
-            Effect: Allow
-            Action:
-              - cloudformation:DescribeStacks
-              - logs:GetLogEvents
-              - logs:DescribeLogStreams
             Resource:
-              - !Sub "arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${EnvironmentName}*"
-              - !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/sagemaker/TrainingJobs*"
+              - !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${EnvironmentName}-scoring"
+              - !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${EnvironmentName}-scoring:live"
+          - Sid: ReadStackOutputs
+            Effect: Allow
+            Action: cloudformation:DescribeStacks
+            Resource: !Sub "arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${EnvironmentName}*"
 
 Outputs:
   MlflowAppArn:
@@ -251,5 +350,9 @@ Outputs:
     Value: !GetAtt MlflowApp.Arn
   SageMakerExecutionRoleArn:
     Value: !GetAtt SageMakerExecutionRole.Arn
-  TeamOperatorPolicyArn:
-    Value: !Ref TeamOperatorPolicy
+  TrainerPolicyArn:
+    Value: !Ref TrainerPolicy
+  ApproverPolicyArn:
+    Value: !Ref ApproverPolicy
+  DeployerPolicyArn:
+    Value: !Ref DeployerPolicy

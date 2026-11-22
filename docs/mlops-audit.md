@@ -386,6 +386,8 @@ T5, T7 and T8 are closed; T2 (promotion gates and approver identity) is Phase 3.
 
 ### Phase 2: Resilient serving and consumer hardening (about 1.5 weeks)
 
+**Status: implemented** (branch `leo/phases-2-4`), except: matplotlib is still in the serving images (it is a base dependency of the package), and the Lambda and training images run as their platforms' users, not a custom non-root user. The alert-ledger test uses an in-process DynamoDB fake, not DynamoDB Local.
+
 | # | Task | Files | Engineering changes | Definition of done |
 |---|---|---|---|---|
 | 2.1 | Traceable responses (S1) | `api.py`, `service.py`, `model_card.py`, tests | `model_version`, `bundle_sha256`, `prediction_id`, `scored_at`, `risk_tier`; request-ID echo | Same request twice returns the same `prediction_id`; OpenAPI updated |
@@ -397,6 +399,8 @@ T5, T7 and T8 are closed; T2 (promotion gates and approver identity) is Phase 3.
 | 2.7 | Locked, smaller images (Q1) | `requirements/*.txt`, `Dockerfile`, CI | Hash-locked installs; drop matplotlib from serving images; non-root user in every target | Two builds of one commit have identical `pip freeze`; Lambda image under 600 MB |
 
 ### Phase 3: Enterprise AWS serverless MLOps infrastructure (about 2 weeks)
+
+**Status: written, linted and unit-tested; not deployed.** Task 3.1 (a first deployment to a dev account) is **not done**: it needs an AWS account and the L06 owner's approval, and it is the step that will show what cfn-lint cannot. Everything else (3.2-3.8) is in the templates and code; none of it has run in AWS.
 
 | # | Task | Files | Engineering changes | Definition of done |
 |---|---|---|---|---|
@@ -413,6 +417,8 @@ Keep CloudFormation: the stack is already complete in it, and a rewrite to
 Terraform or CDK would add risk without closing any finding above.
 
 ### Phase 4: CI/CD automation, observability and drift monitoring (about 1.5 weeks)
+
+**Status: implemented in code and CI; AWS parts not deployed.** CI gates (4.1, 4.2) run on every pull request; the image vulnerability scan is report-only until its first triage. The deploy workflow (4.3) is inactive until an AWS role is configured. Telemetry, the prediction log format and live drift checks (4.4-4.6) are tested locally; their AWS wiring is in `observability.yaml`. Runbooks and proposed objectives (4.8) are in `docs/runbooks/`; the objectives are not yet agreed.
 
 | # | Task | Files | Engineering changes | Definition of done |
 |---|---|---|---|---|

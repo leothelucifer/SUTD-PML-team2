@@ -22,8 +22,8 @@ In Fargate mode `LoadBalancerScheme=internet-facing` switches to a public load
 balancer for a synthetic-only demo, and the API has no authentication. In
 Lambda mode every request must be SigV4-signed. Never send patient, personal or
 other sensitive data to either until access and data handling are approved.
-The design targets `ap-southeast-1` (Singapore); the templates use the region
-selected for the stack and do not enforce it.
+Both `ap-southeast-1` (Singapore) and `ap-southeast-2` (Sydney) are supported and
+linted in CI; the templates use the region selected for the stack and do not enforce it.
 
 ## Deck design vs these templates
 
@@ -55,6 +55,9 @@ selected for the stack and do not enforce it.
 | `network.yaml` | VPC, subnets, routing and VPC endpoints (Fargate mode only) |
 | `service.yaml` | Internal load balancer, private Fargate service, task roles, logs (Fargate mode only) |
 | `monitoring.yaml` | Lambda or ECS/ALB alarms, optional email subscription, optional AWS Budget (always created) |
+| `pipeline.yaml` | Step Functions training pipeline: train with gates → human approval → frozen evaluation → publish |
+| `observability.yaml` | Prediction log to S3 (log subscription + Firehose), daily drift Lambda, drift alarm, optional retraining trigger |
+| `apigw.yaml` | Optional private API Gateway with IAM auth, throttling and WAF in front of the Lambda |
 
 The default stack is serverless and pay-per-use: nothing bills by the hour.
 Training jobs are started on demand by `scripts/sagemaker_train.py`, and
@@ -68,7 +71,8 @@ a model published to S3 (`ModelS3Uri`, `ModelSha256`).
 Run the static template linter from the repository root:
 
 ```bash
-cfn-lint -t infra/cloudformation/*.yaml --regions ap-southeast-1 --ignore-checks W3002
+pip install "cfn-lint[sam]"
+cfn-lint -t infra/cloudformation/*.yaml --regions ap-southeast-1 ap-southeast-2 --ignore-checks W3002
 ```
 
 `W3002` is suppressed because the root template intentionally uses local
