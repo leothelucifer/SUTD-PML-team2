@@ -22,7 +22,7 @@ Parameters:
     Type: String
   InstanceType:
     Type: String
-    Default: ml.m5.xlarge
+    Default: ml.m5.large
   DataPrefix:
     Type: String
     Default: data/physionet
@@ -88,12 +88,107 @@ Resources:
         Topic: !Ref NotificationTopicArn
         InstanceType: !Ref InstanceType
         DataPrefix: !Ref DataPrefix
-        ApprovalTimeout: !Ref ApprovalTimeoutSeconds
       Definition:
         Comment: >-
-          Input: {"image_tag": "training-<git sha>", "git_commit": "<sha>", "require_real_data": "true"}
-        StartAt: Train
+          Input (all values are strings): {"image_tag": "training-<git sha>", "git_commit": "<sha>",
+          "require_real_data": "true|false", "prepare": "true|false", "data_source": "synthetic|physionet",
+          "limit": "0", "trials": "6", "instance_type": "ml.m5.large"}.
+          prepare=false reuses the data already in S3; trials=0 skips the search.
+        StartAt: CheckPrepare
         States:
+          CheckPrepare:
+            Type: Choice
+            Choices:
+              - And:
+                  - Variable: $.prepare
+                    IsPresent: true
+                  - Variable: $.prepare
+                    StringEquals: "true"
+                Next: PrepareData
+            Default: Tune
+          PrepareData:
+            Type: Task
+            Resource: arn:aws:states:::sagemaker:createTrainingJob.sync
+            Parameters:
+              TrainingJobName.$: States.Format('sepsis-prepare-{}', $$.Execution.Name)
+              RoleArn: ${JobRole}
+              AlgorithmSpecification:
+                TrainingImage.$: States.Format('${Repository}:{}', $.image_tag)
+                TrainingInputMode: File
+              HyperParameters:
+                # Builds combined.parquet and splits.csv in S3: the synthetic fixture, or the PhysioNet download.
+                mode: prepare
+                data_source.$: $.data_source
+                limit.$: $.limit
+                seed: "42"
+                synthetic_stays: "600"
+                publish_bucket: ${Bucket}
+                data_prefix: ${DataPrefix}
+              OutputDataConfig:
+                S3OutputPath: s3://${Bucket}/training-output/
+                KmsKeyId: ${KmsKey}
+              ResourceConfig:
+                InstanceType.$: $.instance_type
+                InstanceCount: 1
+                VolumeSizeInGB: 30
+                VolumeKmsKeyId: ${KmsKey}
+              # On demand, not spot: an interrupted download would start over. The full PhysioNet download takes a while.
+              StoppingCondition:
+                MaxRuntimeInSeconds: 7200
+            ResultSelector:
+              job.$: $.TrainingJobName
+            ResultPath: $.prepared
+            Catch:
+              - ErrorEquals: [States.ALL]
+                ResultPath: $.error
+                Next: NotifyFailure
+            Next: Tune
+          Tune:
+            Type: Task
+            Resource: arn:aws:states:::sagemaker:createTrainingJob.sync
+            Parameters:
+              TrainingJobName.$: States.Format('sepsis-tune-{}', $$.Execution.Name)
+              RoleArn: ${JobRole}
+              AlgorithmSpecification:
+                TrainingImage.$: States.Format('${Repository}:{}', $.image_tag)
+                TrainingInputMode: File
+              HyperParameters:
+                # Patient-grouped cross-validation on the train split only; trials=0 passes the defaults on.
+                mode: tune
+                trials.$: $.trials
+                folds: "3"
+                seed: "42"
+                mlflow_tracking_uri: ${Mlflow}
+                publish_bucket: ${Bucket}
+                run_id.$: $$.Execution.Name
+              InputDataConfig:
+                - ChannelName: data
+                  InputMode: File
+                  DataSource:
+                    S3DataSource:
+                      S3DataType: S3Prefix
+                      S3Uri: s3://${Bucket}/${DataPrefix}/
+                      S3DataDistributionType: FullyReplicated
+              OutputDataConfig:
+                S3OutputPath: s3://${Bucket}/training-output/
+                KmsKeyId: ${KmsKey}
+              ResourceConfig:
+                InstanceType.$: $.instance_type
+                InstanceCount: 1
+                VolumeSizeInGB: 30
+                VolumeKmsKeyId: ${KmsKey}
+              EnableManagedSpotTraining: true
+              StoppingCondition:
+                MaxRuntimeInSeconds: 10800
+                MaxWaitTimeInSeconds: 14400
+            ResultSelector:
+              job.$: $.TrainingJobName
+            ResultPath: $.tuning
+            Catch:
+              - ErrorEquals: [States.ALL]
+                ResultPath: $.error
+                Next: NotifyFailure
+            Next: Train
           Train:
             Type: Task
             Resource: arn:aws:states:::sagemaker:createTrainingJob.sync
@@ -111,6 +206,9 @@ Resources:
                 require_real_data.$: $.require_real_data
                 mlflow_tracking_uri: ${Mlflow}
                 git_commit.$: $.git_commit
+                # After training: the metrics table and figures go to s3://<bucket>/reports/<run id>/.
+                publish_bucket: ${Bucket}
+                run_id.$: $$.Execution.Name
               InputDataConfig:
                 - ChannelName: data
                   InputMode: File
@@ -119,11 +217,19 @@ Resources:
                       S3DataType: S3Prefix
                       S3Uri: s3://${Bucket}/${DataPrefix}/
                       S3DataDistributionType: FullyReplicated
+                # The tuned settings (and the search results for the report) from the Tune step.
+                - ChannelName: config
+                  InputMode: File
+                  DataSource:
+                    S3DataSource:
+                      S3DataType: S3Prefix
+                      S3Uri.$: States.Format('s3://${Bucket}/tuning/{}/', $$.Execution.Name)
+                      S3DataDistributionType: FullyReplicated
               OutputDataConfig:
                 S3OutputPath: s3://${Bucket}/training-output/
                 KmsKeyId: ${KmsKey}
               ResourceConfig:
-                InstanceType: ${InstanceType}
+                InstanceType.$: $.instance_type
                 InstanceCount: 1
                 VolumeSizeInGB: 30
                 VolumeKmsKeyId: ${KmsKey}
@@ -143,16 +249,17 @@ Resources:
           WaitForApproval:
             Type: Task
             Resource: arn:aws:states:::sns:publish.waitForTaskToken
-            TimeoutSeconds: ${ApprovalTimeout}
+            TimeoutSeconds: !Ref ApprovalTimeoutSeconds
             Parameters:
               TopicArn: ${Topic}
               Subject: Sepsis model candidate awaiting review
               Message.$: >-
                 States.Format('Training job {} passed the data checks and promotion gates and registered a
-                candidate. Review it in the MLflow UI, run "promote" (a different person from the trainer),
-                then approve with: aws stepfunctions send-task-success --task-output "{}" --task-token {}
-                To reject: aws stepfunctions send-task-failure --task-token <same token>',
-                $.training.job, $$.Task.Token)
+                candidate. Metrics table and figures: s3://${Bucket}/reports/{}/ . Review the run in the MLflow UI,
+                run "promote" (a different person from the trainer), then approve with:
+                bash scripts/aws_deploy.sh approve {}
+                To reject, run: aws stepfunctions send-task-failure --task-token (the same token)',
+                $.training.job, $$.Execution.Name, $$.Task.Token)
             ResultPath: $.approval
             Catch:
               - ErrorEquals: [States.ALL]
@@ -185,7 +292,7 @@ Resources:
                 S3OutputPath: s3://${Bucket}/training-output/
                 KmsKeyId: ${KmsKey}
               ResourceConfig:
-                InstanceType: ${InstanceType}
+                InstanceType.$: $.instance_type
                 InstanceCount: 1
                 VolumeSizeInGB: 30
                 VolumeKmsKeyId: ${KmsKey}
@@ -210,7 +317,7 @@ Resources:
                 States.Format('The approved model was evaluated once on the test splits and published.
                 publish.json (S3 URI and SHA-256 to deploy) is inside {}. Deploy it with the deploy workflow
                 or "aws_deploy.sh serve".', $.publish.artifacts)
-            ResultPath: null
+            ResultPath: $.notified   # CloudFormation rejects null values in templates, so keep the SNS reply here
             End: true
           NotifyFailure:
             Type: Task
@@ -219,7 +326,7 @@ Resources:
               TopicArn: ${Topic}
               Subject: Sepsis training pipeline stopped
               Message.$: States.JsonToString($.error)
-            ResultPath: null
+            ResultPath: $.notified   # CloudFormation rejects null values in templates, so keep the SNS reply here
             Next: Stopped
           Stopped:
             Type: Fail

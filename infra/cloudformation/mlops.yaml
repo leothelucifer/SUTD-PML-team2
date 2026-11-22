@@ -109,7 +109,20 @@ Resources:
               - Sid: ReadTrainingData
                 Effect: Allow
                 Action: s3:GetObject
-                Resource: !Sub "${ArtifactBucketArn}/data/*"
+                Resource:
+                  - !Sub "${ArtifactBucketArn}/data/*"
+                  - !Sub "${ArtifactBucketArn}/tuning/*"
+                  - !Sub "${ArtifactBucketArn}/raw/*"
+              # Pipeline steps: prepare builds the data in S3, tune writes tuned settings, train writes the report.
+              - Sid: WritePipelineArtifacts
+                Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:AbortMultipartUpload
+                Resource:
+                  - !Sub "${ArtifactBucketArn}/data/*"
+                  - !Sub "${ArtifactBucketArn}/tuning/*"
+                  - !Sub "${ArtifactBucketArn}/reports/*"
               - Sid: WriteTrainingOutput
                 Effect: Allow
                 Action:

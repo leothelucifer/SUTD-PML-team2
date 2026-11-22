@@ -47,11 +47,13 @@ Conditions:
     - !Condition HasMonthlyBudget
     - !Condition HasBudgetEmail
 
+# Rules cannot use !Condition (CloudFormation rejects the template at create time), so the
+# parameters are compared directly.
 Rules:
   MonthlyBudgetRequiresEmail:
-    RuleCondition: !Condition HasMonthlyBudget
+    RuleCondition: !Not [!Equals [!Ref MonthlyBudgetUsd, "0"]]
     Assertions:
-      - Assert: !Condition HasBudgetEmail
+      - Assert: !Not [!Equals [!Ref BudgetEmail, ""]]
         AssertDescription: BudgetEmail is required when MonthlyBudgetUsd is greater than zero.
 
 Resources:
