@@ -1,4 +1,9 @@
-"""Aggregate missingness audit and exploratory train/validation baselines."""
+"""Aggregate missingness audit and exploratory train/validation baselines.
+
+This module is an exploratory report path. It builds its own strategy-specific
+feature matrices in ``record_features`` and does not replace the shared
+``features.build_features`` contract used by ``train``, replay and serve.
+"""
 
 import html
 import json

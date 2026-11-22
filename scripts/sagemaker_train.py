@@ -122,7 +122,7 @@ def main(argv=None) -> int:
     parser.add_argument("--region", default=None)
     parser.add_argument("--image-tag", required=True, help="Tag of the training image pushed to TrainingRepositoryUri")
     parser.add_argument("--data-prefix", default="data/physionet", help="S3 prefix (in the artifact bucket) of the data")
-    parser.add_argument("--instance-type", default="ml.m5.xlarge")
+    parser.add_argument("--instance-type", default="ml.m5.large")
     parser.add_argument("--volume-gb", type=int, default=30)
     parser.add_argument("--max-runtime", type=int, default=3600, help="Hard stop in seconds")
     parser.add_argument("--max-wait", type=int, default=7200, help="Spot: seconds to wait for capacity plus runtime")
