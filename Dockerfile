@@ -42,7 +42,7 @@ COPY src/sepsis_warning ./src/sepsis_warning
 # SageMaker AI training job. SageMaker runs the image with the argument
 # "train"; inputs and outputs use the /opt/ml layout (see sagemaker_train.py).
 FROM base AS training
-# requirements/training.txt pins MLflow to the SageMaker MLflow App's version (3.16 on
+# requirements/training.txt pins MLflow to the SageMaker MLflow App's version (3.17 on
 # 2026-11-15; the App updates itself, so re-lock with MLFLOW_VERSION when it changes).
 RUN --mount=type=secret,id=extra_ca,required=false \
     if [ -f /run/secrets/extra_ca ]; then export PIP_CERT=/run/secrets/extra_ca; fi; \
