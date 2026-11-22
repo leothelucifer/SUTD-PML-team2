@@ -30,7 +30,7 @@ import numpy as np
 import pandas as pd
 
 from sepsis_warning.ablation import ARM_NAMES, ARMS, arm_columns, paired_bootstrap, score_table
-from sepsis_warning.features import apply_training_fallback, features_for_windows, fit_training_fallback
+from sepsis_warning.features import apply_training_fallback, build_features, features_for_windows, fit_training_fallback
 from sepsis_warning.gradient_boosting import NumpyGradientBoosting
 from sepsis_warning.hmm import VITALS, hmm_state_features, load_hmm
 from sepsis_warning.logistic import NumpyLogisticRegression, calibrate_frozen
@@ -40,7 +40,7 @@ from sepsis_warning.signature import WINDOW, fit_signature_scaler, signature_fea
 from sepsis_warning.splits import load_split_patients
 
 SPLITS_USED = ("train", "calibration", "validation")
-WINDOWS = (3, 6, 12)
+TRAIN_WINDOW = 6  # the window `train` and serve use: 276 shared features
 GROUPS = ("shared", "hmm", "signature")
 MODELS = ("logistic", "random_forest", "gradient_boosting")
 
@@ -56,7 +56,14 @@ def make_model(model, C, seed):
     raise ValueError(f"unknown model {model}")
 
 
-def build_split(patients, hmm_model, scaler, fallback):
+def shared_features(frame, windows):
+    """Arm A columns. One window is exactly `train`'s build_features; more use the J06 builder."""
+    if tuple(windows) == (TRAIN_WINDOW,):
+        return build_features(frame, TRAIN_WINDOW)
+    return features_for_windows(frame, tuple(windows))
+
+
+def build_split(patients, hmm_model, scaler, fallback, windows=(TRAIN_WINDOW,)):
     """Feature table for one split plus seconds spent on each feature group."""
     chunks = []
     seconds = dict.fromkeys(GROUPS, 0.0)
@@ -64,7 +71,7 @@ def build_split(patients, hmm_model, scaler, fallback):
         frame = patient.frame
         started = time.perf_counter()
         source = apply_training_fallback(frame, fallback) if fallback is not None else frame
-        shared = features_for_windows(source, WINDOWS)
+        shared = shared_features(source, windows)
         seconds["shared"] += time.perf_counter() - started
 
         started = time.perf_counter()
@@ -141,6 +148,9 @@ def main():
     parser.add_argument("--fallback", action="store_true",
                         help="apply the J02 training-median fallback to raw values before the shared "
                              "features (same in every arm; off keeps the missingness indicators)")
+    parser.add_argument("--windows", type=int, nargs="+", default=[TRAIN_WINDOW],
+                        help="shared-feature windows; default 6 = the train/serve contract (276 columns). "
+                             "3 6 12 reproduces the first H03 run (548 columns)")
     parser.add_argument("--limit", type=int, default=0, help="first N stays of each split (0 = all)")
     args = parser.parse_args()
 
@@ -174,7 +184,7 @@ def main():
     for name in SPLITS_USED:
         started = time.perf_counter()
         tables[name], feature_seconds[name], (shared, hmm, signature) = build_split(
-            cohorts[name], hmm_model, scaler, fallback)
+            cohorts[name], hmm_model, scaler, fallback, args.windows)
         print(f"{name}: features in {time.perf_counter() - started:.0f}s", flush=True)
     groups = {"hmm": list(hmm), "signature": list(signature)}
     base = list(shared)
@@ -218,7 +228,7 @@ def main():
     results_path.write_text(json.dumps({
         "plan": "docs/h03-ablation-plan.md", "data": str(args.data), "splits": str(args.splits),
         "hmm": str(args.hmm), "hmm_fit": {k: hmm_meta.get(k) for k in ("split", "stays", "hours", "iterations")},
-        "stays": stays, "limit": args.limit, "windows": list(WINDOWS), "signature_window": WINDOW,
+        "stays": stays, "limit": args.limit, "windows": list(args.windows), "signature_window": WINDOW,
         "model": args.model, "seed": args.seed,
         "fallback": args.fallback, "c_grid": args.c_grid if args.model == "logistic" else None, "budget": args.budget, "cooldown": args.cooldown,
         "resamples": args.resamples, "bootstrap_seed": args.bootstrap_seed,
