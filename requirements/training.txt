@@ -1314,21 +1314,21 @@ matplotlib==3.11.2 \
     #   -c /tmp/claude-0/-home-user-SUTD-PML-team2/0eddecb7-e071-5c3b-8aef-5160a595416e/scratchpad/c-training.txt
     #   sepsis-warning-sketch (pyproject.toml)
     #   mlflow
-mlflow==3.16.1 \
-    --hash=sha256:044bd17d49ed216d3e38a537436622154daa5197ea41c1f3dedf155cbd8f40c0 \
-    --hash=sha256:e4dfe69ceae31dfc7b8480e76ffe6a7f36752bdfac30e058e6430ade1fb5920b
+mlflow==3.17.2 \
+    --hash=sha256:3fcdb58c683362763bf1cb124eea800b4e3253e16cb5e3adf5b5e562af1fdf2b \
+    --hash=sha256:4e44c03791beb518d8b0a40b0982d958c2634d902f46d67d7907c82107f21fac
     # via
     #   -c /tmp/claude-0/-home-user-SUTD-PML-team2/0eddecb7-e071-5c3b-8aef-5160a595416e/scratchpad/c-training.txt
     #   sepsis-warning-sketch (pyproject.toml)
-mlflow-skinny==3.16.1 \
-    --hash=sha256:41ec1697710b91d001f8951bdc2d00391a277065ed82268c81706238fa2b918e \
-    --hash=sha256:7298b47942b1b0e826e02191653b8c203c3bb242fb699f8beec98e928dbec115
+mlflow-skinny==3.17.2 \
+    --hash=sha256:31be9190494212ccd94774170fd06f6fe04d209aae3923eefd16f9bf7830d63c \
+    --hash=sha256:5f2a0812d019a8f517a58f1377922f75af4f42832be30c8f1441005b51288596
     # via
     #   mlflow
     #   sagemaker-mlflow
-mlflow-tracing==3.16.1 \
-    --hash=sha256:315ba1ace00d43498da2ad2b2bbb751f3198d6f9cd328168dfeb49911df41925 \
-    --hash=sha256:b3ab97c7b4f919704e0cbe0653e6e9b89cf1f8a790f8bb1b4cf7f236df258e9e
+mlflow-tracing==3.17.2 \
+    --hash=sha256:1502aa892144cbe93b0c2a706b9564011be92903bbb343d19038dcd322ae5e7c \
+    --hash=sha256:35da9f6cc450feae7173941d0d119391f6fe3a41973c0a28ae4a021e6e285c99
     # via mlflow
 multidict==7.2.1 \
     --hash=sha256:02009b402129a73e1f3da68f48eb999afbacd29f25aef0d5052b84ff5c2786a2 \

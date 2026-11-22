@@ -14,7 +14,7 @@
 # MLFLOW_VERSION pins the training image to the SageMaker MLflow App's version.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-MLFLOW_VERSION="${MLFLOW_VERSION:-3.16.1}"
+MLFLOW_VERSION="${MLFLOW_VERSION:-3.17.2}"
 work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
 grep -v '^python-dateutil\|^#' requirements.txt > "$work/base.txt"
 
