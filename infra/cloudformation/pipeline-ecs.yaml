@@ -104,7 +104,9 @@ Resources:
   TrainingPipeline:
     Type: AWS::StepFunctions::StateMachine
     Properties:
-      StateMachineName: !Sub "${EnvironmentName}-training"
+      # Not "<environment>-training": the SageMaker pipeline (pipeline.yaml) already owns that name in an account that used it,
+      # and CloudFormation creates this one before it deletes that one, so a shared name fails with "State machine already exists".
+      StateMachineName: !Sub "${EnvironmentName}-training-ecs"
       RoleArn: !GetAtt PipelineRole.Arn
       DefinitionSubstitutions:
         Bucket: !Ref ArtifactBucketName
