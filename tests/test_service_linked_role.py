@@ -19,14 +19,19 @@ def run_function(*, role_exists: bool, create_output: str = "", create_ok: bool 
         fake.write_text(
             "#!/usr/bin/env bash\n"
             "echo \"$@\" >> \"$CALLS\"\n"
-            "if [ \"$1 $2\" = 'iam get-role' ]; then [ \"$ROLE_EXISTS\" = 1 ] && exit 0 || exit 254; fi\n"
-            "if [ \"$1 $2\" = 'iam create-service-linked-role' ]; then echo \"$CREATE_OUTPUT\"; [ \"$CREATE_OK\" = 1 ] && exit 0 || exit 254; fi\n"
+            "if [ \"$1 $2\" = 'iam create-service-linked-role' ]; then\n"
+            "  echo \"$CREATE_OUTPUT\"\n"
+            "  if [ \"$CREATE_OK\" = 1 ] || printf '%s' \"$CREATE_OUTPUT\" | grep -q 'has been taken'; then echo 1 > \"$ROLE_STATE\"; fi\n"
+            "  [ \"$CREATE_OK\" = 1 ] && exit 0 || exit 254\n"
+            "fi\n"
+            "if [ \"$1 $2\" = 'iam get-role' ]; then [ \"$ROLE_EXISTS\" = 1 ] && exit 0 || [ -f \"$ROLE_STATE\" ] && exit 0 || exit 254; fi\n"
             "exit 0\n")
         fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
         function = SCRIPT[SCRIPT.index("ensure_service_linked_role() {"):]
         function = function[:function.index("\n}\n") + 3]
         env = {**os.environ, "PATH": f"{temp}:{os.environ['PATH']}", "CALLS": str(log), "ROLE_EXISTS": "1" if role_exists else "0",
-               "CREATE_OUTPUT": create_output, "CREATE_OK": "1" if create_ok else "0"}
+               "ROLE_STATE": str(temp / "role-created"), "CREATE_OUTPUT": create_output, "CREATE_OK": "1" if create_ok else "0",
+               "SERVICE_LINKED_ROLE_RETRY_SECONDS": "0", "SERVICE_LINKED_ROLE_PROPAGATION_SECONDS": "0"}
         result = subprocess.run(["bash", "-c", 'fail() { echo "FAIL: $*" >&2; exit 1; }\n' + function +
                                  "\nensure_service_linked_role ecs.amazonaws.com AWSServiceRoleForECS"],
                                 env=env, capture_output=True, text=True)
@@ -48,9 +53,10 @@ class ServiceLinkedRoleTests(unittest.TestCase):
         self.assertIn("iam wait role-exists --role-name AWSServiceRoleForECS", calls)
 
     def test_a_role_created_by_someone_else_in_the_meantime_is_not_an_error(self):
-        result, _ = run_function(role_exists=False, create_ok=False,
-                                 create_output="InvalidInput: Service role name AWSServiceRoleForECS has been taken in this account")
+        result, calls = run_function(role_exists=False, create_ok=False,
+                                     create_output="InvalidInput: Service role name AWSServiceRoleForECS has been taken in this account")
         self.assertEqual(result.returncode, 0)
+        self.assertIn("iam get-role --role-name AWSServiceRoleForECS", calls)
 
     def test_a_denied_creation_stops_with_what_to_ask_an_administrator(self):
         result, _ = run_function(role_exists=False, create_ok=False, create_output="AccessDenied: explicit deny in a service control policy")
