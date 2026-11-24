@@ -1,0 +1,97 @@
+# The predict demo: replays real PhysioNet stays hour by hour through the deployed scoring endpoint (the Lambda function
+# URL, IAM-signed like a hospital system would call it) and keeps the ward replay page in the private artifact bucket.
+# Held-out splits (hospital B, internal test) only run for a model with a recorded frozen evaluation, i.e. after the
+# approval step of the pipeline. Run the deploy workflow with "full deploy" first so the endpoint exists.
+# The page holds patient-level trajectories: it goes to S3 only, never to the repository or a workflow artifact.
+name: demo
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment
+        type: choice
+        options: [dev, staging, prod]
+        default: dev
+      region:
+        description: AWS region of the deployment
+        type: choice
+        options: [environment default, ap-southeast-1, ap-southeast-2]
+        default: environment default
+      split:
+        description: validation is safe before the freeze; internal_test and external_test (hospital B) need the frozen evaluation
+        type: choice
+        options: [validation, internal_test, external_test]
+        default: validation
+      beds:
+        description: Stays on the ward
+        default: "12"
+
+permissions:
+  contents: read
+  id-token: write   # OIDC token for AWS; no stored credentials
+
+concurrency:
+  group: demo-${{ inputs.environment }}-${{ inputs.region }}
+  cancel-in-progress: false
+
+jobs:
+  demo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: ${{ inputs.environment }}
+    steps:
+      - name: Resolve the region and the deploy role
+        id: target
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          REGION_INPUT: ${{ inputs.region }}
+          DEFAULT_REGION: ${{ vars.AWS_REGION }}
+          ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          ROLE_ARN_VAR: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          BEDS: ${{ inputs.beds }}
+        run: |
+          region="$REGION_INPUT"
+          [ "$region" != "environment default" ] || region="$DEFAULT_REGION"
+          case "$region" in
+            ap-southeast-1|ap-southeast-2) ;;
+            *) echo "Region '$region' is not supported." >&2; exit 1 ;;
+          esac
+          case "$BEDS" in ''|*[!0-9]*) echo "beds must be a whole number" >&2; exit 1 ;; esac
+          if [ -n "$ROLE_ARN_VAR" ]; then
+            role="$ROLE_ARN_VAR"
+          elif [ -n "$ACCOUNT_ID" ]; then
+            role="arn:aws:iam::${ACCOUNT_ID}:role/github-deploy-${ENVIRONMENT}-${region}"
+          else
+            echo "The '$ENVIRONMENT' environment has neither AWS_ACCOUNT_ID nor AWS_DEPLOY_ROLE_ARN." >&2
+            exit 1
+          fi
+          echo "region=$region" >> "$GITHUB_OUTPUT"
+          echo "role=$role" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          role-to-assume: ${{ steps.target.outputs.role }}
+          aws-region: ${{ steps.target.outputs.region }}
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+
+      - name: Install the tools (locked)
+        run: |
+          python -m pip install --require-hashes -r requirements/ci.txt
+          python -m pip install --no-deps -e .
+
+      - name: Replay stays through the live endpoint
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          CONFIRM_PROD: ${{ inputs.environment == 'prod' && 'yes' || '' }}
+          AWS_REGION: ${{ steps.target.outputs.region }}
+          SPLIT: ${{ inputs.split }}
+          BEDS: ${{ inputs.beds }}
+        run: bash scripts/aws_deploy.sh demo

@@ -201,6 +201,30 @@ def fetch_raw_from_s3(bucket: str, prefix: str, destination: Path, limit: int, s
     return len(jobs)
 
 
+MARKER = "_SUCCESS"
+
+
+def _s3(client=None):
+    client = client or S3_CLIENT
+    if client is None:
+        import boto3
+
+        client = boto3.client("s3")
+    return client
+
+
+def read_marker(client, bucket: str, prefix: str) -> dict | None:
+    """The ``_SUCCESS`` record a finished prepare step leaves next to the data, or None."""
+    try:
+        body = client.get_object(Bucket=bucket, Key=f"{prefix.strip('/')}/{MARKER}")["Body"].read()
+    except Exception as error:  # noqa: BLE001 - only "not there" means None
+        code = getattr(error, "response", {}).get("Error", {}).get("Code", "")
+        if code in ("NoSuchKey", "404", "NotFound") or type(error).__name__ == "NoSuchKey":
+            return None
+        raise
+    return json.loads(body)
+
+
 def prepare_data(root: Path, params: dict, client=None) -> list[str]:
     """Pipeline step 1: build the data in S3 so nothing has to be prepared on a laptop.
 
@@ -218,6 +242,19 @@ def prepare_data(root: Path, params: dict, client=None) -> list[str]:
     if not bucket:
         raise ValueError("mode prepare needs publish_bucket")
     source, seed = params.get("data_source", "synthetic"), int(params.get("seed", 42))
+    prefix, limit = params.get("data_prefix", "data/physionet"), int(params.get("limit", 0))
+    # The real data never changes, so it is prepared once. A rerun with the same settings does nothing, and a
+    # rehearsal on the synthetic fixture can never overwrite it (force=true is the deliberate way around that).
+    existing = read_marker(_s3(client), bucket, prefix)
+    if existing and not _flag(params.get("force", "false")):
+        real = lambda name: str(name).startswith("physionet")   # noqa: E731
+        if real(existing.get("data_source")) and not real(source):
+            raise ValueError(f"s3://{bucket}/{prefix}/ holds real PhysioNet data (prepared {existing.get('prepared_at')}); "
+                             "refusing to overwrite it with the synthetic fixture. Use a different data prefix, or force=true")
+        if (existing.get("data_source"), existing.get("limit"), existing.get("seed")) == (source, limit, seed):
+            print(f"s3://{bucket}/{prefix}/ already holds {source} data prepared {existing.get('prepared_at')} "
+                  f"({existing.get('files', {}).get('combined.parquet', {}).get('sha256', '')[:12]}); nothing to do", flush=True)
+            return []
     raw = root / "work" / "raw"
     raw.mkdir(parents=True, exist_ok=True)
     if source == "synthetic":
@@ -242,7 +279,16 @@ def prepare_data(root: Path, params: dict, client=None) -> list[str]:
     manifest = raw / "download_manifest.json"
     if manifest.is_file():
         (built / "download_manifest.json").write_bytes(manifest.read_bytes())
-    uris = _upload(built, bucket, params.get("data_prefix", "data/physionet"), client=client)
+    import datetime
+    import hashlib
+
+    files = {name: {"sha256": hashlib.sha256((built / name).read_bytes()).hexdigest(), "bytes": (built / name).stat().st_size}
+             for name in ("combined.parquet", "splits.csv")}
+    (built / MARKER).write_text(json.dumps({
+        "data_source": source, "limit": limit, "seed": seed, "files": files,
+        "raw_records": sum(1 for _ in (raw).rglob("*.psv")),
+        "prepared_at": datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds")}, indent=2), encoding="utf-8")
+    uris = _upload(built, bucket, prefix, client=client)
     print(f"Prepared {source} data: " + ", ".join(uris), flush=True)
     return uris
 

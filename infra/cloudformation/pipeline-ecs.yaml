@@ -41,9 +41,6 @@ Parameters:
     Default: "true"
     AllowedValues: ["true", "false"]
     Description: Run the tune and train steps on Fargate Spot (cheaper; a step restarts if AWS reclaims the capacity).
-  DataPrefix:
-    Type: String
-    Default: data/physionet
   ApprovalTimeoutSeconds:
     Type: Number
     Default: 604800
@@ -114,7 +111,6 @@ Resources:
         Repository: !Ref TrainingRepositoryUri
         Mlflow: !Ref MlflowTrackingUri
         Topic: !Ref NotificationTopicArn
-        DataPrefix: !Ref DataPrefix
         ClusterArn: !Ref ClusterArn
         SubnetA: !Ref SubnetAId
         SubnetB: !Ref SubnetBId
@@ -131,7 +127,8 @@ Resources:
         Comment: >-
           Same input as pipeline.yaml (all values are strings): {"image_tag": "training-<git sha>", "git_commit": "<sha>",
           "require_real_data": "true|false", "prepare": "true|false", "data_source": "synthetic|physionet",
-          "limit": "0", "trials": "6"}. Extra keys (instance_type) are ignored. Each step is an ECS task that runs
+          "limit": "0", "trials": "6"}. Extra keys (instance_type) are ignored. Each data source has its own folder
+          (data/synthetic, data/physionet, data/physionet-web), so a rehearsal can never touch the real data. Each step is an ECS task that runs
           the image's sepsis_warning.ecs_job entry point; its output goes to s3://<bucket>/training-output/<execution>/<step>/.
         StartAt: RegisterTaskDefinition
         States:
@@ -224,7 +221,7 @@ Resources:
                       - Name: HP_publish_bucket
                         Value: ${Bucket}
                       - Name: HP_data_prefix
-                        Value: ${DataPrefix}
+                        Value.$: States.Format('data/{}', $.data_source)
             ResultSelector:
               exit.$: $.Containers[0].ExitCode
             ResultPath: $.prepared
@@ -279,7 +276,7 @@ Resources:
                       - Name: HP_run_id
                         Value.$: $$.Execution.Name
                       - Name: CH_data
-                        Value: s3://${Bucket}/${DataPrefix}/
+                        Value.$: States.Format('s3://${Bucket}/data/{}/', $.data_source)
             ResultSelector:
               exit.$: $.Containers[0].ExitCode
             ResultPath: $.tuning
@@ -336,7 +333,7 @@ Resources:
                       - Name: HP_run_id
                         Value.$: $$.Execution.Name
                       - Name: CH_data
-                        Value: s3://${Bucket}/${DataPrefix}/
+                        Value.$: States.Format('s3://${Bucket}/data/{}/', $.data_source)
                       - Name: CH_config
                         Value.$: States.Format('s3://${Bucket}/tuning/{}/', $$.Execution.Name)
             ResultSelector:
@@ -410,7 +407,7 @@ Resources:
                       - Name: HP_publish_bucket
                         Value: ${Bucket}
                       - Name: CH_data
-                        Value: s3://${Bucket}/${DataPrefix}/
+                        Value.$: States.Format('s3://${Bucket}/data/{}/', $.data_source)
             ResultSelector:
               exit.$: $.Containers[0].ExitCode
             ResultPath: $.publish

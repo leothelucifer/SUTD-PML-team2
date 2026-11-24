@@ -197,6 +197,11 @@ cmd_data() {
 cmd_fetch_data() {
   local bucket source="s3://physionet-open/challenge-2019/1.0.0/training" set count
   bucket="$(output ArtifactBucketName)"; [ -n "$bucket" ] || fail "no ArtifactBucketName output; deploy the stack first"
+  # The data never changes, so this is done once: a marker records the finished copy (FORCE=1 copies again).
+  if [ "${FORCE:-}" != 1 ] && aws s3api head-object --bucket "$bucket" --key raw/physionet/_SUCCESS >/dev/null 2>&1; then
+    echo "The PhysioNet copy in s3://$bucket/raw/physionet/ is already complete (marker _SUCCESS); nothing to do. FORCE=1 copies again."
+    return 0
+  fi
   for set in A B; do
     echo "Copying $source/training_set$set/ to s3://$bucket/raw/physionet/training/training_set$set/"
     aws s3 sync "$source/training_set$set/" "s3://$bucket/raw/physionet/training/training_set$set/" \
@@ -206,6 +211,9 @@ cmd_fetch_data() {
     echo "training_set$set: $count records (expected $expected)"
     [ "$count" = "$expected" ] || fail "training_set$set has $count records, expected $expected; run fetch-data again"
   done
+  printf '{"source": "%s", "training_setA": 20336, "training_setB": 20000, "copied_at": "%s"}\n' \
+    "$source" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" | aws s3 cp - "s3://$bucket/raw/physionet/_SUCCESS" --only-show-errors
+  echo "Copy complete; marker written to s3://$bucket/raw/physionet/_SUCCESS"
 }
 
 cmd_train() {
@@ -246,6 +254,13 @@ cmd_serve() {
 
 cmd_call() {
   "$PYTHON" "$ROOT/scripts/call_scoring_url.py" --url "$(output ApiBaseUrl)" --region "$AWS_REGION" "$@"
+}
+
+# demo: replay real stays through the deployed endpoint and keep the ward page in the private bucket.
+# SPLIT=validation|internal_test|external_test (held-out splits need the model's recorded frozen evaluation), BEDS, SEED.
+cmd_demo() {
+  "$PYTHON" "$ROOT/scripts/aws_demo.py" --stack "$STACK" --region "$AWS_REGION" \
+    --split "${SPLIT:-validation}" --beds "${BEDS:-12}" --seed "${SEED:-42}"
 }
 
 # power status | start | stop [--component all|mlflow|evidently|database] [--allow-cidr x.x.x.x/32]
@@ -389,6 +404,7 @@ case "${1:-}" in
   serve) cmd_serve ;;
   call) shift; cmd_call "$@" ;;
   power) shift; cmd_power "$@" ;;
+  demo) cmd_demo ;;
   pipeline) cmd_pipeline ;;
   pipeline-wait) shift; cmd_pipeline_wait "$@" ;;
   approve) shift; cmd_approve "$@" ;;
