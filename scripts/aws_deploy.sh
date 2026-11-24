@@ -305,6 +305,28 @@ cmd_pipeline_wait() {
   fi
 }
 
+# promote-task: promote a model version as a one-off ECS task under the approver role (MLflow is private).
+# MODEL_VERSION, REQUIRE_REAL_DATA (true|false), REVIEWED_BY and TAG are read from the environment.
+cmd_promote_task() {
+  local tracking; tracking="$(output MlflowTrackingUri)"
+  [ -n "$tracking" ] || fail "the stack has no MLflow server on ECS (MlflowBackend=ecs); use '$0 promote' for the SageMaker MLflow App"
+  cmd_power require-on --component mlflow || fail "start MLflow first: the power workflow with action start"
+  case "${MODEL_VERSION:-}" in ''|*[!0-9]*) fail "MODEL_VERSION must be a whole number" ;; esac
+  [ -n "${REVIEWED_BY:-}" ] || fail "REVIEWED_BY is required (the workflow passes the GitHub user)"
+  "$PYTHON" "$ROOT/scripts/aws_run_task.py" --stack "$STACK" --region "$AWS_REGION" --role approver \
+    --image-tag "training-$TAG" --family approver \
+    --env HP_mode=promote --env "HP_mlflow_tracking_uri=$tracking" --env "HP_model_version=$MODEL_VERSION" \
+    --env "HP_reviewed_by=$REVIEWED_BY" --env "HP_require_real_data=${REQUIRE_REAL_DATA:-true}" \
+    --env "JOB_OUTPUT=s3://$(output ArtifactBucketName)/training-output/promote-$MODEL_VERSION-$(date +%s)/"
+}
+
+# approve-run: answer the waiting pipeline from a workflow (DECISION approve|reject, EXECUTION, REASON, DECIDED_BY).
+cmd_approve_run() {
+  "$PYTHON" "$ROOT/scripts/aws_approval.py" --stack "$STACK" --region "$AWS_REGION" \
+    --decision "${DECISION:?set DECISION to approve or reject}" --by "${DECIDED_BY:?set DECIDED_BY}" \
+    ${EXECUTION:+--execution "$EXECUTION"} ${REASON:+--reason "$REASON"}
+}
+
 cmd_approve() {
   [ $# -eq 1 ] || fail "usage: $0 approve TASK_TOKEN   (run 'promote' first; a different person from the trainer)"
   aws stepfunctions send-task-success --task-token "$1" --task-output '{"approved": true}'
@@ -370,6 +392,8 @@ case "${1:-}" in
   pipeline) cmd_pipeline ;;
   pipeline-wait) shift; cmd_pipeline_wait "$@" ;;
   approve) shift; cmd_approve "$@" ;;
+  approve-run) cmd_approve_run ;;
+  promote-task) cmd_promote_task ;;
   reference) shift; cmd_reference "$@" ;;
   down) cmd_down ;;
   github-oidc) shift; cmd_github_oidc "$@" ;;

@@ -161,7 +161,12 @@ class PromotionAndPublishTests(unittest.TestCase):
             with self.assertRaisesRegex(PublishRefused, "frozen evaluation"):
                 publish_model(uri, self.uri, "bucket2", client=s3)
             client.set_model_version_tag(MODEL_NAME, self.version, EVALUATED_TAG, "2026-11-15T00:00:00+00:00")
-            # Evaluated but never promoted: a real-data version still cannot be published.
+            # Evaluated but never promoted: a real-data version still cannot be published, and the check
+            # that runs before the one-time evaluation refuses it too.
+            from sepsis_warning.model_source import check_promoted
+
+            with self.assertRaisesRegex(PublishRefused, "not promoted"):
+                check_promoted(uri, self.uri)
             with self.assertRaisesRegex(PublishRefused, "not promoted"):
                 publish_model(uri, self.uri, "bucket2", client=s3)
             for key in ("reviewed_by", "approved_by", "promoted_at"):

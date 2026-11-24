@@ -361,6 +361,11 @@ Resources:
             Parameters:
               TopicArn: ${Topic}
               Subject: Sepsis model candidate awaiting review
+              # The token also goes in a message attribute so the approve workflow can read it from the history.
+              MessageAttributes:
+                token:
+                  DataType: String
+                  StringValue.$: $$.Task.Token
               Message.$: >-
                 States.Format('Pipeline run {} trained a candidate that passed the data checks and promotion gates.
                 Metrics table and figures: s3://${Bucket}/reports/{}/ . Review the run in MLflow,

@@ -113,6 +113,24 @@ def ensure_promoted(model_uri: str, tracking_uri: str, version: str, tags: dict,
                              "publish the promoted version, or promote this one again after review")
 
 
+def check_promoted(model_uri: str, tracking_uri: str) -> str:
+    """Refuse an unpromoted real-data version before anything is evaluated or published.
+
+    The frozen evaluation scores the test splits once. It must only ever run for a version that went through
+    ``promote``, so this check comes first and reads the registry only (nothing is downloaded).
+    Returns the version number.
+    """
+    from .registry import _client, parse_model_uri
+
+    name, alias, version = parse_model_uri(model_uri)
+    client = _client(tracking_uri)
+    found = client.get_model_version_by_alias(name, alias) if alias else client.get_model_version(name, version)
+    tags = dict(found.tags)
+    if tags.get("synthetic") != "true":
+        ensure_promoted(model_uri, tracking_uri, str(found.version), tags)
+    return str(found.version)
+
+
 def publish_model(model_uri: str, tracking_uri: str, bucket: str, prefix: str = "models", client=None) -> dict:
     """Copy a registered version to S3 for deployment. Returns what to pin.
 

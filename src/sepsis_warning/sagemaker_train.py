@@ -122,12 +122,14 @@ def evaluate_and_publish(root: Path, params: dict, args: Namespace) -> dict:
     ``model_uri`` (default ``models:/sepsis-warning@production``).
     """
     from .evaluation import AlreadyEvaluated, run_frozen_evaluation
-    from .model_source import publish_model
+    from .model_source import check_promoted, publish_model
 
     tracking, bucket = params.get("mlflow_tracking_uri"), params.get("publish_bucket")
     if not tracking or not bucket:
         raise ValueError("mode evaluate_publish needs mlflow_tracking_uri and publish_bucket")
     model_uri = params.get("model_uri") or "models:/sepsis-warning@production"
+    # Before the one-time test evaluation: the version must have been promoted by a named reviewer.
+    check_promoted(model_uri, tracking)
     # The evaluation writes patient-level test predictions and a replay page. SageMaker archives everything
     # under /opt/ml/model into model.tar.gz, so those files go to a scratch folder that is deleted at the end
     # of the step; only the aggregate metrics file is kept with the job's output.
