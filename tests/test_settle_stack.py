@@ -70,5 +70,68 @@ class SettleStackTests(unittest.TestCase):
         self.assertIn("UPDATE_ROLLBACK_FAILED", result.stderr)
 
 
+    def test_a_create_in_progress_is_waited_for(self):
+        result, calls = run(["CREATE_IN_PROGRESS", "CREATE_COMPLETE"])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("wait stack-create-complete", calls)
+        self.assertNotIn("cancel-update-stack", calls)
+
+    def test_a_delete_in_progress_is_waited_for(self):
+        result, calls = run(["DELETE_IN_PROGRESS", "DELETE_COMPLETE"])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("wait stack-delete-complete", calls)
+
+    def test_a_stack_that_cannot_be_deleted_points_to_the_teardown_workflow(self):
+        for status in ("DELETE_FAILED", "ROLLBACK_FAILED"):
+            result, _ = run([status])
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("teardown", result.stderr)
+
+    def test_a_rolled_back_update_can_be_updated_again(self):
+        result, calls = run(["UPDATE_ROLLBACK_COMPLETE"])
+        self.assertEqual(result.returncode, 0)
+        self.assertNotIn("cancel-update-stack", calls)
+
+
+class WiringTests(unittest.TestCase):
+    """Static checks that the pieces are connected (the behaviour of each is tested on its own)."""
+
+    def test_the_watcher_runs_only_for_a_real_update_and_is_stopped_afterwards(self):
+        stack = SCRIPT[SCRIPT.index("cmd_stack() {"):SCRIPT.index("cmd_ready() {")]
+        self.assertIn('aws_watch_services.py" watch', stack)
+        self.assertIn('[ -z "${PREVIEW:-}" ]', stack)
+        self.assertIn('kill "$watcher"', stack)
+        self.assertIn("trap 'cancel_running_update", stack)
+
+    def test_the_workflow_checks_the_model_first_and_the_services_after_the_stack(self):
+        import yaml
+        steps = [step.get("name", "") for step in yaml.safe_load(
+            (ROOT / ".github" / "workflows" / "deploy.yml").read_text(encoding="utf-8"))["jobs"]["deploy"]["steps"]]
+        order = [next(i for i, n in enumerate(steps) if n.startswith(prefix)) for prefix in (
+            "Validate", "Check that a model", "Stack and images", "Wait for the hosted tools", "Publish", "Verify", "Diagnose")]
+        self.assertEqual(order, sorted(order))
+
+    def test_every_deploy_step_has_a_timeout(self):
+        import yaml
+        for step in yaml.safe_load((ROOT / ".github" / "workflows" / "deploy.yml").read_text(encoding="utf-8"))["jobs"]["deploy"]["steps"]:
+            if step.get("name", "").startswith(("Validate", "Check that a model", "Stack and images", "Wait for the hosted", "Publish", "Diagnose")):
+                self.assertIn("timeout-minutes", step, step["name"])
+
+
+class CheckModelTests(unittest.TestCase):
+    def test_a_missing_stack_says_to_deploy_stack_and_images_first(self):
+        with tempfile.TemporaryDirectory() as temp:
+            fake = Path(temp) / "aws"
+            fake.write_text("#!/usr/bin/env bash\nexit 254\n")
+            fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+            function = SCRIPT[SCRIPT.index("cmd_check_model() {"):]
+            function = function[:function.index("\n}\n") + 3]
+            env = {**os.environ, "PATH": f"{temp}:{os.environ['PATH']}"}
+            result = subprocess.run(["bash", "-c", 'fail() { echo "FAIL: $*" >&2; exit 1; }\nSTACK=s\noutput() { :; }\n' + function + "\ncmd_check_model"],
+                                    env=env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("stack and images only", result.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()
