@@ -74,3 +74,27 @@ class TemplateTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StateMachineNameTests(unittest.TestCase):
+    def test_the_two_pipelines_never_share_a_state_machine_name(self):
+        # CloudFormation creates the new pipeline before it deletes the old one when a stack switches backends; a shared
+        # fixed name fails with "State machine already exists" (deploy runs 23 to 27).
+        names = {}
+        for template in ("pipeline.yaml", "pipeline-ecs.yaml"):
+            text = (Path(__file__).resolve().parents[1] / "infra" / "cloudformation" / template).read_text(encoding="utf-8")
+            match = re.search(r"StateMachineName: !Sub \"(.+?)\"", text)
+            self.assertIsNotNone(match, template)
+            names[template] = match.group(1)
+        self.assertEqual(len(set(names.values())), 2, names)
+
+    def test_no_resource_that_both_backends_create_has_the_same_fixed_name(self):
+        root = Path(__file__).resolve().parents[1] / "infra" / "cloudformation"
+        fixed = {}
+        for template in ("pipeline.yaml", "pipeline-ecs.yaml", "mlflow-ecs.yaml", "evidently-ecs.yaml", "ecs-platform.yaml", "mlops.yaml"):
+            text = (root / template).read_text(encoding="utf-8")
+            for key in ("StateMachineName", "ClusterName", "ServiceName", "AlarmName", "LogGroupName", "Family"):
+                for value in re.findall(rf"^\s+{key}: !Sub \"(.+?)\"", text, flags=re.M):
+                    fixed.setdefault((key, value), []).append(template)
+        clashes = {k: v for k, v in fixed.items() if len(v) > 1}
+        self.assertEqual(clashes, {})

@@ -43,7 +43,27 @@ def validation_failures(cloudformation, stack: str) -> list[dict]:
     return found
 
 
-def failures(cloudformation, stack: str, seen: set | None = None) -> list[dict]:
+def operation_start(events: list[dict], stack: str):
+    """When the latest create or update of ``stack`` began, or None when the events carry no timestamps.
+
+    A stack keeps every event of every earlier attempt, and so do the nested stacks the rollbacks deleted (they stay readable
+    by ID). Without this cut the report starts with the oldest failure ever recorded: a role that was missing three runs
+    ago was shown as the cause of a later failure that had nothing to do with it.
+    """
+    name = stack.split("/")[1] if ":stack/" in stack else stack
+    for event in events:                                   # newest first
+        if (event.get("ResourceType") == "AWS::CloudFormation::Stack" and event.get("LogicalResourceId") == name
+                and event.get("ResourceStatus") in ("CREATE_IN_PROGRESS", "UPDATE_IN_PROGRESS") and event.get("Timestamp")):
+            return event["Timestamp"]
+    return None
+
+
+def in_window(timestamp, since) -> bool:
+    return since is None or timestamp is None or timestamp >= since
+
+
+def failures(cloudformation, stack: str, seen: set | None = None, since=None) -> list[dict]:
+    """Failures of the latest operation on ``stack`` and of the nested stacks it started. Oldest first."""
     seen = seen if seen is not None else set()
     if stack in seen:
         return []
@@ -52,26 +72,29 @@ def failures(cloudformation, stack: str, seen: set | None = None) -> list[dict]:
         events = events_of(cloudformation, stack)
     except Exception as error:  # noqa: BLE001  a nested stack we may not be allowed to read
         return [{"stack": stack, "logical": "(events unreadable)", "type": "", "reason": str(error), "time": None}]
-    found = validation_failures(cloudformation, stack)
+    if since is None:
+        since = operation_start(events, stack)
     found = []
     try:
         page = cloudformation.describe_events(StackName=stack, Filters={"FailedEvents": True})
         for event in page.get("OperationEvents", []):
             reason = event.get("ValidationStatusReason") or event.get("ResourceStatusReason")
-            if reason and "cancelled" not in reason.lower():
+            if reason and "cancelled" not in reason.lower() and in_window(event.get("Timestamp"), since):
                 where = event.get("ValidationPath") or event.get("LogicalResourceId") or ""
                 found.append({"stack": stack, "logical": f"{event.get('ValidationName', 'validation')} {where}".strip(),
                               "type": event.get("ResourceType", "validation"), "reason": reason, "time": event.get("Timestamp")})
     except Exception:  # noqa: BLE001  an older SDK or stack operation may not support this API
         pass
     for event in events:
+        if not in_window(event.get("Timestamp"), since):
+            continue
         status, reason = event.get("ResourceStatus", ""), event.get("ResourceStatusReason", "")
         if status.endswith("FAILED") and reason and "cancelled" not in reason.lower():
             found.append({"stack": event.get("StackName", stack), "logical": event["LogicalResourceId"],
                           "type": event.get("ResourceType", ""), "reason": reason, "time": event.get("Timestamp")})
         physical = event.get("PhysicalResourceId", "")
         if event.get("ResourceType") == "AWS::CloudFormation::Stack" and ":stack/" in physical and physical != stack:
-            found += failures(cloudformation, physical, seen)
+            found += failures(cloudformation, physical, seen, since)
     return found
 
 
