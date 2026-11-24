@@ -154,6 +154,20 @@ class VerifyTests(unittest.TestCase):
         verify.check_service_linked_roles(nothing, Namespace(), {"TrainingBackend": "sagemaker", "MlflowBackend": "sagemaker"})
         self.assertEqual(statuses(nothing), {})
 
+    def test_the_scoring_image_is_not_required_in_lambda_mode_but_is_with_fargate_serving(self):
+        items = [{"type": "AWS::ECR::Repository", "logical": "EcrRepository", "physical": "scoring-repo"},
+                 {"type": "AWS::ECR::Repository", "logical": "LambdaRepository", "physical": "lambda-repo"},
+                 {"type": "AWS::ECR::Repository", "logical": "TrainingRepository", "physical": "training-repo"}]
+        ecr = Namespace(describe_images=lambda repositoryName: {"imageDetails": (
+            [] if repositoryName == "scoring-repo" else [{"imageTags": ["lambda-abc123def456"]}])})
+        lambda_mode = verify.Result()
+        verify.check_repositories(lambda_mode, ecr, items, "abc123def456", "lambda")
+        self.assertEqual(statuses(lambda_mode)["ECR scoring-repo"], "PASS")
+        fargate = verify.Result()
+        verify.check_repositories(fargate, ecr, items, "abc123def456", "fargate")
+        self.assertEqual(statuses(fargate)["ECR scoring-repo"], "FAIL")
+        self.assertEqual(statuses(fargate)["ECR lambda-repo"], "PASS")
+
     def test_missing_outputs_fail(self):
         result = verify.Result()
         verify.check_outputs(result, {"ArtifactBucketName": "b"}, False)

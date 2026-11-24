@@ -231,26 +231,61 @@ cmd_outputs() {
   aws cloudformation describe-stacks --stack-name "$STACK" --query "Stacks[0].Outputs" --output table
 }
 
+# Build and push one image kind for this commit. The previous image of the same kind is pulled first and used as the layer
+# cache (the dependency layers only change when a lock file does), so a code-only commit rebuilds the last two layers.
+build_one_image() {  # build_one_image KIND REPOSITORY_URI
+  local target="$1" repo="$2" image_tag="$1-$TAG" repository_name="${2##*/}" previous cache=()
+  if aws ecr describe-images --repository-name "$repository_name" \
+    --image-ids "imageTag=$image_tag" --query 'imageDetails[0].imageDigest' --output text >/dev/null 2>&1; then
+    echo "Reusing existing $target image -> $repo:$image_tag"
+    return 0
+  fi
+  previous="$(aws ecr describe-images --repository-name "$repository_name" \
+    --query "sort_by(imageDetails[?imageTags!=null && starts_with(imageTags[0], '$target-')], &imagePushedAt)[-1].imageTags[0]" \
+    --output text 2>/dev/null | sed 's/^None$//' || true)"
+  if [ -n "$previous" ] && docker pull --quiet "$repo:$previous" >/dev/null 2>&1; then
+    echo "Building $target -> $repo:$image_tag (layers reused from $previous)"
+    cache=(--cache-from "$repo:$previous")
+  else
+    echo "Building $target -> $repo:$image_tag (no earlier image to reuse)"
+  fi
+  "${build[@]}" "${cache[@]}" --target "$target" -t "$repo:$image_tag" "$ROOT" >/dev/null
+  docker push --quiet "$repo:$image_tag"
+}
+
 cmd_images() {
   local registry; registry="$(account).dkr.ecr.$AWS_REGION.amazonaws.com"
   aws ecr get-login-password | docker login --username AWS --password-stdin "$registry" >/dev/null
-  local build=(docker build --provenance=false --platform "$PLATFORM" --build-arg "BASE_IMAGE=${BASE_IMAGE:-python:3.12-slim}")
+  # BUILDKIT_INLINE_CACHE stores the cache metadata in the pushed image, which the next build pulls and reuses.
+  build=(docker build --provenance=false --platform "$PLATFORM" --build-arg "BASE_IMAGE=${BASE_IMAGE:-python:3.12-slim}" --build-arg BUILDKIT_INLINE_CACHE=1)
   [ -n "${EXTRA_CA_CERT:-}" ] && build+=(--secret "id=extra_ca,src=$EXTRA_CA_CERT")
-  local target repo
+  local pair target repo kinds=() repos=() i
   for pair in "lambda:LambdaRepositoryUri" "training:TrainingRepositoryUri" "tools:ToolsRepositoryUri" "scoring:EcrRepositoryUri"; do
     target="${pair%%:*}"; repo="$(output "${pair#*:}")"
     [ -n "$repo" ] || fail "stack output ${pair#*:} missing; run '$0 stack' first"
-    local image_tag="$target-$TAG"
-    local repository_name="${repo##*/}"
-    if aws ecr describe-images --repository-name "$repository_name" \
-      --image-ids "imageTag=$image_tag" --query 'imageDetails[0].imageDigest' --output text >/dev/null 2>&1; then
-      echo "Reusing existing $target image -> $repo:$image_tag"
+    # The scoring image is only for the always-on Fargate serving mode; Lambda mode serves from the lambda image.
+    if [ "$target" = scoring ] && [ "$SERVING_MODE" != fargate ]; then
+      echo "Skipping the scoring image (SERVING_MODE=$SERVING_MODE serves from the lambda image)"
       continue
     fi
-    echo "Building $target -> $repo:$image_tag"
-    "${build[@]}" --target "$target" -t "$repo:$target-$TAG" "$ROOT" >/dev/null
-    docker push --quiet "$repo:$image_tag"
+    kinds+=("$target"); repos+=("$repo")
   done
+  if [ "${IMAGES_PARALLEL:-}" = 1 ]; then
+    # Builds are mostly waiting for package downloads, so running them side by side shortens the step a lot.
+    local logs pids=() failed=0; logs="$(mktemp -d)"
+    for i in "${!kinds[@]}"; do
+      ( build_one_image "${kinds[$i]}" "${repos[$i]}" ) > "$logs/${kinds[$i]}.log" 2>&1 &
+      pids+=($!)
+    done
+    for i in "${!pids[@]}"; do
+      wait "${pids[$i]}" || failed=1
+      echo "---- ${kinds[$i]} ----"; cat "$logs/${kinds[$i]}.log"
+    done
+    rm -rf "$logs"
+    [ "$failed" = 0 ] || fail "an image build failed; the log of each is above"
+  else
+    for i in "${!kinds[@]}"; do build_one_image "${kinds[$i]}" "${repos[$i]}"; done
+  fi
   echo "Pushed images tagged *-$TAG"
 }
 

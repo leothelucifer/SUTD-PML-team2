@@ -83,6 +83,19 @@ RDS also rotates the database password every 7 days and the MLflow server reads 
   "Prevent self-review") are the human approval. The next step refuses a model that was never promoted before it scores
   the test splits.
 
+## How long a deploy takes, and why
+
+| Part | Typical time | Why |
+|---|---|---|
+| Validate and preview | about 3 to 4 minutes (35 seconds before the ECS stacks existed; measured in runs 21 and 28) | CloudFormation prepares a change set for every nested stack |
+| First `stack` run (new account or backend switch) | 15 to 30 minutes | RDS PostgreSQL takes 5 to 15 minutes to create; the Cloud Map namespace, cluster and roles are quicker; when a stack switches from SageMaker to ECS it also deletes the old pipeline stack and the SageMaker MLflow App at the end (cleanup) |
+| `images` for a commit that never ran | first ever: 15 to 25 minutes; later commits: a few minutes | Every commit gets its own image tags. Dependencies are installed in a layer that only changes with a lock file, and each build reuses the previous image's layers, so a code-only commit rebuilds two small layers. The Fargate serving image is skipped in Lambda mode and the builds run side by side in the deploy workflow |
+| Second `stack` run | 3 to 8 minutes | creates the MLflow and Evidently services, which wait for their task to start and pass its health check |
+| A later deploy with no infrastructure change | about 8 to 12 minutes | validate, a no-op stack update, cached images |
+
+If a service's task keeps crashing, the deployment circuit breaker marks the deployment failed after repeated failed launches, so the
+update fails with a reason instead of waiting. The failure list shows only the latest attempt.
+
 ## If something fails
 
 | Symptom | Look here |

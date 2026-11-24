@@ -230,6 +230,12 @@ Resources:
       DeploymentConfiguration:
         MinimumHealthyPercent: 0
         MaximumPercent: 100
+        # Without this a task that keeps crashing (a wrong database setting, an image that does not start) leaves the stack
+        # update waiting for a steady state that never comes. With it the deployment is marked failed after repeated failed
+        # launches and the update fails with the reason. No earlier deployment exists on the first create, so no rollback.
+        DeploymentCircuitBreaker:
+          Enable: true
+          Rollback: false
       NetworkConfiguration:
         AwsvpcConfiguration:
           AssignPublicIp: ENABLED

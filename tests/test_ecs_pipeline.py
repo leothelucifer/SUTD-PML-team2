@@ -296,3 +296,17 @@ class EvidentlyOnEcsTests(unittest.TestCase):
         self.assertEqual(version, "2")          # evidently 0.7 does not import under pandas 3
         script = (ROOT / "scripts" / "lock_requirements.sh").read_text(encoding="utf-8")
         self.assertIn('pandas<3', script)
+
+
+class FailFastTests(unittest.TestCase):
+    def test_both_ecs_services_fail_the_deployment_instead_of_waiting_for_a_steady_state_that_never_comes(self):
+        for template, name in (("mlflow-ecs.yaml", "Service"), ("evidently-ecs.yaml", "UiService")):
+            config = load(template)["Resources"][name]["Properties"]["DeploymentConfiguration"]
+            self.assertEqual(config["DeploymentCircuitBreaker"], {"Enable": True, "Rollback": False}, template)
+
+    def test_root_exposes_the_serving_mode_so_verify_knows_which_images_to_expect(self):
+        self.assertIn("ServingMode", load("root.yaml")["Outputs"])
+        self.assertIn('outputs.get("ServingMode", "lambda")', (ROOT / "scripts" / "aws_verify.py").read_text(encoding="utf-8"))
+
+    def test_the_deploy_workflow_builds_the_images_side_by_side(self):
+        self.assertIn('IMAGES_PARALLEL: "1"', (ROOT / ".github" / "workflows" / "deploy.yml").read_text(encoding="utf-8"))
