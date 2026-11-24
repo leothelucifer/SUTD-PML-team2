@@ -67,22 +67,41 @@ account() { aws sts get-caller-identity --query Account --output text; }
 # exists." AWS documents the fix: `aws iam create-service-linked-role --aws-service-name ecs.amazonaws.com` (IAM user guide,
 # "Creating a service-linked role"). Done here, once, only when the stack uses the service; an existing role is left alone.
 ensure_service_linked_role() {  # ensure_service_linked_role SERVICE ROLE-NAME
+  wait_for_service_linked_role() {  # ROLE-NAME: service-linked roles can take time to propagate after creation
+    local attempt
+    for attempt in 1 2 3 4 5 6; do
+      if aws iam get-role --role-name "$1" >/dev/null 2>&1; then
+        aws iam wait role-exists --role-name "$1" >/dev/null 2>&1 || true
+        return 0
+      fi
+      [ "$attempt" = 6 ] || sleep "${SERVICE_LINKED_ROLE_RETRY_SECONDS:-10}"
+    done
+    return 1
+  }
   if aws iam get-role --role-name "$2" >/dev/null 2>&1; then
     aws iam wait role-exists --role-name "$2" >/dev/null 2>&1 || true
-    sleep 10
+    # ECS and CloudFormation can briefly race IAM even after get-role succeeds.
+    sleep "${SERVICE_LINKED_ROLE_PROPAGATION_SECONDS:-60}"
     return 0
   fi
   echo "Creating the service-linked role $2 for $1 (the account has none yet)"
   local out
   if out="$(aws iam create-service-linked-role --aws-service-name "$1" 2>&1)"; then
-    aws iam wait role-exists --role-name "$2" >/dev/null 2>&1 || true
-    # IAM role propagation can briefly lag creation; ECS and CloudFormation need the role to be usable.
-    sleep 10
+    :
+  else
+    case "$out" in *"has been taken"*|*InvalidInput*taken*) ;; *)
+      echo "$out" >&2
+      fail "could not create $2. Ask an administrator to run: aws iam create-service-linked-role --aws-service-name $1 (or allow iam:CreateServiceLinkedRole for the deploy role / lift a service control policy that denies it)"
+      ;;
+    esac
+  fi
+  if wait_for_service_linked_role "$2"; then
+    # Leave enough time for the global IAM change to reach ECS before CloudFormation creates the cluster.
+    sleep "${SERVICE_LINKED_ROLE_PROPAGATION_SECONDS:-60}"
     return 0
   fi
-  case "$out" in *"has been taken"*|*InvalidInput*taken*) return 0 ;; esac
-  echo "$out" >&2
-  fail "could not create $2. Ask an administrator to run: aws iam create-service-linked-role --aws-service-name $1 (or allow iam:CreateServiceLinkedRole for the deploy role / lift a service control policy that denies it)"
+  echo "The service-linked role $2 was not visible after creation" >&2
+  fail "could not verify $2. Ask an administrator to run: aws iam create-service-linked-role --aws-service-name $1"
 }
 
 cmd_stack() {
