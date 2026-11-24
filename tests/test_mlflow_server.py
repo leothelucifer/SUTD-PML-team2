@@ -13,7 +13,24 @@ ENV = {"DB_HOST": "db.example.internal", "DB_NAME": "mlflow", "DB_USER": "mlflow
 class MlflowServerTests(unittest.TestCase):
     def test_the_password_is_percent_encoded_in_the_uri(self):
         uri = mlflow_server.backend_uri(ENV)
-        self.assertEqual(uri, "postgresql://mlflow:p%40ss%2Fword%3Awith%3Fodd%23chars@db.example.internal:5432/mlflow?sslmode=require")
+        self.assertEqual(uri, "postgresql+psycopg2://mlflow:p%40ss%2Fword%3Awith%3Fodd%23chars@db.example.internal:5432/mlflow?sslmode=require")
+
+    def test_the_database_driver_is_the_one_the_image_installs(self):
+        # The first MLflow task on AWS crashed with "No module named 'psycopg'": SQLAlchemy 2.1 maps a plain postgresql://
+        # URL to psycopg (version 3), and the image has psycopg2.
+        from pathlib import Path
+
+        from sqlalchemy.engine import make_url
+
+        uri = mlflow_server.backend_uri(ENV)
+        self.assertEqual(make_url(uri).get_dialect().driver, "psycopg2")
+        lock = (Path(__file__).resolve().parents[1] / "requirements" / "tools.txt").read_text(encoding="utf-8")
+        self.assertIn("psycopg2-binary==", lock)
+        self.assertNotIn("\npsycopg==", lock)
+        self.assertNotIn("\npsycopg[", lock)
+        from mlflow.utils.uri import extract_db_type_from_uri
+
+        self.assertEqual(extract_db_type_from_uri(uri), "postgresql")      # MLflow accepts the driver suffix
 
     def test_the_command_proxies_artifacts_to_s3_and_never_contains_the_password(self):
         cmd = mlflow_server.command(ENV)
