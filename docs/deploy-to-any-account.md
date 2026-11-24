@@ -134,6 +134,13 @@ takes longer. Start with a small `limit` (for example 2000 stays per hospital) t
 approval email needs the `ALERT_EMAIL` subscription to be confirmed. From a shell the same run is
 `DATA_SOURCE=synthetic TRIALS=6 WAIT=1 bash scripts/aws_deploy.sh pipeline`.
 
+### No SageMaker quota? Train on ECS Fargate instead
+
+If AWS does not raise the SageMaker training quota (a new or free-plan account often cannot get it), set
+`TrainingBackend=ecs` (already the default in `infra/params/dev.json`) and run the **deploy** workflow again.
+The pipeline then runs each step as an ECS Fargate task. See [ecs-training.md](ecs-training.md) for the quota
+to check, the cost and the security notes.
+
 ### First pipeline run: SageMaker quotas
 
 A new AWS account has `0` as its limit for training instances, and the first job then fails at once with

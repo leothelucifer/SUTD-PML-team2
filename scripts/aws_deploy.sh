@@ -28,7 +28,7 @@
 # promote refuses synthetic models unless ALLOW_SYNTHETIC=1 (dev rehearsals).
 #
 # Settings (environment variables): STACK (sepsis-research), AWS_REGION (required, no default),
-# SERVING_MODE (lambda | fargate), BUDGET_USD and BUDGET_EMAIL
+# SERVING_MODE (lambda | fargate), TRAINING_BACKEND (sagemaker | ecs; overrides the params file), BUDGET_USD and BUDGET_EMAIL
 # (monthly budget alert), ALERT_EMAIL, PLATFORM (linux/amd64), TAG (git short sha),
 # PYTHON (python). Needs the AWS CLI v2, Docker, and `pip install -e ".[aws,tracking,sagemaker]"`.
 #
@@ -91,6 +91,7 @@ for key, value in json.load(open(sys.argv[1])).items():
     if not key.startswith("_"):
         print(f"{key}={value}")' "$ROOT/infra/params/$ENVIRONMENT.json")
   fi
+  [ -n "${TRAINING_BACKEND:-}" ] && params+=("TrainingBackend=$TRAINING_BACKEND")
   [ -n "${BUDGET_USD:-}" ] && params+=("MonthlyBudgetUsd=$BUDGET_USD")
   # A budget alert needs an email address; the template refuses a budget without one.
   budget_on=false

@@ -173,6 +173,28 @@ def check_mlflow(result: Result, sagemaker, items: list[dict]) -> None:
         guarded(result, "SageMaker MLflow App", check)
 
 
+def check_ecs(result: Result, ecs, items: list[dict]) -> None:
+    """With TrainingBackend=ecs the pipeline steps run on this cluster (Fargate and Fargate Spot)."""
+    clusters = of_type(items, "AWS::ECS::Cluster")
+    if not clusters:
+        return    # TrainingBackend=sagemaker (or Fargate serving, whose cluster check lives with the service)
+    for cluster in clusters:
+        def check(cluster=cluster):
+            described = ecs.describe_clusters(clusters=[cluster["physical"]])["clusters"]
+            if not described:
+                result.add("FAIL", f"ECS cluster {cluster['physical']}", "not found")
+                return
+            status = described[0]["status"]
+            providers = set(described[0].get("capacityProviders", []))
+            # The Fargate serving cluster has no capacity providers of its own; only the training one needs them.
+            missing = ({"FARGATE", "FARGATE_SPOT"} - providers) if "training" in cluster["physical"] else set()
+            ok = status == "ACTIVE" and not missing
+            result.add("PASS" if ok else "FAIL", f"ECS cluster {cluster['physical']}",
+                       f"{status}, capacity providers {sorted(providers)}" + (f", missing {sorted(missing)}" if missing else ""))
+
+        guarded(result, f"ECS cluster {cluster['physical']}", check)
+
+
 def check_pipeline(result: Result, stepfunctions, items: list[dict]) -> None:
     machines = of_type(items, "AWS::StepFunctions::StateMachine")
     if not machines:
@@ -251,6 +273,30 @@ def check_quotas(result: Result, service_quotas, instance_type: str = "ml.m5.xla
                 result.add("PASS", f"SageMaker quota {name}", f"{value:g} ({purpose})")
 
     guarded(result, "SageMaker quotas", check)
+
+
+def check_fargate_quota(result: Result, service_quotas, needed_vcpu: float = 4.0) -> None:
+    """ECS training runs on Fargate: its vCPU quotas (on demand and spot) must cover one training task."""
+    def check():
+        found = {}
+        for page in service_quotas.get_paginator("list_service_quotas").paginate(ServiceCode="fargate"):
+            for quota in page["Quotas"]:
+                name = quota["QuotaName"]
+                if "vCPU" in name and "On-Demand" in name:
+                    found["on demand"] = (name, quota["Value"])
+                elif "vCPU" in name and "Spot" in name:
+                    found["spot"] = (name, quota["Value"])
+        if not found:
+            result.add("WARN", "Fargate vCPU quota", "not found; check Service Quotas (service code fargate)")
+        for kind, (name, value) in sorted(found.items()):
+            if value < needed_vcpu:
+                result.add("WARN", f"Fargate quota ({kind})",
+                           f"{value:g} vCPU; a training task needs {needed_vcpu:g}. Raise it in Service Quotas ({name}) "
+                           "or lower TrainingVcpu")
+            else:
+                result.add("PASS", f"Fargate quota ({kind})", f"{value:g} vCPU (a training task needs {needed_vcpu:g})")
+
+    guarded(result, "Fargate quotas", check)
 
 
 def check_budget(result: Result, budgets, account: str, items: list[dict]) -> None:
@@ -346,11 +392,13 @@ def verify(session, stack: str, region: str, *, expect_model: bool = False, tag:
     check_repositories(result, session.client("ecr"), items, tag)
     check_table(result, session.client("dynamodb"), items)
     check_mlflow(result, session.client("sagemaker"), items)
+    check_ecs(result, session.client("ecs"), items)
     check_pipeline(result, session.client("stepfunctions"), items)
     check_alerts(result, session.client("sns"), session.client("cloudwatch"), items)
     account = session.client("sts").get_caller_identity()["Account"]
     check_budget(result, session.client("budgets", region_name="us-east-1"), account, items)
     check_quotas(result, session.client("service-quotas"))
+    check_fargate_quota(result, session.client("service-quotas"))
     check_iam(result, session.client("iam"), outputs)
     check_function(result, session.client("lambda"), items, outputs, expect_model, signed_health(session, region) if call_api else None)
     return result

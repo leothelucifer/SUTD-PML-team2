@@ -1,0 +1,275 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  ECS Fargate platform for the training pipeline (an alternative to SageMaker AI training jobs, for
+  accounts whose SageMaker training quota is 0). A minimal VPC with public subnets only (no NAT
+  gateway and no interface endpoints, which would cost more than the work itself), an ECS cluster
+  that can use Fargate and Fargate Spot, the task roles and the log group. Nothing here bills while
+  no task runs.
+
+Parameters:
+  EnvironmentName:
+    Type: String
+  ArtifactBucketArn:
+    Type: String
+  ArtifactKeyArn:
+    Type: String
+  TrainingRepositoryArn:
+    Type: String
+  MlflowAppArn:
+    Type: String
+    Default: ""
+    Description: SageMaker MLflow App the tasks log to. Empty when MLflow runs elsewhere (a tracking URI is passed instead).
+  VpcCidr:
+    Type: String
+    Default: 10.50.0.0/16
+  PublicSubnetACidr:
+    Type: String
+    Default: 10.50.1.0/24
+  PublicSubnetBCidr:
+    Type: String
+    Default: 10.50.2.0/24
+  TrainingCpu:
+    Type: String
+    Default: "4096"
+    AllowedValues: ["1024", "2048", "4096", "8192", "16384"]
+    Description: Fargate vCPU units for a training task (1024 = 1 vCPU). Must fit the account's Fargate vCPU quota.
+  TrainingMemory:
+    Type: String
+    Default: "16384"
+    Description: Memory in MiB. Fargate allows 2-8 GB per vCPU (for 4 vCPU, 8192 to 30720 in 1024 steps).
+  LogRetentionDays:
+    Type: Number
+    Default: 30
+    AllowedValues: [1, 3, 5, 7, 14, 30, 60, 90, 180, 365]
+
+Conditions:
+  HasMlflowApp: !Not [!Equals [!Ref MlflowAppArn, ""]]
+
+Resources:
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-ecs"
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-ecs"
+
+  VpcGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Vpc
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !Ref PublicSubnetACidr
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-ecs-a"
+
+  PublicSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !Ref PublicSubnetBCidr
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-ecs-b"
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+
+  PublicDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: VpcGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetARouteAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetA
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnetBRouteAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetB
+      RouteTableId: !Ref PublicRouteTable
+
+  # Training tasks accept no connections at all and may only open HTTPS (ECR, S3, the MLflow App).
+  TaskSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Training tasks - no inbound, outbound HTTPS only.
+      VpcId: !Ref Vpc
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: ECR, S3, CloudWatch Logs, the MLflow App
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-ecs-tasks"
+
+  Cluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub "${EnvironmentName}-training-cluster"
+      ClusterSettings:
+        - Name: containerInsights
+          Value: disabled
+      CapacityProviders:
+        - FARGATE
+        - FARGATE_SPOT
+      DefaultCapacityProviderStrategy:
+        - CapacityProvider: FARGATE
+          Weight: 1
+
+  TrainingLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/ecs/${EnvironmentName}-training"
+      RetentionInDays: !Ref LogRetentionDays
+
+  # Pulls the image and writes logs. It cannot read data.
+  ExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                "aws:SourceAccount": !Ref AWS::AccountId
+      Policies:
+        - PolicyName: PullImageAndLog
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                Resource: !Ref TrainingRepositoryArn
+              - Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub "${TrainingLogGroup.Arn}:*"
+
+  # What the container itself may do: the same permissions as the SageMaker training role.
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: Role for sepsis-warning training tasks on ECS Fargate.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                "aws:SourceAccount": !Ref AWS::AccountId
+      Policies:
+        - PolicyName: TrainingTask
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ReadTrainingData
+                Effect: Allow
+                Action: s3:GetObject
+                Resource:
+                  - !Sub "${ArtifactBucketArn}/data/*"
+                  - !Sub "${ArtifactBucketArn}/tuning/*"
+                  - !Sub "${ArtifactBucketArn}/raw/*"
+              - Sid: WritePipelineArtifacts
+                Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:AbortMultipartUpload
+                Resource:
+                  - !Sub "${ArtifactBucketArn}/data/*"
+                  - !Sub "${ArtifactBucketArn}/tuning/*"
+                  - !Sub "${ArtifactBucketArn}/reports/*"
+                  - !Sub "${ArtifactBucketArn}/training-output/*"
+              - Sid: PublishApprovedModel
+                Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                Resource: !Sub "${ArtifactBucketArn}/models/*"
+              - Sid: ListBucket
+                Effect: Allow
+                Action: s3:ListBucket
+                Resource: !Ref ArtifactBucketArn
+              - Sid: EncryptedData
+                Effect: Allow
+                Action:
+                  - kms:Decrypt
+                  - kms:GenerateDataKey
+                  - kms:DescribeKey
+                Resource: !Ref ArtifactKeyArn
+              - !If
+                - HasMlflowApp
+                - Sid: LogToMlflowApp
+                  Effect: Allow
+                  Action:
+                    - sagemaker:CallMlflowAppApi
+                    - sagemaker:DescribeMlflowApp
+                  Resource: !Ref MlflowAppArn
+                - !Ref AWS::NoValue
+
+Outputs:
+  VpcId:
+    Value: !Ref Vpc
+  SubnetAId:
+    Value: !Ref PublicSubnetA
+  SubnetBId:
+    Value: !Ref PublicSubnetB
+  SecurityGroupId:
+    Value: !Ref TaskSecurityGroup
+  ClusterArn:
+    Value: !GetAtt Cluster.Arn
+  ClusterName:
+    Value: !Ref Cluster
+  ExecutionRoleArn:
+    Value: !GetAtt ExecutionRole.Arn
+  TaskRoleArn:
+    Value: !GetAtt TaskRole.Arn
+  LogGroupName:
+    Value: !Ref TrainingLogGroup
+  TrainingCpu:
+    Value: !Ref TrainingCpu
+  TrainingMemory:
+    Value: !Ref TrainingMemory

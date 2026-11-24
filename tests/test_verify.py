@@ -104,6 +104,27 @@ class VerifyTests(unittest.TestCase):
         self.assertEqual(sorted(statuses(result).values()), ["PASS", "WARN"])
         self.assertIn("request an increase", result.table())
 
+    def test_a_low_fargate_quota_is_flagged_before_a_training_task_fails(self):
+        quotas = [{"QuotaName": "Fargate On-Demand vCPU resource count", "Value": 2.0},
+                  {"QuotaName": "Fargate Spot vCPU resource count", "Value": 6.0}]
+        client = Namespace(get_paginator=lambda _: Namespace(paginate=lambda ServiceCode: [{"Quotas": quotas}]))
+        result = verify.Result()
+        verify.check_fargate_quota(result, client, needed_vcpu=4)
+        self.assertEqual(statuses(result), {"Fargate quota (on demand)": "WARN", "Fargate quota (spot)": "PASS"})
+        self.assertIn("Raise it in Service Quotas", result.table())
+
+    def test_the_ecs_training_cluster_is_checked_only_when_it_exists(self):
+        result = verify.Result()
+        verify.check_ecs(result, Namespace(), [])
+        self.assertEqual(statuses(result), {})
+        items = [{"type": "AWS::ECS::Cluster", "physical": "sepsis-dev-training-cluster"}]
+        for providers, expected in ((["FARGATE", "FARGATE_SPOT"], "PASS"), (["FARGATE"], "FAIL")):
+            ecs = Namespace(describe_clusters=lambda clusters, providers=providers: {
+                "clusters": [{"status": "ACTIVE", "capacityProviders": providers}]})
+            result = verify.Result()
+            verify.check_ecs(result, ecs, items)
+            self.assertEqual(list(statuses(result).values()), [expected])
+
     def test_missing_outputs_fail(self):
         result = verify.Result()
         verify.check_outputs(result, {"ArtifactBucketName": "b"}, False)

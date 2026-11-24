@@ -121,6 +121,30 @@ Parameters:
       - "false"
       - "true"
     Description: Step Functions training pipeline with gates and a human approval. No standing cost.
+  TrainingBackend:
+    Type: String
+    Default: sagemaker
+    AllowedValues:
+      - sagemaker
+      - ecs
+    Description: >-
+      Where the pipeline's steps run. sagemaker (default) - SageMaker AI training jobs (needs a training
+      instance quota, which is 0 in a new account). ecs - ECS Fargate tasks in a small public-subnet VPC
+      (no NAT gateway or interface endpoints), billed per second while a step runs.
+  EcsTrainingCpu:
+    Type: String
+    Default: "4096"
+    AllowedValues: ["1024", "2048", "4096", "8192", "16384"]
+    Description: Fargate vCPU units per step when TrainingBackend=ecs (1024 = 1 vCPU); must fit the Fargate vCPU quota.
+  EcsTrainingMemory:
+    Type: String
+    Default: "16384"
+    Description: Memory in MiB per step when TrainingBackend=ecs (2-8 GB per vCPU).
+  EcsUseSpot:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: Run the tune and train steps on Fargate Spot when TrainingBackend=ecs.
   EnableObservability:
     Type: String
     Default: "true"
@@ -207,6 +231,12 @@ Conditions:
   CreatePipeline: !And
     - !Condition CreateMlops
     - !Equals [!Ref EnablePipeline, "true"]
+  UseEcsTraining: !And
+    - !Condition CreatePipeline
+    - !Equals [!Ref TrainingBackend, ecs]
+  UseSageMakerTraining: !And
+    - !Condition CreatePipeline
+    - !Equals [!Ref TrainingBackend, sagemaker]
   CreateObservability: !And
     - !Condition UseLambda
     - !Equals [!Ref EnableObservability, "true"]
@@ -284,9 +314,52 @@ Resources:
         - Key: Project
           Value: sepsis-warning-research
 
+  # Only with TrainingBackend=ecs: a minimal VPC, the cluster, the task roles and the log group.
+  EcsPlatform:
+    Type: AWS::CloudFormation::Stack
+    Condition: UseEcsTraining
+    Properties:
+      TemplateURL: ecs-platform.yaml
+      Parameters:
+        EnvironmentName: !Ref EnvironmentName
+        ArtifactBucketArn: !GetAtt Artifacts.Outputs.ArtifactBucketArn
+        ArtifactKeyArn: !GetAtt Artifacts.Outputs.ArtifactKeyArn
+        TrainingRepositoryArn: !GetAtt Artifacts.Outputs.TrainingRepositoryArn
+        MlflowAppArn: !GetAtt Mlops.Outputs.MlflowAppArn
+        TrainingCpu: !Ref EcsTrainingCpu
+        TrainingMemory: !Ref EcsTrainingMemory
+      Tags:
+        - Key: Project
+          Value: sepsis-warning-research
+
+  PipelineEcs:
+    Type: AWS::CloudFormation::Stack
+    Condition: UseEcsTraining
+    Properties:
+      TemplateURL: pipeline-ecs.yaml
+      Parameters:
+        EnvironmentName: !Ref EnvironmentName
+        ArtifactBucketName: !GetAtt Artifacts.Outputs.ArtifactBucketName
+        TrainingRepositoryUri: !GetAtt Artifacts.Outputs.TrainingRepositoryUri
+        ClusterArn: !GetAtt EcsPlatform.Outputs.ClusterArn
+        SubnetAId: !GetAtt EcsPlatform.Outputs.SubnetAId
+        SubnetBId: !GetAtt EcsPlatform.Outputs.SubnetBId
+        SecurityGroupId: !GetAtt EcsPlatform.Outputs.SecurityGroupId
+        ExecutionRoleArn: !GetAtt EcsPlatform.Outputs.ExecutionRoleArn
+        TaskRoleArn: !GetAtt EcsPlatform.Outputs.TaskRoleArn
+        LogGroupName: !GetAtt EcsPlatform.Outputs.LogGroupName
+        TrainingCpu: !Ref EcsTrainingCpu
+        TrainingMemory: !Ref EcsTrainingMemory
+        MlflowTrackingUri: !GetAtt Mlops.Outputs.MlflowAppArn
+        NotificationTopicArn: !GetAtt Monitoring.Outputs.AlarmTopicArn
+        UseSpot: !Ref EcsUseSpot
+      Tags:
+        - Key: Project
+          Value: sepsis-warning-research
+
   Pipeline:
     Type: AWS::CloudFormation::Stack
-    Condition: CreatePipeline
+    Condition: UseSageMakerTraining
     Properties:
       TemplateURL: pipeline.yaml
       Parameters:
@@ -315,7 +388,7 @@ Resources:
         LambdaImageUri: !Ref LambdaImageUri
         AlarmTopicArn: !GetAtt Monitoring.Outputs.AlarmTopicArn
         DriftReferenceS3Uri: !Ref DriftReferenceS3Uri
-        PipelineArn: !If [CreatePipeline, !GetAtt Pipeline.Outputs.PipelineArn, ""]
+        PipelineArn: !If [UseEcsTraining, !GetAtt PipelineEcs.Outputs.PipelineArn, !If [UseSageMakerTraining, !GetAtt Pipeline.Outputs.PipelineArn, ""]]
         RetrainImageTag: !Ref RetrainImageTag
       Tags:
         - Key: Project
@@ -423,7 +496,9 @@ Outputs:
   PipelineArn:
     Condition: CreatePipeline
     Description: Start with {"image_tag", "git_commit", "require_real_data"}; it waits for an approval.
-    Value: !GetAtt Pipeline.Outputs.PipelineArn
+    Value: !If [UseEcsTraining, !GetAtt PipelineEcs.Outputs.PipelineArn, !GetAtt Pipeline.Outputs.PipelineArn]
+  TrainingBackend:
+    Value: !Ref TrainingBackend
   PredictionLogPrefix:
     Condition: CreateObservability
     Value: !GetAtt Observability.Outputs.PredictionLogPrefix
