@@ -125,6 +125,18 @@ class VerifyTests(unittest.TestCase):
             verify.check_ecs(result, ecs, items)
             self.assertEqual(list(statuses(result).values()), [expected])
 
+    def test_the_hosted_tools_are_running_or_stopped_never_silently_missing(self):
+        items = [{"type": "AWS::ECS::Service", "logical": "Service", "physical": "arn:aws:ecs:r:1:service/c/sepsis-dev-mlflow"},
+                 {"type": "AWS::RDS::DBInstance", "logical": "Database", "physical": "db-1"}]
+        for running, desired, db, expected in ((1, 1, "available", ["PASS", "PASS"]), (0, 0, "stopped", ["WARN", "WARN"]),
+                                               (0, 1, "available", ["FAIL", "PASS"])):
+            ecs = Namespace(describe_services=lambda cluster, services, running=running, desired=desired: {"services": [
+                {"runningCount": running, "desiredCount": desired, "events": [{"message": "unable to place a task"}]}]})
+            rds = Namespace(describe_db_instances=lambda DBInstanceIdentifier, db=db: {"DBInstances": [{"DBInstanceStatus": db}]})
+            result = verify.Result()
+            verify.check_tools(result, ecs, rds, items)
+            self.assertEqual(list(statuses(result).values()), expected)
+
     def test_missing_outputs_fail(self):
         result = verify.Result()
         verify.check_outputs(result, {"ArtifactBucketName": "b"}, False)

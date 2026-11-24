@@ -195,6 +195,30 @@ def check_ecs(result: Result, ecs, items: list[dict]) -> None:
         guarded(result, f"ECS cluster {cluster['physical']}", check)
 
 
+def check_tools(result: Result, ecs, rds, items: list[dict]) -> None:
+    """The hosted tools (MLflow server, Evidently UI) and the database. Stopped is a normal, cheap state: a WARN."""
+    for item in of_type(items, "AWS::ECS::Service"):
+        def check(item=item):
+            cluster, _, name = item["physical"].split("service/", 1)[-1].partition("/")
+            service = ecs.describe_services(cluster=cluster, services=[name])["services"][0]
+            running, desired = service["runningCount"], service["desiredCount"]
+            if running >= 1 and running >= desired:
+                result.add("PASS", f"ECS service {name}", f"running {running}/{desired}")
+            elif desired == 0:
+                result.add("WARN", f"ECS service {name}", "stopped (start it with the power workflow when you need it)")
+            else:
+                result.add("FAIL", f"ECS service {name}", f"running {running} of {desired}: {service.get('events', [{}])[0].get('message', 'see the service events')[:120]}")
+
+        guarded(result, f"ECS service {item['logical']}", check)
+    for item in of_type(items, "AWS::RDS::DBInstance"):
+        def check(item=item):
+            status = rds.describe_db_instances(DBInstanceIdentifier=item["physical"])["DBInstances"][0]["DBInstanceStatus"]
+            result.add("PASS" if status == "available" else "WARN", f"RDS {item['physical']}",
+                       status if status == "available" else f"{status} (start it with the power workflow when you need it)")
+
+        guarded(result, f"RDS {item['logical']}", check)
+
+
 def check_pipeline(result: Result, stepfunctions, items: list[dict]) -> None:
     machines = of_type(items, "AWS::StepFunctions::StateMachine")
     if not machines:
@@ -393,6 +417,7 @@ def verify(session, stack: str, region: str, *, expect_model: bool = False, tag:
     check_table(result, session.client("dynamodb"), items)
     check_mlflow(result, session.client("sagemaker"), items)
     check_ecs(result, session.client("ecs"), items)
+    check_tools(result, session.client("ecs"), session.client("rds"), items)
     check_pipeline(result, session.client("stepfunctions"), items)
     check_alerts(result, session.client("sns"), session.client("cloudwatch"), items)
     account = session.client("sts").get_caller_identity()["Account"]
