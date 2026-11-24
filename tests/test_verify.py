@@ -179,7 +179,10 @@ class VerifyTests(unittest.TestCase):
         self.assertEqual(workflow["permissions"]["id-token"], "write")
         self.assertIn("ap-southeast-2", workflow[True]["workflow_dispatch"]["inputs"]["region"]["options"])
         deploy = yaml.safe_load((ROOT / ".github" / "workflows" / "deploy.yml").read_text(encoding="utf-8"))
-        self.assertEqual(deploy["jobs"]["deploy"]["steps"][-1]["name"], "Verify every deployed component")
+        names = [step.get("name") for step in deploy["jobs"]["deploy"]["steps"]]
+        self.assertIn("Verify every deployed component", names)
+        # Only the failure diagnosis and the summary of next steps may come after the verification.
+        self.assertEqual(names[names.index("Verify every deployed component") + 1:], ["Diagnose the failure", "What to do next"])
 
 
 if __name__ == "__main__":
