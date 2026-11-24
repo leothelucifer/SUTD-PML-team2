@@ -7,8 +7,9 @@ SageMaker starts the training image with the argument ``train``. This module:
    ``cooldown``, ``mlflow_tracking_uri`` (the MLflow App ARN),
    ``register_model`` ("true"/"false"), ``git_commit``, ``require_gates`` (do
    not register a model that fails the promotion gates), ``mode`` (``train``,
-   ``prepare`` to build the data in S3, ``tune`` for the grouped-CV search, or
-   ``evaluate_publish`` for the pipeline step after approval);
+   ``prepare`` to build the data in S3, ``tune`` for the grouped-CV search,
+   ``promote`` to move ``@production`` after the gates, or ``evaluate_publish`` for
+   the pipeline step after approval);
 2. reads the ``data`` channel, ``/opt/ml/input/data/data/``: either
    ``combined.parquet`` with ``splits.csv`` (and optionally
    ``splits.csv.summary.json`` and ``dvc.lock``), or a folder with
@@ -86,6 +87,32 @@ def build_args(root: Path) -> Namespace:
 
 # Only these files of a frozen evaluation may leave the step: no patient rows, no replay page.
 AGGREGATE_EVALUATION_FILES = ("evaluation_metrics.json",)
+
+
+def promote_model(root: Path, params: dict) -> dict:
+    """Approval step: gates, a named reviewer, then ``@production`` moves to the version.
+
+    Runs as its own task with a different role from the training task, so on AWS the principal that
+    registered the version cannot also promote it (see ``registry.promote``). Hyperparameters:
+    ``mlflow_tracking_uri``, ``model_version`` and ``reviewed_by`` (required), optionally ``alias``
+    (default production) and ``require_real_data``.
+    """
+    from .registry import MODEL_NAME, promote
+    from .tracking import check_tracking_uri, require_mlflow
+
+    tracking, version, reviewer = params.get("mlflow_tracking_uri"), params.get("model_version"), params.get("reviewed_by")
+    if not tracking or not version or not reviewer:
+        raise ValueError("mode promote needs mlflow_tracking_uri, model_version and reviewed_by")
+    check_tracking_uri(tracking)
+    require_mlflow()
+    change = promote(tracking, str(version), reviewer, name=params.get("model_name") or MODEL_NAME,
+                     alias=params.get("alias") or "production",
+                     require_real_data=_flag(params.get("require_real_data", "false")))
+    (root / "model").mkdir(parents=True, exist_ok=True)
+    (root / "model" / "promotion.json").write_text(json.dumps(change, indent=2), encoding="utf-8")
+    print(f"Promoted {change['name']} version {change['version']} to @{change['alias']} "
+          f"(reviewer {change['reviewed_by']}, approver {change['approved_by']})", flush=True)
+    return change
 
 
 def evaluate_and_publish(root: Path, params: dict, args: Namespace) -> dict:
@@ -277,6 +304,9 @@ def main(argv=None) -> int:
         mode = params.get("mode", "train")
         if mode == "prepare":  # needs no input data: it makes it
             prepare_data(root, params)
+            return 0
+        if mode == "promote":  # works on the registry only
+            promote_model(root, params)
             return 0
         args = build_args(root)
         if args.mlflow_uri:

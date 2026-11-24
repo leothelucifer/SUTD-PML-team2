@@ -92,6 +92,15 @@ for key, value in json.load(open(sys.argv[1])).items():
         print(f"{key}={value}")' "$ROOT/infra/params/$ENVIRONMENT.json")
   fi
   [ -n "${TRAINING_BACKEND:-}" ] && params+=("TrainingBackend=$TRAINING_BACKEND")
+  # The MLflow server needs its image (target "tools"), which can only be pushed once the stack and its ECR
+  # repository exist. Once the image for this commit is there, every stack update passes it, so the service
+  # is created by the second `stack` run and is not removed by later ones.
+  local tools_repo tools_tag="tools-$TAG"
+  tools_repo="$(output ToolsRepositoryUri 2>/dev/null || true)"
+  if [ -n "$tools_repo" ] && aws ecr describe-images --repository-name "${tools_repo##*/}" \
+      --image-ids "imageTag=$tools_tag" --query 'imageDetails[0].imageDigest' --output text >/dev/null 2>&1; then
+    params+=("ToolsImageUri=$tools_repo:$tools_tag")
+  fi
   [ -n "${BUDGET_USD:-}" ] && params+=("MonthlyBudgetUsd=$BUDGET_USD")
   # A budget alert needs an email address; the template refuses a budget without one.
   budget_on=false
@@ -155,7 +164,7 @@ cmd_images() {
   local build=(docker build --provenance=false --platform "$PLATFORM" --build-arg "BASE_IMAGE=${BASE_IMAGE:-python:3.12-slim}")
   [ -n "${EXTRA_CA_CERT:-}" ] && build+=(--secret "id=extra_ca,src=$EXTRA_CA_CERT")
   local target repo
-  for pair in "lambda:LambdaRepositoryUri" "training:TrainingRepositoryUri" "scoring:EcrRepositoryUri"; do
+  for pair in "lambda:LambdaRepositoryUri" "training:TrainingRepositoryUri" "tools:ToolsRepositoryUri" "scoring:EcrRepositoryUri"; do
     target="${pair%%:*}"; repo="$(output "${pair#*:}")"
     [ -n "$repo" ] || fail "stack output ${pair#*:} missing; run '$0 stack' first"
     local image_tag="$target-$TAG"

@@ -121,6 +121,24 @@ Parameters:
       - "false"
       - "true"
     Description: Step Functions training pipeline with gates and a human approval. No standing cost.
+  MlflowBackend:
+    Type: String
+    Default: sagemaker
+    AllowedValues:
+      - sagemaker
+      - ecs
+    Description: >-
+      sagemaker (default) - the serverless SageMaker MLflow App. ecs - an MLflow server on ECS Fargate with an
+      RDS PostgreSQL database and S3 artifacts (needs TrainingBackend=ecs, because only tasks in the VPC can reach it).
+  EnableSageMakerMlflowApp:
+    Type: String
+    Default: "true"
+    AllowedValues: ["false", "true"]
+    Description: Feature flag. Create the serverless SageMaker MLflow App. Switch off when MlflowBackend=ecs to remove it.
+  ToolsImageUri:
+    Type: String
+    Default: ""
+    Description: Image (Dockerfile target "tools") with its tag for the MLflow server. Empty creates only the database; `aws_deploy.sh stack` fills it in once the image exists.
   TrainingBackend:
     Type: String
     Default: sagemaker
@@ -192,6 +210,16 @@ Parameters:
     Description: Email recipient required to create the optional budget.
 
 Rules:
+  EcsMlflowNeedsEcsTraining:
+    RuleCondition: !Equals [!Ref MlflowBackend, ecs]
+    Assertions:
+      - Assert: !Equals [!Ref TrainingBackend, ecs]
+        AssertDescription: MlflowBackend=ecs needs TrainingBackend=ecs; SageMaker training jobs cannot reach an MLflow server inside the VPC.
+  SageMakerMlflowNeedsTheApp:
+    RuleCondition: !Equals [!Ref MlflowBackend, sagemaker]
+    Assertions:
+      - Assert: !Equals [!Ref EnableSageMakerMlflowApp, "true"]
+        AssertDescription: MlflowBackend=sagemaker needs EnableSageMakerMlflowApp=true.
   ModelRequiredWhenEnabled:
     RuleCondition: !Equals [!Ref DeployScoringService, "true"]
     Assertions:
@@ -234,6 +262,13 @@ Conditions:
   UseEcsTraining: !And
     - !Condition CreatePipeline
     - !Equals [!Ref TrainingBackend, ecs]
+  UseEcsMlflow: !Equals [!Ref MlflowBackend, ecs]
+  NeedsEcsPlatform: !Or
+    - !Condition UseEcsTraining
+    - !Condition UseEcsMlflow
+  HasSageMakerMlflowApp: !And
+    - !Condition CreateMlops
+    - !Equals [!Ref EnableSageMakerMlflowApp, "true"]
   UseSageMakerTraining: !And
     - !Condition CreatePipeline
     - !Equals [!Ref TrainingBackend, sagemaker]
@@ -287,6 +322,7 @@ Resources:
         TrainingRepositoryArn: !GetAtt Artifacts.Outputs.TrainingRepositoryArn
         LambdaRepositoryArn: !GetAtt Artifacts.Outputs.LambdaRepositoryArn
         ScoringRepositoryArn: !GetAtt Artifacts.Outputs.EcrRepositoryArn
+        EnableMlflowApp: !Ref EnableSageMakerMlflowApp
       Tags:
         - Key: Project
           Value: sepsis-warning-research
@@ -317,7 +353,7 @@ Resources:
   # Only with TrainingBackend=ecs: a minimal VPC, the cluster, the task roles and the log group.
   EcsPlatform:
     Type: AWS::CloudFormation::Stack
-    Condition: UseEcsTraining
+    Condition: NeedsEcsPlatform
     Properties:
       TemplateURL: ecs-platform.yaml
       Parameters:
@@ -325,9 +361,31 @@ Resources:
         ArtifactBucketArn: !GetAtt Artifacts.Outputs.ArtifactBucketArn
         ArtifactKeyArn: !GetAtt Artifacts.Outputs.ArtifactKeyArn
         TrainingRepositoryArn: !GetAtt Artifacts.Outputs.TrainingRepositoryArn
-        MlflowAppArn: !GetAtt Mlops.Outputs.MlflowAppArn
+        MlflowAppArn: !If [HasSageMakerMlflowApp, !GetAtt Mlops.Outputs.MlflowAppArn, ""]
         TrainingCpu: !Ref EcsTrainingCpu
         TrainingMemory: !Ref EcsTrainingMemory
+      Tags:
+        - Key: Project
+          Value: sepsis-warning-research
+
+  # Only with MlflowBackend=ecs: the MLflow server, its RDS PostgreSQL database and the Cloud Map name.
+  MlflowEcs:
+    Type: AWS::CloudFormation::Stack
+    Condition: UseEcsMlflow
+    Properties:
+      TemplateURL: mlflow-ecs.yaml
+      Parameters:
+        EnvironmentName: !Ref EnvironmentName
+        VpcId: !GetAtt EcsPlatform.Outputs.VpcId
+        SubnetAId: !GetAtt EcsPlatform.Outputs.SubnetAId
+        SubnetBId: !GetAtt EcsPlatform.Outputs.SubnetBId
+        ClusterArn: !GetAtt EcsPlatform.Outputs.ClusterArn
+        TrainingTaskSecurityGroupId: !GetAtt EcsPlatform.Outputs.SecurityGroupId
+        ArtifactBucketName: !GetAtt Artifacts.Outputs.ArtifactBucketName
+        ArtifactBucketArn: !GetAtt Artifacts.Outputs.ArtifactBucketArn
+        ArtifactKeyArn: !GetAtt Artifacts.Outputs.ArtifactKeyArn
+        ToolsRepositoryArn: !GetAtt Artifacts.Outputs.ToolsRepositoryArn
+        ToolsImageUri: !Ref ToolsImageUri
       Tags:
         - Key: Project
           Value: sepsis-warning-research
@@ -350,7 +408,7 @@ Resources:
         LogGroupName: !GetAtt EcsPlatform.Outputs.LogGroupName
         TrainingCpu: !Ref EcsTrainingCpu
         TrainingMemory: !Ref EcsTrainingMemory
-        MlflowTrackingUri: !GetAtt Mlops.Outputs.MlflowAppArn
+        MlflowTrackingUri: !If [UseEcsMlflow, !GetAtt MlflowEcs.Outputs.TrackingUri, !GetAtt Mlops.Outputs.MlflowAppArn]
         NotificationTopicArn: !GetAtt Monitoring.Outputs.AlarmTopicArn
         UseSpot: !Ref EcsUseSpot
       Tags:
@@ -472,12 +530,42 @@ Outputs:
   TrainingRepositoryUri:
     Description: Image repository for SageMaker training jobs (Dockerfile target "training").
     Value: !GetAtt Artifacts.Outputs.TrainingRepositoryUri
+  ToolsRepositoryUri:
+    Description: Image repository for the hosted tools on ECS (Dockerfile target "tools").
+    Value: !GetAtt Artifacts.Outputs.ToolsRepositoryUri
   StateTableName:
     Value: !GetAtt Artifacts.Outputs.StateTableName
   MlflowAppArn:
-    Condition: CreateMlops
+    Condition: HasSageMakerMlflowApp
     Description: MLflow tracking URI (needs the sagemaker-mlflow plugin; `pip install -e .[sagemaker]`).
     Value: !GetAtt Mlops.Outputs.MlflowAppArn
+  MlflowTrackingUri:
+    Condition: UseEcsMlflow
+    Description: MLflow server on ECS. Private name, reachable only from inside the VPC; the power workflow can open a browser address.
+    Value: !GetAtt MlflowEcs.Outputs.TrackingUri
+  MlflowBackend:
+    Value: !Ref MlflowBackend
+  EcsClusterArn:
+    Condition: NeedsEcsPlatform
+    Value: !GetAtt EcsPlatform.Outputs.ClusterArn
+  EcsSubnetIds:
+    Condition: NeedsEcsPlatform
+    Value: !Join [",", [!GetAtt EcsPlatform.Outputs.SubnetAId, !GetAtt EcsPlatform.Outputs.SubnetBId]]
+  EcsTaskSecurityGroupId:
+    Condition: NeedsEcsPlatform
+    Value: !GetAtt EcsPlatform.Outputs.SecurityGroupId
+  EcsExecutionRoleArn:
+    Condition: NeedsEcsPlatform
+    Value: !GetAtt EcsPlatform.Outputs.ExecutionRoleArn
+  EcsTaskRoleArn:
+    Condition: NeedsEcsPlatform
+    Value: !GetAtt EcsPlatform.Outputs.TaskRoleArn
+  EcsApproverTaskRoleArn:
+    Condition: NeedsEcsPlatform
+    Value: !GetAtt EcsPlatform.Outputs.ApproverTaskRoleArn
+  EcsLogGroupName:
+    Condition: NeedsEcsPlatform
+    Value: !GetAtt EcsPlatform.Outputs.LogGroupName
   SageMakerExecutionRoleArn:
     Condition: CreateMlops
     Value: !GetAtt Mlops.Outputs.SageMakerExecutionRoleArn

@@ -32,4 +32,5 @@ lock() {  # lock NAME "extra1 extra2 ..." [extra constraint line]
 lock scoring  "serve aws"
 lock lambda   "serve lambda"
 lock training "tracking aws sagemaker checks" "mlflow==$MLFLOW_VERSION"
+lock tools    "tools" "mlflow==$MLFLOW_VERSION"
 lock ci       "serve test tracking aws lambda checks"

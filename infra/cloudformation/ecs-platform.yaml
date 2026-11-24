@@ -128,6 +128,11 @@ Resources:
           ToPort: 443
           CidrIp: 0.0.0.0/0
           Description: ECR, S3, CloudWatch Logs, the MLflow App
+        - IpProtocol: tcp
+          FromPort: 5000
+          ToPort: 5000
+          CidrIp: !Ref VpcCidr
+          Description: The MLflow server on ECS (inside this VPC only)
       Tags:
         - Key: Name
           Value: !Sub "${EnvironmentName}-ecs-tasks"
@@ -250,7 +255,49 @@ Resources:
                   Resource: !Ref MlflowAppArn
                 - !Ref AWS::NoValue
 
+  # The approval step runs as this role, never as TaskRole: the principal that registered a model version
+  # cannot also promote it, so two different roles keep the training job from approving its own model.
+  # It needs no AWS permissions of its own: it talks to the MLflow server over the network.
+  ApproverTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: Role of the promote task (moves @production after the gates pass). No data access.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                "aws:SourceAccount": !Ref AWS::AccountId
+      Policies:
+        - PolicyName: WriteOwnOutput
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                Resource: !Sub "${ArtifactBucketArn}/training-output/*"
+              - Effect: Allow
+                Action:
+                  - kms:GenerateDataKey
+                  - kms:Decrypt
+                Resource: !Ref ArtifactKeyArn
+              - !If
+                - HasMlflowApp
+                - Effect: Allow
+                  Action:
+                    - sagemaker:CallMlflowAppApi
+                    - sagemaker:DescribeMlflowApp
+                  Resource: !Ref MlflowAppArn
+                - !Ref AWS::NoValue
+
 Outputs:
+  ApproverTaskRoleArn:
+    Value: !GetAtt ApproverTaskRole.Arn
   VpcId:
     Value: !Ref Vpc
   SubnetAId:

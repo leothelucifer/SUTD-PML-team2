@@ -119,7 +119,10 @@ class EcsPlatformTests(unittest.TestCase):
             self.assertNotIn(resource, text, f"{resource} costs money while idle")
         group = load("ecs-platform.yaml")["Resources"]["TaskSecurityGroup"]["Properties"]
         self.assertNotIn("SecurityGroupIngress", group)
-        self.assertEqual([(r["FromPort"], r["ToPort"]) for r in group["SecurityGroupEgress"]], [(443, 443)])
+        # HTTPS to anywhere (ECR, S3), and the MLflow port inside the VPC only.
+        ports = {(r["FromPort"], r["ToPort"]): r["CidrIp"] for r in group["SecurityGroupEgress"]}
+        self.assertEqual(set(ports), {(443, 443), (5000, 5000)})
+        self.assertEqual(ports[(5000, 5000)], "VpcCidr")
 
     def test_the_training_cluster_does_not_clash_with_the_serving_cluster(self):
         serving = load("service.yaml")["Resources"]["Cluster"]["Properties"]["ClusterName"]
@@ -153,7 +156,7 @@ class RootWiringTests(unittest.TestCase):
         resources = root["Resources"]
         self.assertEqual(resources["Pipeline"]["Condition"], "UseSageMakerTraining")
         self.assertEqual(resources["PipelineEcs"]["Condition"], "UseEcsTraining")
-        self.assertEqual(resources["EcsPlatform"]["Condition"], "UseEcsTraining")
+        self.assertEqual(resources["EcsPlatform"]["Condition"], "NeedsEcsPlatform")
         self.assertEqual(resources["PipelineEcs"]["Properties"]["TemplateURL"], "pipeline-ecs.yaml")
 
     def test_dev_trains_on_ecs_because_a_new_account_has_no_sagemaker_quota(self):
@@ -170,3 +173,61 @@ class RootWiringTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MlflowOnEcsTests(unittest.TestCase):
+    def test_the_database_is_private_encrypted_and_has_a_generated_password(self):
+        db = load("mlflow-ecs.yaml")["Resources"]["Database"]["Properties"]
+        self.assertEqual(db["Engine"], "postgres")
+        self.assertIs(db["PubliclyAccessible"], False)
+        self.assertIs(db["StorageEncrypted"], True)
+        self.assertIs(db["ManageMasterUserPassword"], True)       # no password in the template or the parameters
+        self.assertNotIn("MasterUserPassword", db)
+
+    def test_there_is_no_load_balancer_and_the_server_is_reachable_only_from_training_tasks_by_default(self):
+        text = (CFN / "mlflow-ecs.yaml").read_text(encoding="utf-8")
+        for resource in ("AWS::ElasticLoadBalancingV2", "AWS::EC2::NatGateway", "AWS::EFS::", "0.0.0.0/0\n      Description: The"):
+            self.assertNotIn(resource, text)
+        group = load("mlflow-ecs.yaml")["Resources"]["MlflowSecurityGroup"]["Properties"]
+        self.assertEqual(len(group["SecurityGroupIngress"]), 1)
+        self.assertIn("SourceSecurityGroupId", group["SecurityGroupIngress"][0])
+        self.assertNotIn("CidrIp", group["SecurityGroupIngress"][0])
+
+    def test_the_service_carries_the_tags_the_power_workflow_uses(self):
+        service = load("mlflow-ecs.yaml")["Resources"]["Service"]
+        tags = {t["Key"]: t["Value"] for t in service["Properties"]["Tags"]}
+        self.assertEqual((tags["power:group"], tags["power:desired"]), ("mlflow", "1"))
+        self.assertEqual(service["Condition"], "HasImage")          # no image yet, no service
+        db_tags = {t["Key"]: t["Value"] for t in load("mlflow-ecs.yaml")["Resources"]["Database"]["Properties"]["Tags"]}
+        self.assertEqual(db_tags["power:group"], "database")
+
+    def test_the_password_comes_from_secrets_manager_and_artifacts_go_to_s3(self):
+        definition = load("mlflow-ecs.yaml")["Resources"]["TaskDefinition"]["Properties"]["ContainerDefinitions"][0]
+        self.assertEqual([s["Name"] for s in definition["Secrets"]], ["DB_PASSWORD"])
+        names = {e["Name"] for e in definition["Environment"]}
+        self.assertNotIn("DB_PASSWORD", names)
+        self.assertEqual(definition["Command"], ["sepsis_warning.mlflow_server"])
+
+    def test_root_wires_the_flags_and_the_rules(self):
+        root = load("root.yaml")
+        self.assertEqual(root["Parameters"]["MlflowBackend"]["AllowedValues"], ["sagemaker", "ecs"])
+        self.assertEqual(root["Parameters"]["EnableSageMakerMlflowApp"]["Default"], "true")
+        self.assertEqual(root["Resources"]["MlflowEcs"]["Condition"], "UseEcsMlflow")
+        self.assertIn("EcsMlflowNeedsEcsTraining", root["Rules"])
+        self.assertIn("SageMakerMlflowNeedsTheApp", root["Rules"])
+        mlops = load("mlops.yaml")
+        self.assertEqual(mlops["Resources"]["MlflowApp"]["Condition"], "HasMlflowApp")
+        self.assertEqual(mlops["Outputs"]["MlflowAppArn"]["Condition"], "HasMlflowApp")
+
+    def test_dev_uses_the_ecs_server_and_drops_the_sagemaker_app(self):
+        dev = json.loads((ROOT / "infra" / "params" / "dev.json").read_text(encoding="utf-8"))
+        self.assertEqual((dev["MlflowBackend"], dev["EnableSageMakerMlflowApp"], dev["TrainingBackend"]), ("ecs", "false", "ecs"))
+
+    def test_the_tools_image_is_built_locked_and_scanned(self):
+        self.assertIn("FROM base AS tools", (ROOT / "Dockerfile").read_text(encoding="utf-8"))
+        self.assertIn("tools:ToolsRepositoryUri", (ROOT / "scripts" / "aws_deploy.sh").read_text(encoding="utf-8"))
+        lock = (ROOT / "requirements" / "tools.txt").read_text(encoding="utf-8")
+        for package in ("mlflow==", "psycopg2-binary==", "evidently=="):
+            self.assertIn(package, lock)
+        ci = (ROOT / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
+        self.assertIn("scoring lambda training tools", ci)

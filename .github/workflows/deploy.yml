@@ -137,6 +137,9 @@ jobs:
         run: |
           bash scripts/aws_deploy.sh stack
           bash scripts/aws_deploy.sh images
+          # The hosted tools (MLflow on ECS) need their image, which exists only after the first stack run:
+          # this second run, a no-op when nothing changed, creates the service.
+          bash scripts/aws_deploy.sh stack
 
       - name: Publish the promoted model and serve it
         id: publish

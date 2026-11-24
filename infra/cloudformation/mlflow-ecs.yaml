@@ -1,0 +1,347 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  MLflow tracking server and model registry on ECS Fargate, with a PostgreSQL database (RDS) and S3
+  artifacts. Part of the always-on tools that the power workflow starts and stops: the service has
+  desired count 1 (tag power:desired) and the database can be stopped, so an idle environment pays for
+  storage only. There is no load balancer; training tasks reach the server by its Cloud Map name.
+
+Parameters:
+  EnvironmentName:
+    Type: String
+  VpcId:
+    Type: String
+  SubnetAId:
+    Type: String
+  SubnetBId:
+    Type: String
+  ClusterArn:
+    Type: String
+  TrainingTaskSecurityGroupId:
+    Type: String
+    Description: Security group of the training tasks; the only group allowed to reach the server.
+  ArtifactBucketName:
+    Type: String
+  ArtifactBucketArn:
+    Type: String
+  ArtifactKeyArn:
+    Type: String
+  ToolsRepositoryArn:
+    Type: String
+  ToolsImageUri:
+    Type: String
+    Default: ""
+    Description: Image (target "tools") with its tag. Empty creates only the database; push the image, then update.
+  MlflowCpu:
+    Type: String
+    Default: "512"
+    AllowedValues: ["256", "512", "1024"]
+  MlflowMemory:
+    Type: String
+    Default: "2048"
+    Description: MiB. Artifacts pass through the server, so keep at least 2048.
+  DbInstanceClass:
+    Type: String
+    Default: db.t4g.micro
+  DbStorageGb:
+    Type: Number
+    Default: 20
+    MinValue: 20
+    MaxValue: 100
+  LogRetentionDays:
+    Type: Number
+    Default: 30
+    AllowedValues: [1, 3, 5, 7, 14, 30, 60, 90, 180, 365]
+
+Conditions:
+  HasImage: !Not [!Equals [!Ref ToolsImageUri, ""]]
+
+Resources:
+  # ---- network: the database and the server share the training VPC; nothing here is reachable from outside it.
+  # Browser access for a presenter is opened and closed by the power workflow (a security group rule, not a template).
+  MlflowSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: MLflow server - port 5000 from the training tasks only (more addresses are opened by the power workflow).
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5000
+          ToPort: 5000
+          SourceSecurityGroupId: !Ref TrainingTaskSecurityGroupId
+          Description: Training and approval tasks
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-mlflow"
+        - Key: power:ui-port
+          Value: "5000"
+
+  DbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: MLflow database - PostgreSQL from the MLflow server only.
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref MlflowSecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-mlflow-db"
+
+  MlflowEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref MlflowSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      CidrIp: 0.0.0.0/0
+      Description: ECR, S3, CloudWatch Logs, Secrets Manager
+
+  MlflowDbEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref MlflowSecurityGroup
+      IpProtocol: tcp
+      FromPort: 5432
+      ToPort: 5432
+      DestinationSecurityGroupId: !Ref DbSecurityGroup
+      Description: The database
+
+  # ---- database
+  DbSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: MLflow database subnets
+      SubnetIds:
+        - !Ref SubnetAId
+        - !Ref SubnetBId
+
+  # The master password is generated and kept in Secrets Manager by RDS; nobody types or stores it.
+  Database:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Delete
+    Properties:
+      Engine: postgres
+      EngineVersion: "17.9"
+      DBInstanceClass: !Ref DbInstanceClass
+      AllocatedStorage: !Ref DbStorageGb
+      StorageType: gp3
+      StorageEncrypted: true
+      DBName: mlflow
+      MasterUsername: mlflow
+      ManageMasterUserPassword: true
+      PubliclyAccessible: false
+      MultiAZ: false
+      BackupRetentionPeriod: 1
+      DeletionProtection: false
+      AutoMinorVersionUpgrade: true
+      DBSubnetGroupName: !Ref DbSubnetGroup
+      VPCSecurityGroups:
+        - !Ref DbSecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-mlflow-db"
+        - Key: Project
+          Value: sepsis-warning-research
+        - Key: power:group
+          Value: database
+
+  # ---- service discovery: http://mlflow.<environment>.local:5000
+  Namespace:
+    Type: AWS::ServiceDiscovery::PrivateDnsNamespace
+    Properties:
+      Name: !Sub "${EnvironmentName}.local"
+      Vpc: !Ref VpcId
+
+  DiscoveryService:
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      Name: mlflow
+      NamespaceId: !GetAtt Namespace.Id
+      DnsConfig:
+        RoutingPolicy: MULTIVALUE
+        DnsRecords:
+          - Type: A
+            TTL: 10
+      HealthCheckCustomConfig:
+        FailureThreshold: 1
+
+  # ---- the server
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/ecs/${EnvironmentName}-mlflow"
+      RetentionInDays: !Ref LogRetentionDays
+
+  ExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                "aws:SourceAccount": !Ref AWS::AccountId
+      Policies:
+        - PolicyName: PullImageLogAndReadThePassword
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                Resource: !Ref ToolsRepositoryArn
+              - Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub "${LogGroup.Arn}:*"
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !GetAtt Database.MasterUserSecret.SecretArn
+
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: MLflow server - stores run artifacts and models under mlflow-artifacts/ in the artifact bucket.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                "aws:SourceAccount": !Ref AWS::AccountId
+      Policies:
+        - PolicyName: ArtifactStore
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:AbortMultipartUpload
+                Resource: !Sub "${ArtifactBucketArn}/mlflow-artifacts/*"
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                  - s3:GetBucketLocation
+                Resource: !Ref ArtifactBucketArn
+              - Effect: Allow
+                Action:
+                  - kms:Decrypt
+                  - kms:GenerateDataKey
+                Resource: !Ref ArtifactKeyArn
+
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Condition: HasImage
+    Properties:
+      Family: !Sub "${EnvironmentName}-mlflow"
+      Cpu: !Ref MlflowCpu
+      Memory: !Ref MlflowMemory
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      ExecutionRoleArn: !GetAtt ExecutionRole.Arn
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      RuntimePlatform:
+        CpuArchitecture: X86_64
+        OperatingSystemFamily: LINUX
+      ContainerDefinitions:
+        - Name: mlflow
+          Image: !Ref ToolsImageUri
+          Essential: true
+          PortMappings:
+            - ContainerPort: 5000
+          Command:
+            - sepsis_warning.mlflow_server
+          Environment:
+            - Name: DB_HOST
+              Value: !GetAtt Database.Endpoint.Address
+            - Name: DB_PORT
+              Value: !GetAtt Database.Endpoint.Port
+            - Name: DB_NAME
+              Value: mlflow
+            - Name: DB_USER
+              Value: mlflow
+            - Name: ARTIFACTS_DESTINATION
+              Value: !Sub "s3://${ArtifactBucketName}/mlflow-artifacts"
+          Secrets:
+            - Name: DB_PASSWORD
+              ValueFrom: !Sub "${Database.MasterUserSecret.SecretArn}:password::"
+          HealthCheck:
+            Command:
+              - CMD
+              - python
+              - -c
+              - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/health', timeout=4)"
+            Interval: 30
+            Timeout: 6
+            Retries: 3
+            StartPeriod: 60
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: mlflow
+
+  Service:
+    Type: AWS::ECS::Service
+    Condition: HasImage
+    Properties:
+      ServiceName: !Sub "${EnvironmentName}-mlflow"
+      Cluster: !Ref ClusterArn
+      TaskDefinition: !Ref TaskDefinition
+      DesiredCount: 1
+      LaunchType: FARGATE
+      # One task: replace it in place instead of starting a second one next to it.
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 0
+        MaximumPercent: 100
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          Subnets:
+            - !Ref SubnetAId
+            - !Ref SubnetBId
+          SecurityGroups:
+            - !Ref MlflowSecurityGroup
+      ServiceRegistries:
+        - RegistryArn: !GetAtt DiscoveryService.Arn
+      Tags:
+        - Key: Project
+          Value: sepsis-warning-research
+        - Key: power:group
+          Value: mlflow
+        - Key: power:desired
+          Value: "1"
+
+Outputs:
+  TrackingUri:
+    Description: Where training and approval tasks find MLflow (private name; only works inside the VPC).
+    Value: !Sub "http://mlflow.${EnvironmentName}.local:5000"
+  MlflowSecurityGroupId:
+    Value: !Ref MlflowSecurityGroup
+  DatabaseIdentifier:
+    Value: !Ref Database
+  ServiceName:
+    Value: !If [HasImage, !GetAtt Service.Name, ""]
+  MlflowLogGroupName:
+    Value: !Ref LogGroup

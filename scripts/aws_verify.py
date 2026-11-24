@@ -164,7 +164,7 @@ def check_table(result: Result, dynamodb, items: list[dict]) -> None:
 def check_mlflow(result: Result, sagemaker, items: list[dict]) -> None:
     apps = of_type(items, "AWS::SageMaker::MlflowApp")
     if not apps:
-        result.add("WARN", "SageMaker MLflow App", "not in this stack (EnableMlops is off)")
+        result.add("WARN", "SageMaker MLflow App", "not in this stack (MlflowBackend=ecs, or EnableMlops is off)")
     for app in apps:
         def check(app=app):
             status = sagemaker.describe_mlflow_app(Arn=app["physical"])["Status"]

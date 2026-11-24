@@ -1,5 +1,5 @@
 {
-  "_comment": "Parameters for the dev stack (sepsis-dev). Use a separate AWS account per environment. Budget and alert emails come from BUDGET_EMAIL / ALERT_EMAIL. TrainingBackend=ecs runs the pipeline steps as ECS Fargate tasks (no SageMaker training quota needed).",
+  "_comment": "Parameters for the dev stack (sepsis-dev). Use a separate AWS account per environment. Budget and alert emails come from BUDGET_EMAIL / ALERT_EMAIL. TrainingBackend=ecs runs the pipeline steps as ECS Fargate tasks (no SageMaker training quota needed). MlflowBackend=ecs hosts MLflow on ECS (RDS PostgreSQL, S3 artifacts); EnableSageMakerMlflowApp=false removes the SageMaker MLflow App (set it back to true to switch back).",
   "EnvironmentName": "sepsis-dev",
   "DeploymentType": "AllAtOnce",
   "MonthlyBudgetUsd": "20",
@@ -8,5 +8,7 @@
   "EnableObservability": "true",
   "TrainingBackend": "ecs",
   "EcsTrainingCpu": "4096",
-  "EcsTrainingMemory": "16384"
+  "EcsTrainingMemory": "16384",
+  "MlflowBackend": "ecs",
+  "EnableSageMakerMlflowApp": "false"
 }

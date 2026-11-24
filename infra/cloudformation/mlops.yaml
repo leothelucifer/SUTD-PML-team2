@@ -19,16 +19,25 @@ Parameters:
     Type: String
   ScoringRepositoryArn:
     Type: String
+  EnableMlflowApp:
+    Type: String
+    Default: "true"
+    AllowedValues: ["false", "true"]
+    Description: Feature flag for the serverless SageMaker MLflow App. Off when MLflow runs on ECS instead.
   MlflowMaintenanceWindow:
     Type: String
     Default: "Sun:18:00"
     AllowedPattern: "(Mon|Tue|Wed|Thu|Fri|Sat|Sun):([01]\\d|2[0-3]):([0-5]\\d)"
     Description: Weekly MLflow App maintenance start in UTC (Sun 18:00 UTC is Mon 02:00 in Singapore).
 
+Conditions:
+  HasMlflowApp: !Equals [!Ref EnableMlflowApp, "true"]
+
 Resources:
   # The MLflow App reads and writes run artifacts and registered models under mlflow/.
   MlflowAppRole:
     Type: AWS::IAM::Role
+    Condition: HasMlflowApp
     Properties:
       Description: Lets the SageMaker MLflow App use its artifact store.
       # Trust policy as documented for MLflow Apps (Set up IAM permissions for MLflow Apps).
@@ -72,6 +81,7 @@ Resources:
   # Serverless MLflow: no instance, no hourly charge; storage is the S3 prefix above.
   MlflowApp:
     Type: AWS::SageMaker::MlflowApp
+    Condition: HasMlflowApp
     Properties:
       Name: !Sub "${EnvironmentName}-mlflow"
       ArtifactStoreUri: !Sub "s3://${ArtifactBucketName}/mlflow"
@@ -174,12 +184,15 @@ Resources:
                 Condition:
                   StringLike:
                     "cloudwatch:namespace": "/aws/sagemaker/*"
-              - Sid: LogToMlflowApp
-                Effect: Allow
-                Action:
-                  - sagemaker:CallMlflowAppApi
-                  - sagemaker:DescribeMlflowApp
-                Resource: !GetAtt MlflowApp.Arn
+              - !If
+                - HasMlflowApp
+                - Sid: LogToMlflowApp
+                  Effect: Allow
+                  Action:
+                    - sagemaker:CallMlflowAppApi
+                    - sagemaker:DescribeMlflowApp
+                  Resource: !GetAtt MlflowApp.Arn
+                - !Ref AWS::NoValue
 
   # Three duties, three policies. Attach each to different people (or roles) so the person
   # who trains a model is not the one who approves it, and neither deploys alone.
@@ -193,13 +206,16 @@ Resources:
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
-          - Sid: UseMlflowApp
-            Effect: Allow
-            Action:
-              - sagemaker:CallMlflowAppApi
-              - sagemaker:DescribeMlflowApp
-              - sagemaker:CreatePresignedMlflowAppUrl
-            Resource: !GetAtt MlflowApp.Arn
+          - !If
+            - HasMlflowApp
+            - Sid: UseMlflowApp
+              Effect: Allow
+              Action:
+                - sagemaker:CallMlflowAppApi
+                - sagemaker:DescribeMlflowApp
+                - sagemaker:CreatePresignedMlflowAppUrl
+              Resource: !GetAtt MlflowApp.Arn
+            - !Ref AWS::NoValue
           - Sid: RunTrainingJobs
             Effect: Allow
             Action:
@@ -263,13 +279,16 @@ Resources:
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
-          - Sid: UseMlflowApp
-            Effect: Allow
-            Action:
-              - sagemaker:CallMlflowAppApi
-              - sagemaker:DescribeMlflowApp
-              - sagemaker:CreatePresignedMlflowAppUrl
-            Resource: !GetAtt MlflowApp.Arn
+          - !If
+            - HasMlflowApp
+            - Sid: UseMlflowApp
+              Effect: Allow
+              Action:
+                - sagemaker:CallMlflowAppApi
+                - sagemaker:DescribeMlflowApp
+                - sagemaker:CreatePresignedMlflowAppUrl
+              Resource: !GetAtt MlflowApp.Arn
+            - !Ref AWS::NoValue
           - Sid: ApprovePipeline
             Effect: Allow
             Action:
@@ -292,12 +311,15 @@ Resources:
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
-          - Sid: ReadMlflowApp
-            Effect: Allow
-            Action:
-              - sagemaker:CallMlflowAppApi
-              - sagemaker:DescribeMlflowApp
-            Resource: !GetAtt MlflowApp.Arn
+          - !If
+            - HasMlflowApp
+            - Sid: ReadMlflowApp
+              Effect: Allow
+              Action:
+                - sagemaker:CallMlflowAppApi
+                - sagemaker:DescribeMlflowApp
+              Resource: !GetAtt MlflowApp.Arn
+            - !Ref AWS::NoValue
           - Sid: PublishModels
             Effect: Allow
             Action:
@@ -346,7 +368,8 @@ Resources:
 
 Outputs:
   MlflowAppArn:
-    Description: Tracking URI for MLflow (with the sagemaker-mlflow plugin).
+    Condition: HasMlflowApp
+    Description: Tracking URI for MLflow (with the sagemaker-mlflow plugin). Only exists when the flag is on.
     Value: !GetAtt MlflowApp.Arn
   SageMakerExecutionRoleArn:
     Value: !GetAtt SageMakerExecutionRole.Arn
