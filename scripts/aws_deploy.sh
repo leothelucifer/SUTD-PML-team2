@@ -67,10 +67,19 @@ account() { aws sts get-caller-identity --query Account --output text; }
 # exists." AWS documents the fix: `aws iam create-service-linked-role --aws-service-name ecs.amazonaws.com` (IAM user guide,
 # "Creating a service-linked role"). Done here, once, only when the stack uses the service; an existing role is left alone.
 ensure_service_linked_role() {  # ensure_service_linked_role SERVICE ROLE-NAME
-  aws iam get-role --role-name "$2" >/dev/null 2>&1 && return 0
+  if aws iam get-role --role-name "$2" >/dev/null 2>&1; then
+    aws iam wait role-exists --role-name "$2" >/dev/null 2>&1 || true
+    sleep 10
+    return 0
+  fi
   echo "Creating the service-linked role $2 for $1 (the account has none yet)"
   local out
-  if out="$(aws iam create-service-linked-role --aws-service-name "$1" 2>&1)"; then return 0; fi
+  if out="$(aws iam create-service-linked-role --aws-service-name "$1" 2>&1)"; then
+    aws iam wait role-exists --role-name "$2" >/dev/null 2>&1 || true
+    # IAM role propagation can briefly lag creation; ECS and CloudFormation need the role to be usable.
+    sleep 10
+    return 0
+  fi
   case "$out" in *"has been taken"*|*InvalidInput*taken*) return 0 ;; esac
   echo "$out" >&2
   fail "could not create $2. Ask an administrator to run: aws iam create-service-linked-role --aws-service-name $1 (or allow iam:CreateServiceLinkedRole for the deploy role / lift a service control policy that denies it)"
