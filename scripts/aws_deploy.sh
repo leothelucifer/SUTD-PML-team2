@@ -78,10 +78,29 @@ ensure_service_linked_role() {  # ensure_service_linked_role SERVICE ROLE-NAME
     done
     return 1
   }
+  wait_for_ecs_service_linked_role() {
+    local attempt cluster="${ECS_ROLE_PROBE_CLUSTER:-sepsis-deploy-role-probe-$$}"
+    for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
+      local out
+      if out="$(aws ecs create-cluster --cluster-name "$cluster" --tags key=Purpose,value=service-linked-role-probe 2>&1)"; then
+        aws ecs delete-cluster --cluster "$cluster" >/dev/null 2>&1 || true
+        return 0
+      fi
+      case "$out" in
+        *"Unable to assume the service linked role"*|*"Unable to assume"*linked*"role"*) ;;
+        *) echo "$out" >&2; return 1 ;;
+      esac
+      [ "$attempt" = 12 ] || sleep "${SERVICE_LINKED_ROLE_RETRY_SECONDS:-10}"
+    done
+    return 1
+  }
   if aws iam get-role --role-name "$2" >/dev/null 2>&1; then
     aws iam wait role-exists --role-name "$2" >/dev/null 2>&1 || true
     # ECS and CloudFormation can briefly race IAM even after get-role succeeds.
     sleep "${SERVICE_LINKED_ROLE_PROPAGATION_SECONDS:-60}"
+    if [ "$1" = ecs.amazonaws.com ]; then
+      wait_for_ecs_service_linked_role || fail "ECS cannot assume $2 after propagation; ask an administrator to verify $1"
+    fi
     return 0
   fi
   echo "Creating the service-linked role $2 for $1 (the account has none yet)"
@@ -98,6 +117,9 @@ ensure_service_linked_role() {  # ensure_service_linked_role SERVICE ROLE-NAME
   if wait_for_service_linked_role "$2"; then
     # Leave enough time for the global IAM change to reach ECS before CloudFormation creates the cluster.
     sleep "${SERVICE_LINKED_ROLE_PROPAGATION_SECONDS:-60}"
+    if [ "$1" = ecs.amazonaws.com ]; then
+      wait_for_ecs_service_linked_role || fail "ECS cannot assume $2 after propagation; ask an administrator to verify $1"
+    fi
     return 0
   fi
   echo "The service-linked role $2 was not visible after creation" >&2
