@@ -65,7 +65,9 @@ class Registry(unittest.TestCase):
 
     def test_artifacts_stay_next_to_the_database(self):
         experiment = self.client.get_experiment(self.client.get_run(self.run_id).info.experiment_id)
-        self.assertEqual(Path(experiment.artifact_location.replace("file://", "")).parent, self.root / "store")
+        # Resolved on both sides: on macOS the temporary folder is a symlink (/var -> /private/var).
+        location = Path(experiment.artifact_location.replace("file://", "")).parent.resolve()
+        self.assertEqual(location, (self.root / "store").resolve())
         names = {item.path for item in self.client.list_artifacts(self.run_id)}
         self.assertNotIn("held_out_predictions.csv", names)
         self.assertNotIn("split_manifest.csv", names)

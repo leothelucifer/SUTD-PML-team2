@@ -71,7 +71,9 @@ Seeds, package versions and hardware: `environment.json` next to the results.
 
 ### 7.1 Results against the baseline
 
-TODO (leo): paste `reports/results/metrics_table.md` (validation) and, after the freeze, `test_metrics_table.md`.
+TODO (leo): paste `reports/results/metrics_table.md` (validation) and, after the freeze, `test_metrics_table.md`,
+which puts the frozen model beside SIRS at the standard two criteria, SIRS at its validation alert-budget threshold
+and never alerting, on the internal test and hospital B.
 Report accuracy, precision, recall, F1, average precision, hourly utility and the intervals. State plainly that accuracy
 is near-trivial at this prevalence.
 
@@ -84,11 +86,16 @@ figure's recreate command from `FIGURES.md`.
 ### 7.3 Important features
 
 TODO (Jawad): permutation or model-based importance for the selected model, with the clinical sense-check.
+Evidence: `feature_importance.md` and `fig_feature_importance.png` in the results folder (grouped permutation
+importance on validation). Say how much comes from `measurement_pattern` (whether and when something was measured)
+and from `ICULOS`, because those reflect care practice and time in the ICU rather than physiology.
 
 ### 7.4 Bias audit
 
 TODO (Mashie): performance by hospital, age band and gender; report gaps with intervals; say what was not checked.
-Evidence: `docs/hospital-a-vs-b.md`, `src/sepsis_warning/hospital_comparison.py`.
+Evidence: `subgroup_table.md` (validation) and, after the freeze, `test_subgroup_table.md` (sex and age band within
+each test split, then hospital A against hospital B), `docs/hospital-a-vs-b.md`,
+`src/sepsis_warning/hospital_comparison.py`.
 
 ### 7.5 Where the model goes wrong
 

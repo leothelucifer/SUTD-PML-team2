@@ -16,6 +16,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parents[1]
+SKIPPED_FOLDERS = {".git", ".venv", "venv", "env", "node_modules", "artifacts", "data", ".ipynb_checkpoints"}
+
 # Carry-forward, back-fill and windowing are what the model's features are made of; a second
 # copy belongs in sepsis_warning/features.py. Exploratory scikit-learn use (PCA, a quick
 # cross-validated profile) is not flagged.
@@ -41,11 +44,21 @@ def problems(path: Path) -> list[str]:
     return found
 
 
+def default_notebooks() -> list[Path]:
+    """Every tracked notebook; when Git lists none (a downloaded zip has no checkout), every notebook under the project."""
+    try:
+        listed = subprocess.run(["git", "ls-files", "*.ipynb"], capture_output=True, text=True, check=False, cwd=ROOT)
+        tracked = [ROOT / line for line in listed.stdout.splitlines() if line] if listed.returncode == 0 else []
+    except FileNotFoundError:  # Git is not installed
+        tracked = []
+    return tracked or sorted(path for path in ROOT.rglob("*.ipynb")
+                             if not SKIPPED_FOLDERS & set(path.relative_to(ROOT).parts[:-1]))
+
+
 def main(argv=None) -> int:
     paths = [Path(p) for p in (argv if argv is not None else sys.argv[1:])]
     if not paths:
-        listed = subprocess.run(["git", "ls-files", "*.ipynb"], capture_output=True, text=True, check=True).stdout
-        paths = [Path(line) for line in listed.splitlines() if line]
+        paths = default_notebooks()
     failed = False
     for path in paths:
         for problem in problems(path):

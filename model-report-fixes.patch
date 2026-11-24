@@ -1,0 +1,1808 @@
+diff --git a/Agent.md b/Agent.md
+index 3ef5b12..52d7733 100644
+--- a/Agent.md
++++ b/Agent.md
+@@ -2,17 +2,17 @@
+ 
+ - Purpose, architecture, implemented capabilities, and research limitations: [README.md](README.md).
+ - Code map, module ownership, data contracts, CLI commands, and test guidance: [docs/agent-repository-guide.md](docs/agent-repository-guide.md).
+-- Real-data testing workflow and staged PhysioNet evaluation: [docs/testing/real-data.md](docs/testing/real-data.md).
++- Real-data testing workflow and staged PhysioNet evaluation: [docs/testing/real-data.md](docs/testing/real-data.md). Step-by-step run from data to report and AWS: [docs/testing/end-to-end-guide.md](docs/testing/end-to-end-guide.md).
+ - Installation, data download/preparation, notebook setup, experiments, and replay: [README.md](README.md).
+-- Task ownership and slide assignments: [TEAM-TASKS.md](TEAM-TASKS.md). No `CONTRIBUTING.md` or documented branching/commit conventions exist; confirm workflow with the team.
++- Task ownership and slide assignments: [TEAM-TASKS.md](TEAM-TASKS.md). Summary of each member's contribution: [contributions.md](contributions.md). No `CONTRIBUTING.md` or documented branching/commit conventions exist; confirm workflow with the team.
+ 
+ ## Non-standard tooling
+ 
+ - This is a Python `src/`-layout package named `sepsis_warning`. Use the project's `.venv/bin/python`, not a different environment with the same `.venv` display name. The README recommends Python 3.12 for the notebook; package metadata alone does not certify newer runtimes.
+-- Use `uv pip install --python .venv/bin/python -e .` for editable installation when uv is available. Dependencies are declared in [pyproject.toml](pyproject.toml); no dependency lockfile exists.
++- Use `uv pip install --python .venv/bin/python -e .` for editable installation when uv is available. Dependencies are declared in [pyproject.toml](pyproject.toml). Three kinds of pin exist: [requirements.txt](requirements.txt) holds the exact versions behind the reported results; `requirements/<target>.txt` are hash-locked files for CI and the images, regenerated with `bash scripts/lock_requirements.sh` and never edited by hand; `uv.lock` is also committed.
+ - Downloaded data belongs under project-root `data/physionet/`, not a hardcoded personal path or an external project's dataset. Run data commands from the project root and use their documented `--data`/`--output` arguments.
+-- `python -m sepsis_warning prepare` creates combined Parquet, but training and replay still read per-record PSV files. The [notebook](src/notebooks/data_check.ipynb) reads Parquet and locates the checkout before importing the local package.
+-- The current stack is NumPy, pandas, SciPy, scikit-learn, Joblib, PyArrow, Matplotlib, and unittest. Pandera and DVC are optional installs (E03, E02). MLflow tracking and the FastAPI research service are implemented behind optional extras; LightGBM, Docker packaging, and cloud deployment remain planned or design-only.
++- `python -m sepsis_warning prepare` creates combined Parquet. `train`, `tune`, `evaluate` and `baseline` take either that Parquet file (with the saved `splits.csv`) or the folder of per-record PSV files (re-split with `--seed`); `replay` scores one PSV file. The [notebook](src/notebooks/data_check.ipynb) reads Parquet and locates the checkout before importing the local package.
++- The current stack is NumPy, pandas, SciPy, scikit-learn, Joblib, PyArrow, Matplotlib, and unittest. Pandera and DVC are optional installs (E03, E02). MLflow tracking and registry, the FastAPI research service and its AWS Lambda wrapper are implemented behind optional extras. The [Dockerfile](Dockerfile) builds four images (scoring, lambda, training, tools) that CI builds and smoke-tests. LightGBM is not used: the gradient-boosting candidates are scikit-learn's histogram gradient boosting and a NumPy re-implementation. CloudFormation templates and deployment workflows exist under `infra/` and `.github/workflows/`; whether a stack is deployed is recorded under L06 in [TEAM-TASKS.md](TEAM-TASKS.md), so do not assume one is running.
+ 
+ ## Definition of done
+ 
+@@ -23,7 +23,8 @@
+ - For feature changes, verify prefix invariance, future-measurement corruption, record-local imputation, and exclusion of labels/metadata. For policy changes, verify cooldown resets, hourly decision versus notification accounting, utility, and censored lead-time handling.
+ - Verify data preparation preserves original values, missingness, labels, source provenance, and record/hour counts. Never use a synthetic fixture to claim real-cohort performance.
+ - Verify notebook execution with the selected kernel, not just terminal Python. Clear saved outputs before sharing or committing.
+-- GitHub Actions ([.github/workflows/tests.yml](.github/workflows/tests.yml)) runs the unit tests, the causal-feature script and the synthetic demo on pull requests. There is no lint step. Do not claim checks passed without looking at the run.
++- GitHub Actions ([.github/workflows/tests.yml](.github/workflows/tests.yml)) runs on pull requests and on pushes to `main`: Ruff lint, mypy on the serving modules, `pip-audit` on the locked requirements, the notebook check, the unit tests with an 85% coverage floor on the critical modules, the causal-feature script and the synthetic demo. It also builds and smoke-tests the Docker images and lints the CloudFormation templates. Run `ruff check src tests scripts` before pushing. Do not claim checks passed without looking at the run.
++- Tests must pass from a downloaded zip as well as a Git checkout, and without the optional extras: skip a test whose extra (`aws`, `checks`, `tracking`, `serve`) is not installed instead of letting it error.
+ 
+ ## Conventions
+ 
+diff --git a/README.md b/README.md
+index e4e4316..3e71e41 100644
+--- a/README.md
++++ b/README.md
+@@ -1,14 +1,28 @@
+ # Early sepsis warning across hospitals
+ 
+-Rough project sketch and runnable classical-ML scaffold for the selected proposal.
+-The question is: **can an hourly early-warning model retain useful performance
+-at another hospital under a limited notification budget?**
+-
+-The first version runs with an explicitly synthetic software fixture. It produces
+-a model comparison, a saved model with its manifest, and an offline patient
+-replay of validation stays. Test-split results come from a separate, one-time
+-`evaluate` step. Synthetic scores demonstrate software behavior only. Real-data model
+-quality has not been established.
++A classical machine-learning pipeline (no deep learning) for hourly early warning of
++sepsis in intensive care, built on the public PhysioNet 2019 challenge data. It
++covers data checks, causal features, hyperparameter search, model selection,
++probability calibration, an alert policy, a scoring API, drift monitoring and an
++AWS deployment design. Course project for 61.501 Production Ready ML (theme: AI
++for Social Good), Team 2. The question is: **can an hourly early-warning model
++retain useful performance at another hospital under a limited notification budget?**
++
++**Status of the results.** Every command runs end to end on an explicitly
++synthetic software fixture. Synthetic scores demonstrate software behaviour only.
++On the real data this repository holds the SIRS baseline results and the
++hospital A against B comparison (both below). Trained-model results on the real
++data are not committed yet: they come from the commands under
++[Tune, evaluate and write the report](#tune-evaluate-and-write-the-report), and
++the report draft is [reports/final/report.md](reports/final/report.md).
++
++Start here:
++
++- [Run the synthetic demo](#run-the-synthetic-demo): five commands, no data needed.
++- [Use real PhysioNet data](#use-real-physionet-data): download, prepare, split, baseline.
++- [Tune, evaluate and write the report](#tune-evaluate-and-write-the-report): the results tables and figures, each with its recreate command.
++- [Run tracking and the research API](#run-tracking-and-the-research-api-l01-l02): MLflow, the registry and the scoring service.
++- Who did what: [contributions.md](contributions.md). Code map: [docs/agent-repository-guide.md](docs/agent-repository-guide.md).
+ 
+ ## System sketch
+ 
+@@ -48,7 +62,9 @@ python -m unittest discover -s tests -v
+ 
+ Open `artifacts/demo/replay.html` in a browser. Select a validation patient,
+ play the hourly sequence, and inspect probabilities, threshold crossings,
+-notifications, and retrospective positive labels.
++notifications, and retrospective positive labels. The demo writes a model
++comparison, a saved model with its manifest and that replay of validation stays.
++Tests that need an optional extra that is not installed are skipped, not failed.
+ 
+ `train` and `demo` never score the test splits. Once a model is reviewed and
+ frozen, score internal test and hospital B one time:
+@@ -73,9 +89,6 @@ Demo generation and experiment outputs require empty destinations. To repeat:
+ python -m sepsis_warning demo --data data/demo2 --output artifacts/demo2 --seed 43
+ ```
+ 
+-The Codex workspace currently has an already-installed `.venv`; the commands
+-above are the portable setup for teammates.
+-
+ ## Test the whole pipeline locally (macOS or Linux)
+ 
+ Train, select, register, review, serve and call the model on synthetic data,
+@@ -89,7 +102,7 @@ python3.12 -m venv .venv && source .venv/bin/activate
+ python -m pip install --upgrade pip
+ python -m pip install -e ".[serve,test,tracking]"
+ 
+-# 2. Tests (about 2-3 minutes)
++# 2. Tests (about 6 minutes; add the aws and checks extras to run the tests that are otherwise skipped)
+ MPLBACKEND=Agg python -m unittest discover -s tests
+ 
+ # 3. Train every candidate, select one on validation, register it as @candidate
+@@ -186,12 +199,17 @@ python -m sepsis_warning split --data data/physionet/combined.parquet --output d
+ python -m sepsis_warning baseline --data data/physionet/combined.parquet --output artifacts/baseline
+ ```
+ 
+-To train the models, which read the `.psv` folder:
++To train the models. `--data` takes the prepared Parquet file, which uses the
++saved `splits.csv` and runs the data checks first (`pip install -e ".[checks]"`),
++or the `.psv` folder, which is re-split with `--seed` into the same stays:
+ 
+ ```bash
+-python -m sepsis_warning train --data data/physionet --output artifacts/real
++python -m sepsis_warning train --data data/physionet/combined.parquet --output artifacts/real
+ ```
+ 
++The full sequence with hyperparameter search, the results tables and the test
++evaluation is under [Tune, evaluate and write the report](#tune-evaluate-and-write-the-report).
++
+ Check `split` against the stay counts in [Patient split](#patient-split). For the
+ notebook, also run `python -m pip install -e ".[notebook]"`.
+ 
+@@ -346,18 +364,22 @@ DVC records which data files belong with this code: see
+ 
+ ## What is implemented
+ 
+-| Component | First implementation |
++| Component | Implementation |
+ |---|---|
+ | Data checks | Required schema, binary nondecreasing labels, consecutive hours |
+ | Features | Last observed value, current missingness, never-observed flag, hours since observation, rolling mean/std/count, six-hour change |
+-| Models | Constant-prior baseline, logistic regression, random forest, histogram gradient boosting |
++| Baselines | SIRS rule (two or more of four criteria), never alerting, and a constant-prior model |
++| Models | Logistic regression, random forest, histogram gradient boosting; optional hand-written NumPy versions of the three (`--include-numpy-models`) |
++| Hyperparameters | Random or grid search with patient-grouped cross-validation on the training split only (`tune`) |
+ | Missing values | Forward fill within a patient; training-only median imputation for logistic regression and random forest |
+ | Calibration | Sigmoid calibration on a separate source-patient cohort |
+-| Alert selection | Threshold grid, fixed six-hour cooldown, validation alarm budget |
+-| Evaluation | Average precision, AUROC, Brier score, normalized hourly utility, alert count, early-detection recall, inferred warning lead time |
+-| Serving sketch | Batch replay from a saved model; labels are not required |
++| Alert selection | Threshold grid, fixed six-hour cooldown, validation alarm budget, one-standard-error model choice |
++| Evaluation | Accuracy, precision, recall, F1, average precision, AUROC, Brier score, normalized hourly utility, alert count, early-detection recall, inferred warning lead time, with stay-grouped bootstrap intervals; test splits scored once (`evaluate`) |
++| Explanation and bias audit | Grouped permutation importance of the selected model; results by recorded sex, age band and hospital with intervals (`model-report`) |
++| Serving | FastAPI scoring service (`serve`), Docker images, a client with a SIRS fallback, and batch replay from a saved model; labels are not required |
++| Tracking and release | MLflow runs and model registry, promotion gates against the baselines, bundle hashes checked before loading |
+ | Monitoring | Two-speed drift checks (fast: schema, missingness, input and score PSI, alert rate; slow: calibration, AUROC, utility, early recall, false alerts, subgroup gaps) with thresholds frozen from hospital A only |
+-| Reproducibility | Seed, versions, file hashes, patient split manifest, model and predictions |
++| Reproducibility | Seed, versions, file hashes, patient split manifest, model and predictions; pinned and hash-locked requirements |
+ 
+ Source hospital A is split approximately 55% training, 15% calibration,
+ 15% validation and 15% internal testing, stratified at patient level. Hospital B
+@@ -520,11 +542,26 @@ python -m sepsis_warning model-report --run artifacts/real --output reports/resu
+ 
+ `tune` never reads calibration, validation or test data; it writes `tuning_results.csv`, `tuning_best.json` and
+ `tuned_models.toml`, and logs one nested MLflow run per configuration to the `sepsis-warning-tuning` experiment.
+-`model-report` fits nothing: it reads the files `train` wrote and writes `metrics_table.md/.csv` (accuracy,
+-precision, recall, F1, average precision, AUROC, hourly utility, stay-grouped 95% intervals, SIRS baseline), the
+-figures, `figures_manifest.json` and `FIGURES.md` (each figure's recreate command, also printed on the image) and
+-`environment.json`. After the model is frozen and `evaluate` has run once, add `--evaluation <evaluate folder>` for
+-the test-split table and curves. The report skeleton with the 11 required sections is `reports/final/report.md`.
++`train` also writes `feature_importance.csv`: the drop in validation average precision when all columns built from
++one measurement, or all columns of one kind, are shuffled together (about one to two minutes on the full data;
++`--importance-repeats 0` skips it).
++
++`model-report` fits nothing: it reads the files `train` wrote and writes, all with stay-grouped 95% intervals:
++
++| Output | Content |
++|---|---|
++| `metrics_table.md/.csv` | Every candidate and the SIRS baseline on validation: accuracy, precision, recall, F1, average precision, AUROC, hourly utility, false alerts per non-septic patient-day |
++| `subgroup_table.md/.csv` | Bias audit of the selected model by recorded sex and age band: counts, recall, precision, utility, alert burden and the largest gap; groups with fewer than 10 septic stays are counted but not scored |
++| `feature_importance.md/.csv`, `fig_feature_importance.png` | The measurements and kinds of feature the selected model relies on |
++| `fig_*.png`, `figures_manifest.json`, `FIGURES.md` | Precision-recall curves, model comparison, threshold trade-off, calibration, confusion matrices, loss curves, failure examples and the tuning search; each figure's recreate command is listed and printed on the image |
++| `environment.json` | Python and package versions, platform and CPU count |
++
++After the model is frozen and `evaluate` has run once, add `--evaluation <evaluate folder>`. That adds
++`test_metrics_table.md/.csv` (the frozen model beside SIRS at the standard two criteria, SIRS at its validation
++alert-budget threshold and never alerting, on the internal test and hospital B), `test_subgroup_table.md/.csv`
++(sex and age band within each test split, then hospital A against hospital B) and `fig_test_pr.png`. No threshold
++is tuned on the test splits. `fig_failure_examples.png` shows individual stays: check it before it leaves the
++private folder. The report draft with the 11 required sections is `reports/final/report.md`.
+ 
+ ## Deploy to AWS (serverless)
+ 
+@@ -555,25 +592,42 @@ already in S3.
+ 
+ ## Files and artifacts
+ 
++The main modules (a code map with data contracts is in
++[docs/agent-repository-guide.md](docs/agent-repository-guide.md)):
++
+ ```text
+ src/sepsis_warning/
+-  data.py             # patient schema, splits, synthetic fixture
+-  features.py         # causal feature construction
+-  modeling.py         # classical models and calibration
+-  policy.py           # thresholds, notifications, metrics
+-  cli.py              # training and replay commands
+-  report.py           # offline report generation
+-  report_template.html
+-  scoring.py          # score whole cohorts with a saved bundle (shared scorer)
+-  monitoring.py       # two-speed drift monitoring (M02)
+-scripts/download_data.py
+-tests/test_invariants.py
+-tests/test_monitoring.py
++  data.py, prepare.py, splits.py, schema.py   # records, Parquet preparation, saved split, data checks
++  features.py                                 # causal feature construction (shared by train and serve)
++  baselines.py                                # SIRS rule and never-alert baselines
++  modeling.py, models.toml                    # candidate models, settings and calibration
++  logistic.py, random_forest.py, gradient_boosting.py, histogram_trees.py   # hand-written NumPy models
++  tuning.py, tuning_space.toml                # patient-grouped hyperparameter search
++  policy.py                                   # thresholds, notifications, utility, model selection
++  importance.py                               # grouped permutation importance
++  evaluation.py                               # one frozen evaluation of the test splits
++  model_report.py                             # results tables and figures for the report
++  scoring.py, service.py, api.py, client.py   # shared scorer, scoring service and its client
++  tracking.py, registry.py, gates.py          # MLflow runs, model registry, promotion gates
++  monitoring.py, live_drift.py                # two-speed drift monitoring (M02)
++  cli.py                                      # every command
++scripts/      # data download, latency test, AWS deployment helpers
++tests/        # unit, contract, leakage and parity tests on synthetic fixtures
++infra/        # CloudFormation templates and the local production-like stack
++docs/         # design, runbooks, monitoring plan, risk register, presentation
++reports/      # committed figures, baseline results and the report draft
+ ```
+ 
+ The experiment creates:
+ 
+ - `validation_models.csv`: model comparison using validation patients only.
++- `validation_scores.csv`: every candidate's validation score for every hour,
++  the SIRS score and the stay's recorded age and gender. `model-report` reads
++  it. Stay-level, so it stays in the git-ignored run folder.
++- `feature_importance.csv`: grouped permutation importance of the selected
++  model on validation (aggregates only).
++- `candidate_details.json`, `calibration.json`: each candidate's settings, fit
++  time and loss curve; calibration before and after Platt scaling.
+ - `metrics.json` / `selection_metrics.json`: validation results, the selection
+   rule and which models were within one standard error. No test results.
+ - `split_manifest.csv`: patient-to-split mapping and raw record SHA256 hashes.
+@@ -586,8 +640,10 @@ The experiment creates:
+ - `validation_predictions.csv`, `replay.html`: hourly scores and an interactive
+   replay for validation stays only.
+ 
+-`evaluate` creates `evaluation_metrics.json`, `held_out_predictions.csv` and a
+-`replay.html` for the test splits.
++`evaluate` creates `evaluation_metrics.json`, `held_out_predictions.csv` (the
++model's scores, the SIRS score and the stay's recorded age and gender for
++every test hour; stay-level, keep private) and a `replay.html` for the test
++splits.
+ 
+ Training on `combined.parquet` first runs the schema checks (`pip install -e
+ ".[checks]"`); a dropped label or a skipped hour stops the run before fitting.
+@@ -608,24 +664,29 @@ are appended. The implementation is not yet an incremental streaming service.
+ 
+ ## Work remaining for the course project
+ 
+-1. Run full real-data experiments, including A-to-B and a separately prespecified
+-   B-to-A study. Treat dataset cohorts as the public hospital sources, not as
+-   identifiable hospitals.
+-2. Perform patient-grouped hyperparameter tuning within source training data.
+-   Current estimator settings are starting values, not a completed search.
+-3. Add patient-bootstrap confidence intervals, calibration plots, precision-recall
+-   plots, and a budget-versus-early-recall curve.
+-4. Audit performance by age and recorded gender, with subgroup sample sizes.
+-   Compare missingness features on/off to test sensitivity to care practices.
+-5. Examine false alarms, missed cases, very early alarms, and measurement outages.
+-   Document censored onset assumptions and post-onset rows in the challenge task.
+-6. Add feature caching for the complete dataset and a lightweight API if needed.
+-   Monitoring of missingness, calibration, cohort shift and alert volume is
+-   implemented (M02, `monitor-setup`/`monitor-replay`); service latency (L05) remains.
+-
+-Suggested team split: data/splits; features/models; calibration/alert policy;
+-evaluation/bias audit; replay/reproducibility/report integration. Each person
+-should also review another person's component.
++The code for tuning, intervals, plots, the subgroup audit, the API and the
++latency test is in place. What is still open:
++
++1. Run the real-data experiment end to end (`tune`, `train`, `model-report`),
++   freeze the model, run `evaluate` once, and commit the aggregate results to
++   `reports/results/`. Only the SIRS baseline has real-data numbers in the
++   repository today. Treat dataset cohorts as the public hospital sources, not
++   as identifiable hospitals.
++2. Fill in the report draft (`reports/final/report.md`) and export it to PDF.
++3. A separately prespecified B-to-A study has no code yet.
++4. A budget-versus-early-recall curve is not drawn; the report has the
++   threshold trade-off of the selected model instead.
++5. Explanations stop at grouped permutation importance. SHAP (M03) is not
++   started, and there is no written model card document yet (M04).
++6. Compare missingness features on and off with the shared feature builder.
++   The `missingness` command is exploratory and builds its own features.
++7. Examine very early alarms and measurement outages. Document censored onset
++   assumptions and post-onset rows in the challenge task.
++8. Full feature tables are built in memory; there is no feature cache.
++9. The AWS design is not deployed (see [Deploy to AWS](#deploy-to-aws-serverless)).
++
++Task owners and status are in [TEAM-TASKS.md](TEAM-TASKS.md); the summary of who
++did what is in [contributions.md](contributions.md).
+ 
+ ## Sources
+ 
+diff --git a/contributions.md b/contributions.md
+index 1d83053..621ed84 100644
+--- a/contributions.md
++++ b/contributions.md
+@@ -1,105 +1,147 @@
+-# Team Task Tracker
+-
+-## How to update
+-
+-- Each owner updates their task rows as work progresses.
+-- Use **Not started**, **In progress**, **Blocked**, **In review**, **Done**, or **Deferred** for status.
+-- Set a due date and last-updated date using `YYYY-MM-DD`. A dash means not set.
+-- Add a PR, test result, or document link in **Evidence / notes**. For blocked tasks, name the blocker and next action.
+-- Mark a task **Done** only after its deliverable is verified and reviewed. Link private data evidence without uploading patient data.
+-- Statuses start as **Not started** until owners confirm existing work; they are not an assessment of current implementation.
+-- Share updates through commits or PRs once this project is in a shared Git repository. Markdown tables are manually maintained.
+-
+-## Owners and slides
+-
+-| Person | Owner | Slides |
+-|---|---|---|
+-| 1 | Edwin | 4, 5, 9, 10 |
+-| 2 | Jawad | 6, 7 |
+-| 3 | Kaiyuan | 3, 8, 11, 12 |
+-| 4 | Josh | 14 |
+-| 5 | leo | 16, 17, 18 |
+-| 6 | Mashie | 13, 15, 19, 20 |
+-
+-Slide numbers follow the 22-slide deck in `docs/presentation/` (see its README for titles). Slides 1, 2, 21 and 22 (cover, problem, lessons, close) are shared and assembled by Mashie (M06). Slide 5 (bedside to model) sits with Edwin for now; Mashie may move it to Leo's serving story.
+-
+-## Task status
+-
+-### Person 1 - Edwin
+-
+-| ID | Task | Status | Due date | Updated | Evidence / notes |
+-|---|---|---|---|---|---|
+-| E01 | Download data and convert to Parquet | Done | - | 2026-11-09 | Full data: 40,336 records / 1,552,210 rows; 0 SHA-256 mismatches vs manifest. `tests/test_prepare.py` (corrupt input, overwrite refusal, values kept exactly). Merged by Leo in PR #48; no formal Approve review. |
+-| E02 | Version data with DVC | In review | - | 2026-11-10 | `dvc.yaml`, `dvc.lock`, `docs/data-versioning.md`. Two private remotes, set outside Git: a folder on one laptop, and a private SUTD SharePoint site with no other members (4 prepared files, 20 MB, checksums match). No credentials in Git. Fresh clone restored 4 files with matching SHA-256. Licence question R14 open, so no teammates added yet; teammates can rebuild the same files from PhysioNet using the doc. Optional install; awaiting team OK for the package and remotes. |
+-| E03 | Data schema checks with Pandera | In review | - | 2026-11-09 | `validate` command and `schema.py`: all 40,336 stays / 1,552,210 rows pass the hard rules. Extreme values are counted for review on train only, never rejected; small counts hidden. `tests/test_schema.py` (16 tests). Optional install; awaiting team OK for the package. |
+-| E04 | Hospital A / B split | Done | - | 2026-11-09 | `split` command writes `splits.csv` (seed 42, hashes). 55/15/15/15 of A, all B external, every stay once, load-order independent. `tests/test_splits.py`. Stay-level, not person-level. Merged by Leo in PR #48; no formal Approve review. `baseline` can now read the saved split. |
+-| E05 | Exploratory analysis | In progress | - | 2026-11-09 | `compare-hospitals` command, 7 figures in `reports/figures/`, findings in `docs/hospital-a-vs-b.md`. A restricted to train split (no test data). To do: team OK on descriptive use of B. Hospital B wording on hold until the model owner replies. |
+-| E06 | SIRS rule baseline | Done | - | 2026-11-09 | `baseline` command → `baseline_metrics.csv`; SIRS F1 0.063 (A val), utility −0.014 at B. Independently recomputed with the official utility formula (match to 1e-15). Adds accuracy, specificity, confusion matrix and a validation-only threshold sweep (fig 8). `tests/test_baselines.py`. Merged by Leo in PR #48; no formal Approve review. Failure patterns: `docs/sirs-failure-patterns.md`. |
+-| E07 | Prepare slides 4, 5, 9, 10 | Not started | - | 2026-11-09 | Deck README now lists slides 4, 5, 9, 10; awaiting confirmation. Slides done last. |
+-
+-### Person 2 - Jawad
+-
+-| ID | Task | Status | Due date | Updated | Evidence / notes |
+-|---|---|---|---|---|---|
+-| J01 | Causal rolling features | Done | - | 2026-11-11 | Shared builder in `features.py`: last value, missing-now, never-seen, hours since seen, and a trailing window of mean, std, count and change. Hours since seen use ICULOS, including a stay that starts after hour 1 (`test_stay_starting_after_hour_one_uses_iculos`). Prefix and future-corruption tests in `tests/test_invariants.py`. Merged in PR #51, approved by Leo. `train` uses the 6-hour window. The 3-hour and 12-hour windows from `features_for_windows` are experimental and are not called by `train`. |
+-| J02 | Missing-value handling | Done | - | 2026-11-11 | Forward-fill stays inside one stay, has no expiry, and never fills an earlier blank from a later hour. `fit_training_fallback` and `apply_training_fallback` take medians from the tables they are given. Tests cover a validation row, an all-blank training column, an outage, unchanged raw rows, and a reset between patients. Merged in PR #53. `train` still fills blanks with sklearn's imputer. The training-only fallback is experimental and is not called by `train`. |
+-| J03 | Hours since last lab test | Done | - | 2026-11-11 | Per-lab hours since seen, missing-now and never-seen, measured in ICU hours from ICULOS. `test_lab_recency_covers_first_hour_gap_and_never_seen` and `test_stay_starting_after_hour_one_uses_iculos`. Merged in PR #51, approved by Leo. The late-start test is on this branch. |
+-| J04 | Leakage tests: corrupt hour t+1 and verify earlier features remain unchanged | Done | - | 2026-11-11 | Merged in PR #51: next-hour corruption, prefix scoring matches the full stay, saved-column mismatch refused. Merged in PR #53: training-only fit tests. `test_a_leaking_fill_changes_earlier_rows` substitutes a backward fill and shows the corruption check catches it. The shared builder on the same rows stays unchanged. |
+-| J05 | Fast utility-score function | Done | - | 2026-11-11 | `normalized_utility` matches the published example and is timed on 500 patients by 48 hours, 24,000 patient-hours, with no speed limit (`benchmark_utility`). Hourly decisions, separate from cooldown events. Merged in PR #51 and PR #53. |
+-| J06 | Shared feature module | Done | - | 2026-11-11 | `train`, replay and the scoring service call `build_features`. `scripts/causal_features.py` calls the same module. The saved column list is stored with the model and rejected when a stay cannot supply it. The exploratory `missingness` command still builds its own feature table. |
+-| J07 | Prepare slides 6, 7 | In progress | - | 2026-11-11 | Slides 6 and 7 are drafted in `docs/presentation/source/slides/pipeline.html` and `features.html`. Team review is not recorded. The features slide still lists 3, 6 and 12 hour windows as next work. The 3-hour and 12-hour windows exist as an experimental builder, and `train` uses 6 hours. |
+-
+-### Person 3 - Kaiyuan
+-
+-| ID | Task | Status | Due date | Updated | Evidence / notes |
+-|---|---|---|---|---|---|
+-| K01 | Logistic regression | In review | - | 2026-11-16 | Verified on main cb49451: pure NumPy logistic regression (`src/sepsis_warning/logistic.py`: Newton/IRLS with line search) and its tests (`tests/test_logistic.py`). Parity with scikit-learn is tested (`tests/test_model_config.py`, AUROC within 0.03). Not a default candidate: enable with `train --include-numpy-models`. The benchmark numbers quoted before refer to `artifacts/sklearn_benchmark/`, which is not in the repository. |
+-| K02 | Random forest | In review | - | 2026-11-16 | Verified on main cb49451: pure NumPy random forest (`src/sepsis_warning/random_forest.py`, tests in `tests/test_random_forest.py`). Ranks close to scikit-learn but has a weaker operating point (documented in PR #68 review). Optional candidate (`--include-numpy-models`). Benchmark numbers refer to `artifacts/sklearn_benchmark/`, not in the repository. |
+-| K03 | LightGBM as the main model | In review | - | 2026-11-16 | Verified on main cb49451: NumPy gradient boosting (`src/sepsis_warning/gradient_boosting.py`, `histogram_trees.py`, tests in `tests/test_gradient_boosting.py`). Scope note: this is a histogram gradient-boosting re-implementation, not LightGBM. Owner to confirm this meets the item. Optional candidate; the default main model is chosen by validation utility from the candidates in `models.toml`. |
+-| K04 | Probability calibration | In review | - | 2026-11-16 | Verified on main cb49451: Platt scaling on a frozen base model, fitted on the calibration split (`logistic.py` `PlattCalibrator`, `calibrate_frozen`; `modeling.py` `fit_calibrated`). Tested through `tests/test_model_config.py` and `tests/test_monitoring.py`. Brier score is a promotion gate (`gates.py` on phases-2-4 branch, not main). |
+-| K05 | Alarm threshold and six-hour cooldown | In review | - | 2026-11-16 | Verified on main cb49451: threshold tuned to the false-alert budget on validation, with a 6-hour cooldown (`policy.py` `tune_threshold`, `apply_policy`, `alert_events`). Tests: `tests/test_invariants.py` (cooldown uses hours and resets per patient), `tests/test_utility_weights.py`. Selection rule with one-standard-error and bootstrap intervals is in `policy.py` on main via PR #77. |
+-| K06 | Fairness checks | In review | - | 2026-11-16 | Verified on main cb49451: subgroup utility gaps by recorded sex and age band (`monitoring.py` `subgroup_rows`, `subgroup_gap`; `hospital_comparison.py`), tested in `tests/test_monitoring.py`. Age bands in code are <45, 45-64, 65-79, 80+; the tracker's earlier bands (<50, 50-64, 65-79, 80+) are superseded. No fairness report is recorded yet. |
+-| K07 | Prepare slides 3, 8, 11, 12 | In progress | - | 2026-11-13 | Preparing empirical evidence, model selection rationale, and cross-hospital generalization drop for slides 3, 8, 11, and 12. |
+-
+-### Person 4 - Josh
+-
+-| ID | Task | Status | Due date | Updated | Evidence / notes |
+-|---|---|---|---|---|---|
+-| H01 | HMM forward-pass states | Done | - | 2026-11-12 | PR #60: `hmm.py` (forward filter, Baum-Welch, 15 tests); `scripts/fit_hmm.py` fits 3 states on train (25 iterations, 52 s). |
+-| H02 | Signature features | Done | - | 2026-11-13 | PR #63: `signature.py`, depth-2 log-signature over a trailing 6 h window (15 columns), 9 tests. |
+-| H03 | With / without tests | Done | - | 2026-11-14 | PR #71: `scripts/h03_ablation.py`, arms A-D from [docs/h03-ablation-plan.md](docs/h03-ablation-plan.md). Full run on validation (3,051 stays): AUPRC A 0.0970, B 0.0976, C 0.0970, D 0.0976; every 95% paired-bootstrap interval vs A includes zero, so neither HMM nor signature helps the logistic regression. Same arms with K02/K03 (`--model`): gradient boosting no gain; random forest + HMM +0.012 AUPRC (95% CI 0.003 to 0.024), the only one of 9 intervals above zero. Extra feature time per 1,000 stays: HMM 0.5 s, signature 1.1 s. |
+-| H04 | Optional: GMM | Not started | - | - | - |
+-| H05 | Optional: GRU | Deferred | - | - | Deep learning is outside the course rules. |
+-| H06 | Prepare slide 14 | Done | - | 2026-11-14 | `slides/latent.html`: HMM states, forward-only diagram, signature example, H03 results and cost. `.pptx` not rebuilt. |
+-
+-### Person 5 - leo
+-
+-| ID | Task | Status | Due date | Updated | Evidence / notes |
+-|---|---|---|---|---|---|
+-| L01 | MLflow tracking and registry | In review | - | 2026-11-14 | Local SQLite store (`sqlite:///artifacts/mlflow.db`; MLflow 3 refuses the old `file:` store). Selection runs: parent with fingerprints and the selected model's validation metrics, one nested run per candidate with validation metrics, settings, fit time and training-loss curve; no held-out test metrics are logged. Registry (`registry.py`): `train --register-model` registers the bundle as `@candidate` with its SHA-256 and data/split/feature hashes; `promote --reviewed-by` moves `@production` and records the previous version; `serve --model-uri models:/sepsis-warning@production` checks the hash before loading. `tests/test_registry.py` runs against real MLflow (CI installs the tracking extra). See `docs/mlflow.md`. |
+-| L02 | FastAPI service | In review | - | 2026-11-14 | `serve` command: `GET /health`, `GET /model` (selected model and validation-only candidate comparison, registry version), `POST /score`, `POST /predict` (up to 64 stays, latest-hour risk and alert); stateless full-history requests, 422 invalid input, 409 model mismatch, localhost-only by default, no auth ([service.py](src/sepsis_warning/service.py), [api.py](src/sepsis_warning/api.py)). Tests: replay parity, prefix scoring, concurrent isolation, error cases (`tests/test_service.py`, `tests/test_api.py`). Synthetic models only. FastAPI as optional `serve` extra needs team OK. |
+-| L03 | Docker image | In review | - | 2026-11-13 | `Dockerfile` (non-root uid 10001, pinned `requirements.txt`, model mounted read-only, allowlist `.dockerignore`, health check). `scripts/docker_smoke_test.sh` passes: non-root, no data/model files in the image, synthetic demo model, `/health`, `/score`, 422 on a label in the input. CI job `docker-image` runs it. See `docs/serving.md`. |
+-| L04 | CI/CD with GitHub Actions | Done | - | 2026-11-13 | [.github/workflows/tests.yml](.github/workflows/tests.yml): read-only permissions, no secrets, refuses committed data/model files, runs unit tests, the causal-feature script and the synthetic demo. No deployment. Green on main `5a0a5ea` (fork run #7, identical commit) and on `47896ad` (run #6). |
+-| L05 | Latency tests | In review | - | 2026-11-13 | `scripts/latency.py` (standard library): p50/p95/p99, throughput and failures per stay length and concurrency, synthetic stays. Docker image, 2 CPUs: p50 41 ms / p95 67 ms / p99 116 ms for a 24 h stay, 49/75/121 ms for 336 h, one client; requests queue under concurrency (about 15-20 req/s, single worker by design). No numeric target agreed yet. `docs/serving.md`. |
+-| L06 | AWS deployment design | In progress | - | 2026-11-16 | Verified on main cb49451: `serverless.yaml`, `mlops.yaml`, `artifacts.yaml`, `service.yaml`, `monitoring.yaml`, `root.yaml`, `network.yaml` (cfn-lint clean in CI). Not on main, only on branch `leo/phases-2-4`: canary releases, `pipeline.yaml` (training pipeline with approval), `observability.yaml` (prediction log and drift job), `apigw.yaml` (private API). Not deployed to any AWS account. |
+-| L07 | Prepare slides 16, 17, 18 | Not started | - | - | - |
+-
+-### Person 6 - Mashie
+-
+-| ID | Task | Status | Due date | Updated | Evidence / notes |
+-|---|---|---|---|---|---|
+-| M01 | Hospital B replay | In progress | - | 2026-11-16 | Code and tests are on this branch: `cross_source.py` (A validation against B, with patient-level bootstrap over whole stays, 200 draws, and timing limitations), wired into `monitor-replay --split external_test` (`monitoring.py`). `monitor-replay` now refuses test splits without `--after-freeze` (the flag existed only on `ward`), tested in `tests/test_hospital_b_replay.py` (9 tests). Verified on synthetic data only. The real hospital B replay has NOT been run: it needs the team's freeze decision on K03-K05 first. Report section: monitoring-plan.md 8a. |
+-| M02 | Drift monitoring at two speeds | In review | - | 2026-11-16 | `monitor-setup` / `monitor-replay` ([monitoring.py](src/sepsis_warning/monitoring.py)); plan, owners, floors and runbook in [docs/monitoring-plan.md](docs/monitoring-plan.md). Reference built from A train and validation only; the replay refuses test splits before freeze. 18 tests in `tests/test_monitoring.py` (simulated shifts, no-shift, settled labels) pass on this branch. Still open: team review of owners and floors, and the real-data reference after the freeze. |
+-| M03 | SHAP explanations | Not started | - | - | - |
+-| M04 | Model card | In progress | - | 2026-11-16 | Verified on main cb49451: `model_card.py` builds the selection card served by `GET /model` (selected model, rule, validation candidates). No written model card document (intended use, limits, data, metrics) exists yet. |
+-| M05 | Risk register | In review | - | 2026-11-08 | [docs/risk-register.md](docs/risk-register.md): 25 risks with likelihood/impact, owner, evidence and remaining exposure; unresolved items left open. To do: each owner confirms their rows. |
+-| M06 | Final deck assembly | Not started | - | - | - |
+-| M07 | Prepare slides 13, 15, 19, 20 | Not started | - | - | - |
+-
+-## Shared project boundaries
+-
+-- Keep patient data under the Git-ignored `data/` directory. DVC metadata may be versioned; patient data must not be committed to Git.
+-- Preserve record-level split isolation. Use training data for fitting, calibration data for calibration, and validation data for model and threshold selection.
+-- Freeze model, feature, calibration, and alarm-policy decisions before Hospital B replay or held-out evaluation.
+-- Use only current and past observations for features; do not shift the supplied benchmark label again.
+-- Treat these assignments as planned work, not confirmation that the listed tools or capabilities are already implemented.
++# Team members and contributions
++
++Team 2, 61.501 Production Ready ML: early sepsis warning on the PhysioNet 2019 challenge data.
++
++This is the contribution statement the project brief asks for. It summarises
++[TEAM-TASKS.md](TEAM-TASKS.md), which holds every task's evidence, review history and
++acceptance criteria. Live status is in the GitHub issues linked from
++[team-status.md](team-status.md). Each status below is the owner's own record in the
++tracker, last updated between 2026-11-08 and 2026-11-16. Where a tracker note no longer
++matches the repository, the difference is listed under
++[Checked against the repository](#checked-against-the-repository-on-2026-11-24).
++
++Before submission: add full names and student IDs (the repository records first names
++only), and have each person confirm their section.
++
++## Summary
++
++| Member | Area | Done | In review | In progress | Not started or deferred | Slides |
++|---|---|---|---|---|---|---|
++| Edwin | Data and baselines | E01, E04, E06 | E02, E03 | E05 | E07 | 4, 5, 9, 10 |
++| Jawad | Features and the utility metric | J01 to J06 | | J07 | | 6, 7 |
++| Kaiyuan | Models, calibration and alert policy | | K01 to K06 | K07 | | 3, 8, 11, 12 |
++| Josh | Temporal feature experiments | H01, H02, H03, H06 | | | H04 (optional), H05 (deferred) | 14 |
++| leo | Reproducibility, serving and deployment design | L04 | L01, L02, L03, L05 | L06 | L07 | 16, 17, 18 |
++| Mashie | Replay, monitoring, risk and reporting | | M02, M05 | M01, M04 | M03, M06, M07 | 13, 15, 19, 20 |
++
++Slides 1, 2, 21 and 22 (cover, problem, lessons, close) are shared and assembled by Mashie (M06).
++
++## Edwin: data and baselines
++
++- **E01 Download and Parquet preparation (done).** `prepare` command
++  ([prepare.py](src/sepsis_warning/prepare.py), [test_prepare.py](tests/test_prepare.py)). Full data:
++  40,336 records and 1,552,210 hourly rows, with no hash mismatch against the manifest.
++- **E02 Data versioning with DVC (in review).** [dvc.yaml](dvc.yaml), [dvc.lock](dvc.lock),
++  [docs/data-versioning.md](docs/data-versioning.md). A fresh clone restored the prepared files with matching hashes.
++- **E03 Schema checks with Pandera (in review).** `validate` command ([schema.py](src/sepsis_warning/schema.py),
++  [test_schema.py](tests/test_schema.py)). All stays pass the hard rules; extreme values are counted for review, never rejected.
++- **E04 Hospital A and B split (done).** `split` command ([splits.py](src/sepsis_warning/splits.py),
++  [test_splits.py](tests/test_splits.py)): 55/15/15/15 of hospital A, all of hospital B as the external test, seed 42.
++- **E05 Exploratory analysis (in progress).** `compare-hospitals` command
++  ([hospital_comparison.py](src/sepsis_warning/hospital_comparison.py)), seven figures in
++  [reports/figures](reports/figures/README.md), findings in [docs/hospital-a-vs-b.md](docs/hospital-a-vs-b.md).
++- **E06 SIRS rule baseline (done).** `baseline` command ([baselines.py](src/sepsis_warning/baselines.py),
++  [test_baselines.py](tests/test_baselines.py)), results in [reports/baselines](reports/baselines), failure patterns in
++  [docs/sirs-failure-patterns.md](docs/sirs-failure-patterns.md). The utility was recomputed independently with the official formula.
++- **E07 Slides 4, 5, 9, 10 (not started).**
++
++## Jawad: features and the utility metric
++
++- **J01 to J03 Causal features (done).** The shared builder in [features.py](src/sepsis_warning/features.py): last value,
++  missing now, never seen, hours since seen, and a trailing window of mean, standard deviation, count and change.
++  Forward fill stays inside one stay and never uses a later hour.
++- **J04 Leakage tests (done).** [test_invariants.py](tests/test_invariants.py): corrupting the next hour leaves earlier
++  features unchanged, scoring a prefix matches the full stay, and a deliberately leaking fill is caught.
++- **J05 Utility score (done).** `normalized_utility` in [policy.py](src/sepsis_warning/policy.py) matches the published
++  example and is timed on 24,000 patient-hours.
++- **J06 Shared feature module (done).** `train`, replay and the scoring service call the same `build_features`; the
++  saved column list travels with the model. [scripts/causal_features.py](scripts/causal_features.py) demonstrates it.
++- **J07 Slides 6 and 7 (in progress).** Drafted; team review not recorded.
++
++## Kaiyuan: models, calibration and alert policy
++
++- **K01 to K03 Hand-written NumPy models (in review).** Logistic regression
++  ([logistic.py](src/sepsis_warning/logistic.py)), random forest ([random_forest.py](src/sepsis_warning/random_forest.py))
++  and histogram gradient boosting ([gradient_boosting.py](src/sepsis_warning/gradient_boosting.py),
++  [histogram_trees.py](src/sepsis_warning/histogram_trees.py)), each checked against scikit-learn in
++  [test_model_config.py](tests/test_model_config.py). They are optional candidates (`train --include-numpy-models`).
++  K03 is a gradient-boosting re-implementation, not LightGBM; the owner is to confirm that this meets the item.
++- **K04 Probability calibration (in review).** Platt scaling on a frozen model, fitted on the calibration split
++  (`fit_calibrated` in [modeling.py](src/sepsis_warning/modeling.py)).
++- **K05 Alert threshold and six-hour cooldown (in review).** Threshold tuned to the false-alert budget on validation,
++  with the one-standard-error selection rule and bootstrap intervals ([policy.py](src/sepsis_warning/policy.py),
++  [test_utility_weights.py](tests/test_utility_weights.py)).
++- **K06 Fairness checks (in review).** Subgroup utility gaps by recorded sex and age band in
++  [monitoring.py](src/sepsis_warning/monitoring.py). Age bands are <45, 45-64, 65-79 and 80+.
++- **K07 Slides 3, 8, 11, 12 (in progress).**
++
++## Josh: temporal feature experiments
++
++- **H01 HMM forward-pass states (done).** [hmm.py](src/sepsis_warning/hmm.py) (forward filter and Baum-Welch),
++  [scripts/fit_hmm.py](scripts/fit_hmm.py).
++- **H02 Signature features (done).** [signature.py](src/sepsis_warning/signature.py): depth-2 log-signature over a
++  trailing six-hour window.
++- **H03 Ablation with and without the new features (done).** [scripts/h03_ablation.py](scripts/h03_ablation.py),
++  plan in [docs/h03-ablation-plan.md](docs/h03-ablation-plan.md). On validation (3,051 stays) neither feature set
++  helps logistic regression or gradient boosting: every 95% paired-bootstrap interval includes zero. Random forest
++  with HMM states gains 0.012 average precision (95% interval 0.003 to 0.024), the only one of nine intervals above zero.
++- **H04 Optional GMM (not started). H05 Optional GRU (deferred):** deep learning is outside the course rules.
++- **H06 Slide 14 (done).** [latent.html](docs/presentation/source/slides/latent.html); the `.pptx` is not rebuilt.
++
++## leo: reproducibility, serving and deployment design
++
++- **L01 MLflow tracking and registry (in review).** [tracking.py](src/sepsis_warning/tracking.py),
++  [registry.py](src/sepsis_warning/registry.py), [docs/mlflow.md](docs/mlflow.md). `train --register-model` registers a
++  candidate with its hashes; `promote` moves the production alias after a named review; `serve` checks the hash first.
++- **L02 FastAPI service (in review).** [service.py](src/sepsis_warning/service.py), [api.py](src/sepsis_warning/api.py):
++  `/health`, `/model`, `/score`, `/predict`. Tested for replay parity, prefix scoring and concurrent isolation.
++- **L03 Docker image (in review).** [Dockerfile](Dockerfile), [scripts/docker_smoke_test.sh](scripts/docker_smoke_test.sh),
++  [docs/serving.md](docs/serving.md): non-root user, pinned requirements, no data or model in the image.
++- **L04 CI with GitHub Actions (done).** [tests.yml](.github/workflows/tests.yml).
++- **L05 Latency tests (in review).** [scripts/latency.py](scripts/latency.py). In the Docker image on 2 CPUs, one client:
++  p50 41 ms, p95 67 ms, p99 116 ms for a 24-hour stay. No numeric target is agreed yet.
++- **L06 AWS deployment design (in progress).** CloudFormation templates in
++  [infra/cloudformation](infra/cloudformation/README.md), checked with cfn-lint in CI. The tracker records that
++  nothing is deployed to an AWS account.
++- **L07 Slides 16, 17, 18 (not started).**
++
++## Mashie: replay, monitoring, risk and reporting
++
++- **M01 Hospital B replay (in progress).** [cross_source.py](src/sepsis_warning/cross_source.py) and
++  `monitor-replay --split external_test`, with a stay-level bootstrap ([test_hospital_b_replay.py](tests/test_hospital_b_replay.py)).
++  Verified on synthetic data only: the real hospital B replay waits for the team to freeze the model.
++- **M02 Two-speed drift monitoring (in review).** `monitor-setup` and `monitor-replay`
++  ([monitoring.py](src/sepsis_warning/monitoring.py), [test_monitoring.py](tests/test_monitoring.py)); plan, owners and
++  runbook in [docs/monitoring-plan.md](docs/monitoring-plan.md).
++- **M03 SHAP explanations (not started).**
++- **M04 Model card (in progress).** [model_card.py](src/sepsis_warning/model_card.py) builds the selection card served
++  by `GET /model`. There is no written model card document yet.
++- **M05 Risk register (in review).** [docs/risk-register.md](docs/risk-register.md): 25 risks with likelihood, impact,
++  owner, evidence and remaining exposure.
++- **M06 Final deck assembly (not started). M07 Slides 13, 15, 19, 20 (not started).**
++
++## Checked against the repository on 2026-11-24
++
++These tracker notes are out of date. The tracker rows themselves are unchanged; their owners should update them.
++
++- **K04:** the tracker says the Brier-score promotion gate is only on a branch. [gates.py](src/sepsis_warning/gates.py)
++  is in this repository.
++- **L06:** the tracker says canary releases, `pipeline.yaml`, `observability.yaml` and `apigw.yaml` are only on a
++  branch. All four are in this repository.
++- **L04:** `tests.yml` now does more than the tracker lists: Ruff lint, mypy on the serving modules, `pip-audit`, a
++  coverage floor, Docker image builds with a smoke test and a latency budget, and CloudFormation lint.
++- **K06:** the tracker says no fairness report is recorded. `model-report` now writes a subgroup table by sex, age
++  band and hospital with intervals. No table from real data is committed yet.
++- **M03:** SHAP is still not started. `train` and `model-report` now give grouped permutation importance instead.
++
++## Work the tracker does not attribute
++
++These parts of the repository have no task in the tracker. Record who built each one so the report's contribution
++table is complete.
++
++- Hyperparameter search: `tune` ([tuning.py](src/sepsis_warning/tuning.py)).
++- The one frozen test evaluation: `evaluate` ([evaluation.py](src/sepsis_warning/evaluation.py)).
++- Results tables and figures: `model-report` ([model_report.py](src/sepsis_warning/model_report.py),
++  [importance.py](src/sepsis_warning/importance.py)).
++- ICU ward replay: `ward` ([ward.py](src/sepsis_warning/ward.py), [docs/ward-replay.md](docs/ward-replay.md)).
++- The report draft: [reports/final/report.md](reports/final/report.md).
+diff --git a/docs/agent-repository-guide.md b/docs/agent-repository-guide.md
+index d613094..9ac0c09 100644
+--- a/docs/agent-repository-guide.md
++++ b/docs/agent-repository-guide.md
+@@ -55,6 +55,10 @@ installing the editable package. The canonical package name is
+ | `hospital_comparison.py` | Descriptive A/B cohort comparison and figures | `run_comparison` |
+ | `sirs_failures.py` | Validation-only aggregation of SIRS failure patterns | `failure_tables` |
+ | `splits.py` | Persist and reload Parquet split manifests and summaries | `write_splits`, `load_split_patients` |
++| `tuning.py` | Patient-grouped hyperparameter search on the training split only | `run_search`, `write_outputs` |
++| `importance.py` | Grouped permutation importance of the selected model on validation (written by `train`) | `grouped_permutation_importance`, `feature_groups` |
++| `evaluation.py` | The one frozen evaluation of the test splits; also stores the SIRS score, age and gender per test hour | `run_frozen_evaluation` |
++| `model_report.py` | Results tables (metrics, subgroups, importance) and figures from the files `train` and `evaluate` wrote; fits and tunes nothing | `build_report`, `metrics_table`, `subgroup_table` |
+ 
+ `cli.py` is intentionally thin for most commands, but `run_experiment` is the
+ authoritative training flow. Keep production behavior in shared modules rather
+diff --git a/docs/testing/end-to-end-guide.md b/docs/testing/end-to-end-guide.md
+index 5491a49..bc70756 100644
+--- a/docs/testing/end-to-end-guide.md
++++ b/docs/testing/end-to-end-guide.md
+@@ -78,8 +78,9 @@ python -m sepsis_warning model-report --run artifacts/real --output reports/resu
+ ```
+ 
+ Pass: `reports/results/metrics_table.md` lists every model plus `sirs_rule` with accuracy, precision, recall, F1,
+-average precision, AUROC, hourly utility and intervals; the PNGs exist; `FIGURES.md` gives each figure's recreate
+-command. Check that the selected model beats `sirs_rule` on utility at the same alert budget. Copy the table and
++average precision, AUROC, hourly utility and intervals; `subgroup_table.md` (sex and age band) and
++`feature_importance.md` exist; the PNGs exist; `FIGURES.md` gives each figure's recreate
++command. Check that the selected model beats `sirs_rule` on utility at the same alert budget. Copy the tables and
+ figures into `reports/final/report.md` section 7.
+ 
+ ### A6. Review, promote, serve and call the API
+@@ -120,7 +121,8 @@ python -m sepsis_warning model-report --run artifacts/real --output reports/resu
+ ```
+ 
+ Pass: `artifacts/evaluation/evaluation_metrics.json` has internal-test and external-test metrics;
+-`reports/results_test/test_metrics_table.md` and `fig_test_pr.png` exist. A second `evaluate` on the same model is
++`reports/results_test/test_metrics_table.md` (the model beside the SIRS and never-alert rows),
++`test_subgroup_table.md` and `fig_test_pr.png` exist. A second `evaluate` on the same model is
+ refused; that is the point. Report hospital A and hospital B separately.
+ 
+ ### A9. Monitoring rehearsal
+diff --git a/reports/final/report.md b/reports/final/report.md
+index 4284f2a..289ac31 100644
+--- a/reports/final/report.md
++++ b/reports/final/report.md
+@@ -71,7 +71,9 @@ Seeds, package versions and hardware: `environment.json` next to the results.
+ 
+ ### 7.1 Results against the baseline
+ 
+-TODO (leo): paste `reports/results/metrics_table.md` (validation) and, after the freeze, `test_metrics_table.md`.
++TODO (leo): paste `reports/results/metrics_table.md` (validation) and, after the freeze, `test_metrics_table.md`,
++which puts the frozen model beside SIRS at the standard two criteria, SIRS at its validation alert-budget threshold
++and never alerting, on the internal test and hospital B.
+ Report accuracy, precision, recall, F1, average precision, hourly utility and the intervals. State plainly that accuracy
+ is near-trivial at this prevalence.
+ 
+@@ -84,11 +86,16 @@ figure's recreate command from `FIGURES.md`.
+ ### 7.3 Important features
+ 
+ TODO (Jawad): permutation or model-based importance for the selected model, with the clinical sense-check.
++Evidence: `feature_importance.md` and `fig_feature_importance.png` in the results folder (grouped permutation
++importance on validation). Say how much comes from `measurement_pattern` (whether and when something was measured)
++and from `ICULOS`, because those reflect care practice and time in the ICU rather than physiology.
+ 
+ ### 7.4 Bias audit
+ 
+ TODO (Mashie): performance by hospital, age band and gender; report gaps with intervals; say what was not checked.
+-Evidence: `docs/hospital-a-vs-b.md`, `src/sepsis_warning/hospital_comparison.py`.
++Evidence: `subgroup_table.md` (validation) and, after the freeze, `test_subgroup_table.md` (sex and age band within
++each test split, then hospital A against hospital B), `docs/hospital-a-vs-b.md`,
++`src/sepsis_warning/hospital_comparison.py`.
+ 
+ ### 7.5 Where the model goes wrong
+ 
+diff --git a/scripts/aws_teardown.py b/scripts/aws_teardown.py
+index f8bcffd..5f71c0f 100644
+--- a/scripts/aws_teardown.py
++++ b/scripts/aws_teardown.py
+@@ -139,9 +139,10 @@ def leftovers(clients: dict, prefix: str, region: str) -> list[tuple[str, str]]:
+ 
+ 
+ def run(args, session=None) -> int:
+-    import boto3
++    if session is None:
++        import boto3
+ 
+-    session = session or boto3.Session(region_name=args.region)
++        session = boto3.Session(region_name=args.region)
+     cloudformation = session.client("cloudformation")
+     clients = {name: session.client(name) for name in ("s3", "ecr", "dynamodb", "logs", "kms", "sts")}
+     stack_exists = True
+diff --git a/scripts/check_notebooks.py b/scripts/check_notebooks.py
+index 4ffe509..f61d077 100755
+--- a/scripts/check_notebooks.py
++++ b/scripts/check_notebooks.py
+@@ -16,6 +16,9 @@ import subprocess
+ import sys
+ from pathlib import Path
+ 
++ROOT = Path(__file__).resolve().parents[1]
++SKIPPED_FOLDERS = {".git", ".venv", "venv", "env", "node_modules", "artifacts", "data", ".ipynb_checkpoints"}
++
+ # Carry-forward, back-fill and windowing are what the model's features are made of; a second
+ # copy belongs in sepsis_warning/features.py. Exploratory scikit-learn use (PCA, a quick
+ # cross-validated profile) is not flagged.
+@@ -41,11 +44,21 @@ def problems(path: Path) -> list[str]:
+     return found
+ 
+ 
++def default_notebooks() -> list[Path]:
++    """Every tracked notebook; when Git lists none (a downloaded zip has no checkout), every notebook under the project."""
++    try:
++        listed = subprocess.run(["git", "ls-files", "*.ipynb"], capture_output=True, text=True, check=False, cwd=ROOT)
++        tracked = [ROOT / line for line in listed.stdout.splitlines() if line] if listed.returncode == 0 else []
++    except FileNotFoundError:  # Git is not installed
++        tracked = []
++    return tracked or sorted(path for path in ROOT.rglob("*.ipynb")
++                             if not SKIPPED_FOLDERS & set(path.relative_to(ROOT).parts[:-1]))
++
++
+ def main(argv=None) -> int:
+     paths = [Path(p) for p in (argv if argv is not None else sys.argv[1:])]
+     if not paths:
+-        listed = subprocess.run(["git", "ls-files", "*.ipynb"], capture_output=True, text=True, check=True).stdout
+-        paths = [Path(line) for line in listed.splitlines() if line]
++        paths = default_notebooks()
+     failed = False
+     for path in paths:
+         for problem in problems(path):
+diff --git a/src/sepsis_warning/cli.py b/src/sepsis_warning/cli.py
+index 53b0e7f..9ab4198 100644
+--- a/src/sepsis_warning/cli.py
++++ b/src/sepsis_warning/cli.py
+@@ -23,9 +23,10 @@ from .baselines import (
+     plot_sirs_threshold_tradeoff,
+     sirs_threshold_sweep,
+ )
+-from .data import generate_synthetic, load_patients, read_patient, split_patients
++from .data import SUBGROUP_COLUMNS, generate_synthetic, load_patients, read_patient, split_patients
+ from .features import META, build_features, feature_table, select_saved_features
+ from .hospital_comparison import run_comparison
++from .importance import grouped_permutation_importance
+ from .manifest import build_manifest, write_manifest
+ from .missingness import run_missingness_analysis
+ from .modeling import (
+@@ -256,10 +257,22 @@ def run_experiment(args):
+     }
+     joblib.dump(bundle, args.output / "model.joblib")
+     write_manifest(args.output, manifest, file_sha256(args.output / "model.joblib"))
++    # Which measurements the selected model relies on: validation rows only, nothing is refitted.
++    importance_repeats = getattr(args, "importance_repeats", 3)
++    if importance_repeats > 0:
++        print(f"Permutation importance of {name} on validation ({importance_repeats} shuffle(s) per group)...",
++              flush=True)
++        with threadpool_limits(limits=2):
++            grouped_permutation_importance(
++                fitted[name], tables["validation"], columns, repeats=importance_repeats, seed=args.seed,
++            ).to_csv(args.output / "feature_importance.csv", index=False)
+     # Every candidate's validation scores, plus the SIRS score, so `model-report` can compare all models
+     # and the baseline (precision, recall, F1, PR curves) without refitting. Validation stays only.
+     # Patient-level, so it stays in the run folder (git-ignored) and is never logged to MLflow.
+     all_scores = validation_scores[name][META].copy()
++    # Recorded age and gender of each stay, for the subgroup table (bias audit) in `model-report`.
++    for attribute in SUBGROUP_COLUMNS:
++        all_scores[attribute] = tables["validation"][attribute].to_numpy()
+     for candidate, table in validation_scores.items():
+         all_scores[f"p_{candidate}"] = table["probability"].to_numpy()
+     all_scores = all_scores.merge(
+@@ -529,6 +542,9 @@ def main():
+                              help="Also fit the hand-written NumPy models as candidates (slower)")
+         command.add_argument("--skip-data-checks", action="store_true",
+                              help="Do not run the schema checks on a Parquet table before training")
++        command.add_argument("--importance-repeats", type=int, default=3,
++                             help="Shuffles per feature group for the selected model's permutation importance "
++                                  "on validation (0 = skip it)")
+     tune = sub.add_parser(
+         "tune", help="Hyperparameter search with patient-grouped cross-validation on the training split only")
+     tune.add_argument("--data", type=Path, required=True, help=DATA_HELP)
+@@ -556,6 +572,8 @@ def main():
+                         help="Folder written by `evaluate` (adds test-split table and PR curves; reads only)")
+     report.add_argument("--bootstrap", type=int, default=200, help="Stay-grouped bootstrap draws (0 = no intervals)")
+     report.add_argument("--seed", type=int, default=42)
++    report.add_argument("--min-subgroup-septic-stays", type=int, default=10,
++                        help="Subgroups with fewer septic stays are counted but not scored")
+     evaluate = sub.add_parser(
+         "evaluate", help="Score the test splits ONCE for a frozen model (never during model development)")
+     evaluate.add_argument("--data", type=Path, required=True, help=DATA_HELP)
+@@ -762,8 +780,9 @@ def main():
+             from .model_report import build_report
+ 
+             manifest = build_report(args.run, args.output, tuning_dir=args.tuning, evaluation_dir=args.evaluation,
+-                                    bootstrap=args.bootstrap, seed=args.seed)
+-            print(f"Wrote {len(manifest['figures'])} figures and the metrics table to {args.output.resolve()}")
++                                    bootstrap=args.bootstrap, seed=args.seed,
++                                    min_subgroup_septic_stays=args.min_subgroup_septic_stays)
++            print(f"Wrote {len(manifest['figures'])} figures and the metrics tables to {args.output.resolve()}")
+             for item in manifest["skipped"]:
+                 print(f"  skipped {item['title']}: {item['reason']}")
+             print(f"Open {(args.output / 'FIGURES.md').resolve()}", flush=True)
+diff --git a/src/sepsis_warning/data.py b/src/sepsis_warning/data.py
+index b02209e..d3ad8a3 100644
+--- a/src/sepsis_warning/data.py
++++ b/src/sepsis_warning/data.py
+@@ -19,6 +19,8 @@ LABS = [
+ # learning hospital-specific measurement practices rather than physiology.
+ STATIC = ["Age", "Gender", "HospAdmTime", "ICULOS"]
+ DYNAMIC = VITALS + LABS
++# Recorded attributes kept beside the scores for the subgroup table (bias audit).
++SUBGROUP_COLUMNS = ["Age", "Gender"]
+ 
+ 
+ @dataclass
+diff --git a/src/sepsis_warning/evaluation.py b/src/sepsis_warning/evaluation.py
+index 2ff7a57..05d6467 100644
+--- a/src/sepsis_warning/evaluation.py
++++ b/src/sepsis_warning/evaluation.py
+@@ -8,6 +8,11 @@ hospital B (``external_test``). After a model has been reviewed and frozen,
+   evaluated again;
+ * a local bundle gets ``frozen_evaluation.json`` beside it, with the same effect.
+ 
++``held_out_predictions.csv`` holds, for every test hour, the model's probability
++and decisions, the SIRS score of the same hour and the stay's recorded age and
++gender. ``model-report --evaluation`` reads it for the test-split table, the
++baseline rows and the subgroup table; it is stay-level and stays private.
++
+ Repeated looks at a test set make its numbers optimistic, so there is no
+ override for real data. Synthetic fixtures may be re-evaluated: their numbers
+ carry no evidence either way.
+@@ -22,6 +27,8 @@ import json
+ from argparse import Namespace
+ from pathlib import Path
+ 
++from .baselines import baseline_table
++from .data import SUBGROUP_COLUMNS
+ from .policy import summarize
+ from .report import write_report
+ from .scoring import file_sha256, load_bundle, score_patients
+@@ -107,8 +114,13 @@ def run_frozen_evaluation(*, data: Path, output: Path, splits: Path | None = Non
+     output.mkdir(parents=True, exist_ok=True)
+     scored, results = [], {}
+     for split in TEST_SPLITS:
+-        table = score_patients(bundle, cohorts[split])
++        table = score_patients(bundle, cohorts[split], input_columns=SUBGROUP_COLUMNS)
+         results[split] = summarize(table)
++        # The SIRS score of the same hours, so `model-report` can put the baseline beside the model
++        # on the test splits. It is a fixed rule: nothing is tuned here.
++        sirs = baseline_table(cohorts[split], "sirs")[["patient_id", "hour", "probability"]]
++        table = table.merge(sirs.rename(columns={"probability": "sirs_score"}), on=["patient_id", "hour"],
++                            how="left", validate="one_to_one")
+         table["split"] = split
+         scored.append(table)
+     evaluated_at = _now()
+diff --git b/src/sepsis_warning/importance.py b/src/sepsis_warning/importance.py
+new file mode 100644
+index 0000000..07f226b
+--- /dev/null
++++ b/src/sepsis_warning/importance.py
+@@ -0,0 +1,83 @@
++"""Grouped permutation importance of the selected model on the validation split.
++
++The model sees 276 columns built from 34 hourly measurements and 4 static values. Shuffling one
++column at a time says little, because the eight columns built from one measurement (last value,
++rolling mean, hours since seen, ...) can stand in for each other. So the columns are shuffled in
++groups, and every column of a group is moved with the same row order:
++
++* ``variable``: all columns built from one measurement (``HR``, ``Lactate``, ...) or one static
++  value (``Age``, ``ICULOS``, ...). Answers "which measurements does the model rely on?".
++* ``family``: all columns of one kind across every measurement. Answers "does the model rely on
++  the measured values, or on whether and when something was measured?". The split is approximate:
++  a value column is blank until the first measurement, so it also carries a little of that pattern.
++
++Importance is the drop in hourly average precision when a group is shuffled across all validation
++hours, averaged over ``repeats`` shuffles. Average precision needs no threshold and is unchanged by
++calibration, so the same number holds for the raw and the calibrated model. A drop near zero means
++the model can do without the group, not that the measurement is clinically unimportant; correlated
++groups share their importance. Nothing is fitted and no test data is read.
++"""
++
++import numpy as np
++import pandas as pd
++from sklearn.metrics import average_precision_score
++
++VALUES = "measured_values"
++PATTERN = "measurement_pattern"
++STATIC_FAMILY = "static"
++# Suffixes from features.build_features that say whether or when a value was measured.
++PATTERN_SUFFIXES = ("missing_now", "never_seen", "hours_since_seen", "observations_")
++COLUMNS = ["level", "group", "columns", "ap_drop_mean", "ap_drop_std", "baseline_average_precision", "repeats"]
++
++
++def feature_groups(columns: list[str]) -> dict[str, dict[str, list[str]]]:
++    """Column names by measurement (``variable``) and by kind of feature (``family``)."""
++    variable: dict[str, list[str]] = {}
++    family: dict[str, list[str]] = {}
++    for name in columns:
++        base, separator, suffix = name.partition("__")
++        variable.setdefault(base, []).append(name)
++        if not separator:
++            kind = STATIC_FAMILY
++        elif suffix.startswith(PATTERN_SUFFIXES):
++            kind = PATTERN
++        else:
++            kind = VALUES
++        family.setdefault(kind, []).append(name)
++    return {"variable": variable, "family": family}
++
++
++def grouped_permutation_importance(model, table: pd.DataFrame, columns: list[str], *, repeats: int = 3,
++                                   seed: int = 42) -> pd.DataFrame:
++    """Drop in average precision per group, largest first within each level.
++
++    ``table`` holds the feature columns and ``label``; pass validation rows only.
++    """
++    if repeats < 1:
++        raise ValueError("repeats must be at least 1")
++    labels = table["label"].to_numpy(dtype=int)
++    if len(np.unique(labels)) < 2:
++        raise ValueError("permutation importance needs septic and non-septic hours")
++    original = table[columns]
++    baseline = float(average_precision_score(labels, model.predict_proba(original)[:, 1]))
++    rng = np.random.default_rng(seed)
++    shuffled = original.copy()
++    rows = []
++    for level, groups in feature_groups(columns).items():
++        for group, names in groups.items():
++            values = original[names].to_numpy()
++            drops = []
++            for _ in range(repeats):
++                shuffled[names] = values[rng.permutation(len(values))]
++                drops.append(baseline - float(average_precision_score(labels, model.predict_proba(shuffled)[:, 1])))
++            shuffled[names] = values
++            rows.append({
++                "level": level, "group": group, "columns": len(names), "ap_drop_mean": float(np.mean(drops)),
++                "ap_drop_std": float(np.std(drops, ddof=1)) if repeats > 1 else 0.0,
++                "baseline_average_precision": baseline, "repeats": repeats,
++            })
++    result = pd.DataFrame(rows, columns=COLUMNS)
++    order = {"variable": 0, "family": 1}
++    return (result.assign(_level=result["level"].map(order))
++            .sort_values(["_level", "ap_drop_mean"], ascending=[True, False], kind="mergesort")
++            .drop(columns="_level").reset_index(drop=True))
+diff --git a/src/sepsis_warning/model_report.py b/src/sepsis_warning/model_report.py
+index 19c9ce6..5f3e60d 100644
+--- a/src/sepsis_warning/model_report.py
++++ b/src/sepsis_warning/model_report.py
+@@ -3,19 +3,26 @@
+     python -m sepsis_warning model-report --run artifacts/real --output reports/results
+ 
+ Input is a finished ``train`` folder (``validation_scores.csv``, ``validation_models.csv``,
+-``selection_metrics.json``, ``candidate_details.json``). The script compares every candidate
+-and the SIRS baseline on the **validation split only**; it fits nothing and reads no test data.
++``selection_metrics.json``, ``candidate_details.json``, ``feature_importance.csv``). The script
++compares every candidate and the SIRS baseline on the **validation split only**; it fits nothing
++and reads no test data.
+ 
+ Optional inputs
+ * ``--tuning DIR``     a ``tune`` folder: adds the cross-validation figure.
+ * ``--evaluation DIR`` an ``evaluate`` folder (the model's one frozen test evaluation): adds the
+-  test-split table and PR curves. It only reads that folder's output; it never scores test data.
++  test-split table with baseline rows, the test subgroup table and PR curves. It only reads that
++  folder's output; it never scores test data and never re-tunes a threshold.
+ 
+ Outputs (all in ``--output``)
+ * ``metrics_table.csv`` and ``metrics_table.md``: accuracy, precision, recall, F1, specificity,
+   average precision, AUROC, Brier score, hourly utility, false alerts per non-septic patient-day,
+   early-detection recall, confusion counts, and stay-grouped bootstrap intervals for the
+-  threshold metrics. Every model is judged at its own validation-tuned threshold.
++  threshold metrics and the utility. Every model is judged at its own validation-tuned threshold.
++* ``subgroup_table.csv`` and ``subgroup_table.md`` (bias audit): the selected model by recorded
++  sex and age band, with counts, intervals and the largest gap. With ``--evaluation`` also
++  ``test_subgroup_table.*``, which adds hospital A against hospital B.
++* ``feature_importance.csv`` and ``feature_importance.md``: grouped permutation importance of the
++  selected model, computed by ``train`` on validation (see ``importance.py``).
+ * One PNG per figure, each with its recreate command printed on it.
+ * ``figures_manifest.json`` and ``FIGURES.md``: every figure's title, what it shows, the files it
+   was made from and the exact command that recreates it.
+@@ -30,24 +37,41 @@ precision, recall, F1 and the utility score carry the comparison.
+ import json
+ import os
+ import platform
++import warnings
+ from pathlib import Path
+ 
+ import numpy as np
+ import pandas as pd
+ from sklearn.metrics import average_precision_score, precision_recall_curve, roc_auc_score
+ 
+-from .baselines import hourly_classification_metrics
++from .baselines import BASELINE_THRESHOLD, hourly_classification_metrics
++from .data import SUBGROUP_COLUMNS
++from .monitoring import AGE_BINS, AGE_LABELS, GENDER_LABELS
++from .policy import alert_events, apply_policy, summarize, utility_components
+ 
+ SCORE_PREFIX = "p_"
+ BASELINE = "sirs_rule"
+ BASELINE_SCORE = "sirs_score"
+-INTERVAL_METRICS = ("accuracy", "precision", "recall", "f1")
++# Above every score, so nothing is flagged (the same no-alert value policy.tune_threshold uses).
++NEVER_ALERT = 1.01
++INTERVAL_METRICS = ("accuracy", "precision", "recall", "f1", "utility")
+ TABLE_COLUMNS = [
+     "model", "role", "threshold", "accuracy", "precision", "recall", "f1", "specificity", "average_precision",
+     "auroc", "brier_score", "normalized_hourly_utility", "false_alert_events_per_nonseptic_patient_day",
+     "early_detection_recall", "tp", "fp", "fn", "tn", "no_predicted_positives",
+     *[f"{m}_ci_{side}" for m in INTERVAL_METRICS for side in ("low", "high")],
+ ]
++SUBGROUP_METRICS = ("recall", "precision", "f1", "utility", "false_alerts_per_day")
++GAP_METRICS = ("recall", "utility")
++GAP_GROUP = "largest gap (best - worst)"
++SUBGROUP_TABLE_COLUMNS = [
++    "scope", "attribute", "group", "stays", "septic_stays", "hours", "sufficient",
++    *[name for m in SUBGROUP_METRICS for name in (m, f"{m}_ci_low", f"{m}_ci_high")],
++]
++VALIDATION_NOTE = ("Hourly decisions on the validation split, each model at its own validation-tuned threshold. "
++                   "The utility interval is for that threshold; it does not include threshold-tuning noise.")
++TEST_NOTE = ("Hourly decisions on the test splits, scored once by `evaluate` after the model was frozen. Every "
++             "threshold was fixed on the validation split beforehand; nothing was tuned on these stays.")
+ COLORS = ["#1f77b4", "#d62728", "#2ca02c", "#9467bd", "#ff7f0e", "#8c564b", "#17becf", "#7f7f7f"]
+ 
+ 
+@@ -66,14 +90,25 @@ def _read_run(run_dir: Path) -> dict:
+         raise ReportInputError(
+             f"{run_dir} is missing {missing}; run `python -m sepsis_warning train ...` with the current code first")
+     details_path = run_dir / "candidate_details.json"
++    importance_path = run_dir / "feature_importance.csv"
+     return {
+         "scores": pd.read_csv(run_dir / "validation_scores.csv"),
+         "models": pd.read_csv(run_dir / "validation_models.csv").set_index("model"),
+         "selection": json.loads((run_dir / "selection_metrics.json").read_text(encoding="utf-8")),
+         "details": json.loads(details_path.read_text(encoding="utf-8")) if details_path.is_file() else {},
++        "importance": pd.read_csv(importance_path) if importance_path.is_file() else None,
+     }
+ 
+ 
++def _stay_slices(frame: pd.DataFrame) -> tuple[np.ndarray, list[np.ndarray]]:
++    """Stay number of every row (order of first appearance) and each stay's row positions in hour order."""
++    codes, _ = pd.factorize(frame["patient_id"])
++    if not len(codes):
++        return codes, []
++    order = np.lexsort((frame["hour"].to_numpy(), codes))
++    return codes, np.split(order, np.flatnonzero(np.diff(codes[order])) + 1)
++
++
+ def _patient_counts(frame: pd.DataFrame, score: str, threshold: float) -> np.ndarray:
+     """Per-stay [TP, FP, FN, TN] hour counts at ``threshold``, for stay-grouped resampling."""
+     codes, _ = pd.factorize(frame["patient_id"])
+@@ -97,18 +132,61 @@ def _rates(sums: np.ndarray) -> dict[str, np.ndarray]:
+             "recall": divide(tp, tp + fn), "f1": divide(2 * tp, 2 * tp + fp + fn)}
+ 
+ 
++def _stay_utilities(frame: pd.DataFrame, decisions) -> np.ndarray:
++    """Per stay: utility of the decisions made, of the best decisions and of never alerting.
++
++    The same three sums as ``policy.patient_utilities``, in the stay order of ``_patient_counts``.
++    """
++    labels = frame["label"].to_numpy(dtype=int)
++    decisions = np.asarray(decisions, dtype=bool)
++    _, stays = _stay_slices(frame)
++    sums = np.zeros((len(stays), 3))
++    for index, rows in enumerate(stays):
++        positive, negative = utility_components(labels[rows])
++        sums[index] = (np.where(decisions[rows], positive, negative).sum(),
++                       np.maximum(positive, negative).sum(), negative.sum())
++    return sums
++
++
++def _utility(sums: np.ndarray) -> np.ndarray:
++    """Normalized hourly utility from [made, best, never alerting] sums; NaN without septic stays."""
++    observed, best, inactive = (sums[..., i] for i in range(3))
++    denominator = best - inactive
++    return np.divide(observed - inactive, denominator, out=np.full(np.shape(denominator), np.nan),
++                     where=denominator > 0)
++
++
++def _resample_weights(stays: int, draws: int, seed: int) -> np.ndarray:
++    """How often each stay is drawn in each bootstrap resample of whole stays: shape (draws, stays)."""
++    picks = np.random.default_rng(seed).integers(0, stays, size=(draws, stays))
++    weights = np.zeros((draws, stays))
++    for draw in range(draws):
++        weights[draw] = np.bincount(picks[draw], minlength=stays)
++    return weights
++
++
++def _interval(values) -> tuple[float | None, float | None]:
++    """95% percentile interval of the draws that have a value."""
++    values = np.asarray(values, dtype=float)
++    values = values[~np.isnan(values)]
++    if not len(values):
++        return None, None
++    low, high = np.percentile(values, [2.5, 97.5])
++    return float(low), float(high)
++
++
+ def bootstrap_intervals(frame: pd.DataFrame, score: str, threshold: float, draws: int, seed: int) -> dict:
+     """95% intervals from resampling whole stays. Empty when ``draws`` is 0."""
+     if draws <= 0:
+         return {}
+     counts = _patient_counts(frame, score, threshold)
+-    rng = np.random.default_rng(seed)
+-    picks = rng.integers(0, len(counts), size=(draws, len(counts)))
+-    rates = _rates(counts[picks].sum(axis=1))
++    utilities = _stay_utilities(frame, frame[score].to_numpy(dtype=float) >= threshold)
++    weights = _resample_weights(len(counts), draws, seed)
++    rates = _rates(weights @ counts)
++    rates["utility"] = _utility(weights @ utilities)
+     result = {}
+     for metric in INTERVAL_METRICS:
+-        low, high = np.percentile(rates[metric], [2.5, 97.5])
+-        result[f"{metric}_ci_low"], result[f"{metric}_ci_high"] = float(low), float(high)
++        result[f"{metric}_ci_low"], result[f"{metric}_ci_high"] = _interval(rates[metric])
+     return result
+ 
+ 
+@@ -128,6 +206,11 @@ def _row(frame: pd.DataFrame, score: str, name: str, role: str, threshold: float
+         "no_predicted_positives": hourly["no_predicted_positives"],
+         **extra,
+     }
++    recorded = row.get("normalized_hourly_utility")
++    if recorded is None or pd.isna(recorded):
++        # Not recorded by `train` or `evaluate` for this row, so compute it from the same decisions.
++        utility = float(_utility(_stay_utilities(frame, values >= threshold).sum(axis=0)))
++        row["normalized_hourly_utility"] = None if np.isnan(utility) else utility
+     row.update(bootstrap_intervals(frame, score, threshold, draws, seed))
+     return row
+ 
+@@ -168,8 +251,8 @@ def _fmt(value, digits: int = 3) -> str:
+     return "n/a" if value is None or (isinstance(value, float) and np.isnan(value)) else f"{value:.{digits}f}"
+ 
+ 
+-def markdown_table(table: pd.DataFrame) -> str:
+-    """The comparison table as Markdown, ready for the report."""
++def markdown_table(table: pd.DataFrame, note: str = VALIDATION_NOTE) -> str:
++    """The comparison table as Markdown, ready for the report. ``note`` says which split it describes."""
+     def interval(row, metric):
+         low, high = row.get(f"{metric}_ci_low"), row.get(f"{metric}_ci_high")
+         return "" if low is None or pd.isna(low) else f" ({_fmt(low)}-{_fmt(high)})"
+@@ -183,10 +266,170 @@ def markdown_table(table: pd.DataFrame) -> str:
+             f"| {label} | {_fmt(row['threshold'], 2)} | {_fmt(row['accuracy'])}{interval(row, 'accuracy')} | "
+             f"{_fmt(row['precision'])}{interval(row, 'precision')} | {_fmt(row['recall'])}{interval(row, 'recall')} | "
+             f"{_fmt(row['f1'])}{interval(row, 'f1')} | {_fmt(row['average_precision'])} | {_fmt(row['auroc'])} | "
+-            f"{_fmt(row['normalized_hourly_utility'])} | {_fmt(row['false_alert_events_per_nonseptic_patient_day'])} |")
+-    lines += ["", "Hourly decisions on the validation split, each model at its own validation-tuned threshold. "
+-              "Brackets are 95% intervals from resampling whole stays. A model that never alerts has precision 0 by "
+-              "convention (no predicted positives)."]
++            f"{_fmt(row['normalized_hourly_utility'])}{interval(row, 'utility')} | "
++            f"{_fmt(row['false_alert_events_per_nonseptic_patient_day'])} |")
++    lines += ["", f"{note} Brackets are 95% intervals from resampling whole stays. A model that never alerts has "
++              "precision 0 by convention (no predicted positives)."]
++    return "\n".join(lines) + "\n"
++
++
++# --- subgroups (bias audit) ------------------------------------------------------------------------------
++
++
++def _stay_summary(frame: pd.DataFrame, score: str, threshold: float, cooldown: int) -> np.ndarray:
++    """Per stay: TP, FP, FN and TN hours, the three utility sums, false alert events and non-septic hours.
++
++    False alert events use the cooldown and count only stays with no septic-labelled hour, as
++    ``policy.summarize`` does. Every subgroup metric is a ratio of sums of these columns.
++    """
++    values = frame[score].to_numpy(dtype=float)
++    labels = frame["label"].to_numpy(dtype=int)
++    hours = frame["hour"].to_numpy(dtype=float)
++    _, stays = _stay_slices(frame)
++    burden = np.zeros((len(stays), 2))
++    for index, rows in enumerate(stays):
++        if not labels[rows].any():
++            burden[index] = (alert_events(hours[rows], values[rows], threshold, cooldown).sum(), len(rows))
++    return np.hstack([_patient_counts(frame, score, threshold), _stay_utilities(frame, values >= threshold), burden])
++
++
++def _summaries(sums: np.ndarray) -> dict[str, np.ndarray]:
++    """The subgroup metrics from ``_stay_summary`` sums (rows are groups or bootstrap draws).
++
++    Recall is NaN where there is no septic-labelled hour, so a resample that drew no septic stay
++    for a group is left out of that group's interval instead of counting as recall 0.
++    """
++    rates = _rates(sums[..., :4])
++    positives = sums[..., 0] + sums[..., 2]
++    rates["recall"] = np.where(positives > 0, rates["recall"], np.nan)
++    rates["utility"] = _utility(sums[..., 4:7])
++    events, hours = sums[..., 7], sums[..., 8]
++    rates["false_alerts_per_day"] = np.divide(events * 24, hours, out=np.full(np.shape(hours), np.nan), where=hours > 0)
++    return rates
++
++
++def stay_attributes(frame: pd.DataFrame) -> dict[str, tuple[np.ndarray, list[str]]]:
++    """Recorded sex and age band of every stay, in the stay order of ``_stay_summary``.
++
++    Bands and labels are the monitoring ones, so the report and the drift checks agree.
++    """
++    stays = frame.groupby("patient_id", sort=False).agg(age=("Age", "first"), gender=("Gender", "first"))
++    bands = pd.cut(stays["age"], AGE_BINS, labels=AGE_LABELS, right=False).astype(object)
++    return {"sex": (stays["gender"].map(GENDER_LABELS).to_numpy(dtype=object), list(GENDER_LABELS.values())),
++            "age_band": (bands.to_numpy(dtype=object), list(AGE_LABELS))}
++
++
++def subgroup_table(frame: pd.DataFrame, score: str, threshold: float, cooldown: int,
++                   groups: dict[str, tuple[np.ndarray, list[str]]], *, scope: str, draws: int = 200, seed: int = 42,
++                   min_septic_stays: int = 10, include_all: bool = True) -> pd.DataFrame:
++    """One row per group, plus the largest gap per attribute, with stay-grouped bootstrap intervals.
++
++    ``groups`` maps an attribute to (its value for every stay, the group names in display order).
++    A group with fewer than ``min_septic_stays`` septic stays, or with no non-septic stay, is counted
++    but not scored. Each resample draws whole stays from the full cohort, so group sizes vary between
++    draws as they would in a new sample. The gap is the best group minus the worst.
++    """
++    sums = _stay_summary(frame, score, threshold, cooldown)
++    septic = (sums[:, 0] + sums[:, 2]) > 0
++    hours = sums[:, :4].sum(axis=1)
++    weights = _resample_weights(len(sums), draws, seed) if draws > 0 else None
++
++    def describe(mask: np.ndarray, attribute: str, group: str, minimum: int = min_septic_stays) -> tuple[dict, dict | None]:
++        stays, septic_stays = int(mask.sum()), int(septic[mask].sum())
++        row = {"scope": scope, "attribute": attribute, "group": group, "stays": stays, "septic_stays": septic_stays,
++               "hours": int(hours[mask].sum()), "sufficient": septic_stays >= minimum and stays > septic_stays}
++        if not row["sufficient"]:
++            return row, None
++        point = _summaries(sums[mask].sum(axis=0))
++        resampled = _summaries(weights[:, mask] @ sums[mask]) if weights is not None else None
++        for metric in SUBGROUP_METRICS:
++            value = float(point[metric])
++            row[metric] = None if np.isnan(value) else value
++            if resampled is not None:
++                row[f"{metric}_ci_low"], row[f"{metric}_ci_high"] = _interval(resampled[metric])
++        return row, {"point": point, "resampled": resampled}
++
++    # The whole cohort is the reference row, so it is scored whenever it has both kinds of stay.
++    rows = [describe(np.ones(len(sums), dtype=bool), "all", "all stays", minimum=1)[0]] if include_all else []
++    for attribute, (values, names) in groups.items():
++        scored = []
++        for name in names:
++            row, detail = describe(np.asarray(values, dtype=object) == name, attribute, name)
++            rows.append(row)
++            if detail is not None:
++                scored.append(detail)
++        if len(scored) < 2:
++            continue
++        gap = {"scope": scope, "attribute": attribute, "group": GAP_GROUP, "sufficient": True}
++        for metric in GAP_METRICS:
++            points = np.array([float(detail["point"][metric]) for detail in scored])
++            gap[metric] = float(np.nanmax(points) - np.nanmin(points)) if not np.isnan(points).all() else None
++            if weights is not None:
++                stacked = np.vstack([detail["resampled"][metric] for detail in scored])
++                with warnings.catch_warnings():
++                    warnings.simplefilter("ignore", RuntimeWarning)  # a draw where no group has a value
++                    spread = np.nanmax(stacked, axis=0) - np.nanmin(stacked, axis=0)
++                gap[f"{metric}_ci_low"], gap[f"{metric}_ci_high"] = _interval(spread)
++        rows.append(gap)
++    return pd.DataFrame(rows).reindex(columns=SUBGROUP_TABLE_COLUMNS)
++
++
++def subgroup_markdown(table: pd.DataFrame, model: str, threshold: float, min_septic_stays: int, where: str) -> str:
++    """The subgroup table as Markdown, with what it does not cover."""
++    def cell(row, metric):
++        value = row.get(metric)
++        if value is None or pd.isna(value):
++            return ""
++        low, high = row.get(f"{metric}_ci_low"), row.get(f"{metric}_ci_high")
++        return _fmt(value) + ("" if low is None or pd.isna(low) else f" ({_fmt(low)}-{_fmt(high)})")
++
++    lines = ["| Scope | Attribute | Group | Stays | Septic stays | Recall | Precision | Hourly utility | False alerts / non-septic patient-day |",
++             "|---|---|---|---:|---:|---:|---:|---:|---:|"]
++    for _, row in table.iterrows():
++        if row["group"] == GAP_GROUP:
++            lines.append(f"| {row['scope']} | {row['attribute']} | *{GAP_GROUP}* | | | {cell(row, 'recall')} | | "
++                         f"{cell(row, 'utility')} | |")
++            continue
++        counts = f"{int(row['stays']):,} | {int(row['septic_stays']):,}"
++        if not row["sufficient"]:
++            lines.append(f"| {row['scope']} | {row['attribute']} | {row['group']} | {counts} | "
++                         f"not scored (fewer than {min_septic_stays} septic stays) | | | |")
++            continue
++        lines.append(f"| {row['scope']} | {row['attribute']} | {row['group']} | {counts} | {cell(row, 'recall')} | "
++                     f"{cell(row, 'precision')} | {cell(row, 'utility')} | {cell(row, 'false_alerts_per_day')} |")
++    lines += ["", f"{model} at its frozen threshold {_fmt(threshold, 2)}, {where}. Hourly decisions; brackets are 95% "
++              "intervals from resampling whole stays. The gap is the best group minus the worst; with several groups "
++              "it is pushed upward by chance, so read it with its interval. A gap whose interval is wide means the "
++              "data cannot tell the groups apart, not that they are equal.", "",
++              "Not checked: attributes the dataset does not record (ethnicity, language, insurance, admission "
++              "diagnosis); combinations of attributes (for example women aged 80+); gender is recorded as two values "
++              "only. Differences in how often each group is measured are not separated from differences in the model."]
++    return "\n".join(lines) + "\n"
++
++
++def importance_markdown(importance: pd.DataFrame, model: str, top: int = 15) -> str:
++    """Grouped permutation importance as Markdown: the top measurements, then the kinds of feature."""
++    baseline = float(importance["baseline_average_precision"].iloc[0])
++    repeats = int(importance["repeats"].iloc[0])
++    variables = importance[importance["level"] == "variable"]
++    lines = ["| Rank | Measurement | Columns | Drop in average precision | Share of the model's average precision |",
++             "|---:|---|---:|---:|---:|"]
++
++    def line(rank, row):
++        share = row["ap_drop_mean"] / baseline if baseline > 0 else float("nan")
++        return (f"| {rank} | {row['group']} | {int(row['columns'])} | {_fmt(row['ap_drop_mean'], 4)} "
++                f"(sd {_fmt(row['ap_drop_std'], 4)}) | {share:.1%} |")
++
++    lines += [line(rank, row) for rank, (_, row) in enumerate(variables.head(top).iterrows(), start=1)]
++    lines += ["", "| | Kind of feature | Columns | Drop in average precision | Share of the model's average precision |",
++              "|---:|---|---:|---:|---:|"]
++    lines += [line("", row) for _, row in importance[importance["level"] == "family"].iterrows()]
++    lines += ["", f"{model} on the validation split: average precision {_fmt(baseline)} before shuffling. Each row "
++              f"shuffles every column built from one measurement (or every column of one kind) together, {repeats} "
++              f"times; top {min(top, len(variables))} of {len(variables)} measurements shown, all in "
++              "`feature_importance.csv`. Correlated groups share importance, so drops do not add up. "
++              "`measurement_pattern` is whether and when something was measured, which reflects care practice as "
++              "well as physiology; `ICULOS` is hours since ICU admission."]
+     return "\n".join(lines) + "\n"
+ 
+ 
+@@ -410,8 +653,41 @@ def figure_failures(run: dict, row: pd.Series, path: Path, command: str, example
+     _save(fig, path, command)
+ 
+ 
++def figure_importance(importance: pd.DataFrame, model: str, path: Path, command: str, top: int = 15) -> None:
++    """Drop in average precision when a measurement, or a kind of feature, is shuffled."""
++    plt = _pyplot()
++    variables = importance[importance["level"] == "variable"].head(top).iloc[::-1]
++    families = importance[importance["level"] == "family"].iloc[::-1]
++    fig, (left, right) = plt.subplots(1, 2, figsize=(11.0, 5.2), gridspec_kw={"width_ratios": [3, 2]})
++    for ax, rows, color, title in ((left, variables, "#1f77b4", f"Top {len(variables)} measurements"),
++                                   (right, families, "#ff7f0e", "By kind of feature")):
++        ax.barh(rows["group"], rows["ap_drop_mean"], xerr=rows["ap_drop_std"], color=color, capsize=2)
++        ax.axvline(0, color="black", lw=0.8)
++        ax.set_xlabel("Drop in average precision when shuffled")
++        ax.set_title(title, fontsize=10)
++        ax.grid(axis="x", alpha=0.25)
++        ax.tick_params(axis="y", labelsize=8)
++    fig.suptitle(f"What {model} relies on: grouped permutation importance (validation split)", fontsize=11)
++    fig.tight_layout()
++    _save(fig, path, command)
++
++
++def _policy_metrics(frame: pd.DataFrame, score: str, threshold: float, cooldown: int) -> dict:
++    """Utility, alert burden and early-detection recall of a fixed rule, through the shared policy code."""
++    table = frame[["patient_id", "hour", "label"]].assign(probability=frame[score].to_numpy(dtype=float))
++    metrics = summarize(apply_policy(table, threshold, cooldown))
++    return {"brier_score": None,  # a rule's score is not a probability
++            **{key: metrics[key] for key in ("normalized_hourly_utility", "false_alert_events_per_nonseptic_patient_day",
++                                             "early_detection_recall")}}
++
++
+ def evaluation_tables(evaluation_dir: Path, run: dict, draws: int, seed: int) -> tuple[pd.DataFrame, dict]:
+-    """Test-split metrics for the frozen model, from the files `evaluate` wrote (never scores anything)."""
++    """Test-split metrics for the frozen model and the baselines, from the files `evaluate` wrote.
++
++    Nothing is scored or tuned here. The baselines use thresholds fixed beforehand: SIRS at the standard
++    two criteria, SIRS at the criteria count that met the alert budget on validation, and never alerting.
++    Folders written before `evaluate` stored the SIRS score have no baseline rows (``held["baselines"]``).
++    """
+     evaluation_dir = Path(evaluation_dir)
+     metrics_file = evaluation_dir / "evaluation_metrics.json"
+     predictions_file = evaluation_dir / "held_out_predictions.csv"
+@@ -421,18 +697,56 @@ def evaluation_tables(evaluation_dir: Path, run: dict, draws: int, seed: int) ->
+     evaluation = json.loads(metrics_file.read_text(encoding="utf-8"))
+     predictions = pd.read_csv(predictions_file)
+     threshold = float(evaluation["threshold"])
++    cooldown = int(evaluation["cooldown_hours"])
++    have_sirs = BASELINE_SCORE in predictions
++    rules = [(f"{BASELINE} (>= 2 criteria, standard)", BASELINE_THRESHOLD)]
++    budget = ((run["selection"].get("reference_baselines") or {}).get("sirs") or {}).get("threshold")
++    if budget is not None and not np.isclose(float(budget), BASELINE_THRESHOLD):
++        rules.append((f"{BASELINE} (validation alert-budget threshold)", float(budget)))
+     rows = []
+     for split, frame in predictions.groupby("split"):
++        frame = frame.reset_index(drop=True)
+         rows.append(_row(frame, "probability", evaluation["selected_model"], split, threshold, {
+             key: evaluation["splits"][split].get(key) for key in
+             ("brier_score", "normalized_hourly_utility", "false_alert_events_per_nonseptic_patient_day",
+              "early_detection_recall")}, draws, seed))
+-    return pd.DataFrame(rows).reindex(columns=TABLE_COLUMNS), {"predictions": predictions, "evaluation": evaluation}
++        if have_sirs:
++            for name, cut in rules:
++                rows.append(_row(frame, BASELINE_SCORE, name, split, cut,
++                                 _policy_metrics(frame, BASELINE_SCORE, cut, cooldown), draws, seed))
++        rows.append(_row(frame.assign(never=0.0), "never", "always_no (never alerts)", split, NEVER_ALERT, {
++            "brier_score": None, "normalized_hourly_utility": 0.0, "false_alert_events_per_nonseptic_patient_day": 0.0,
++            "early_detection_recall": 0.0}, draws, seed))
++    return pd.DataFrame(rows).reindex(columns=TABLE_COLUMNS), {
++        "predictions": predictions, "evaluation": evaluation, "baselines": have_sirs}
++
++
++def held_out_subgroup_table(held: dict, draws: int, seed: int, min_septic_stays: int) -> pd.DataFrame | None:
++    """The frozen model by sex and age band within each test split, then hospital A against hospital B.
++
++    None when the `evaluate` folder predates the stored age and gender columns.
++    """
++    predictions, evaluation = held["predictions"], held["evaluation"]
++    if not set(SUBGROUP_COLUMNS) <= set(predictions.columns):
++        return None
++    threshold, cooldown = float(evaluation["threshold"]), int(evaluation["cooldown_hours"])
++    pieces = []
++    for split, frame in predictions.groupby("split"):
++        frame = frame.reset_index(drop=True)
++        pieces.append(subgroup_table(frame, "probability", threshold, cooldown, stay_attributes(frame), scope=split,
++                                     draws=draws, seed=seed, min_septic_stays=min_septic_stays))
++    stays = predictions.groupby("patient_id", sort=False).agg(hospital=("hospital", "first"), split=("split", "first"))
++    names = (stays["hospital"].astype(str) + " (" + stays["split"].astype(str) + ")").to_numpy(dtype=object)
++    pieces.append(subgroup_table(predictions, "probability", threshold, cooldown,
++                                 {"hospital": (names, sorted(set(names)))}, scope="both test splits", draws=draws,
++                                 seed=seed, min_septic_stays=min_septic_stays, include_all=False))
++    return pd.concat(pieces, ignore_index=True)
+ 
+ 
+ def figure_test_pr(held: dict, table: pd.DataFrame, path: Path, command: str) -> None:
+     plt = _pyplot()
+     predictions = held["predictions"]
++    table = table[table["model"] == held["evaluation"]["selected_model"]]
+     fig, ax = plt.subplots(figsize=(6.6, 5.0))
+     for index, (_, row) in enumerate(table.iterrows()):
+         frame = predictions[predictions["split"] == row["role"]]
+@@ -467,8 +781,9 @@ def environment_notes() -> dict:
+ 
+ 
+ def build_report(run_dir: Path, output: Path, *, tuning_dir: Path | None = None, evaluation_dir: Path | None = None,
+-                 bootstrap: int = 200, seed: int = 42, command: str | None = None) -> dict:
+-    """Write the table, figures, manifest and notes. Returns the manifest."""
++                 bootstrap: int = 200, seed: int = 42, command: str | None = None,
++                 min_subgroup_septic_stays: int = 10) -> dict:
++    """Write the tables, figures, manifest and notes. Returns the manifest."""
+     run_dir, output = Path(run_dir), Path(output)
+     if output.exists() and any(output.iterdir()):
+         raise ValueError(f"{output} is not empty; use a new output directory")
+@@ -481,6 +796,8 @@ def build_report(run_dir: Path, output: Path, *, tuning_dir: Path | None = None,
+         if evaluation_dir:
+             base += f" --evaluation {evaluation_dir}"
+         base += f" --bootstrap {bootstrap} --seed {seed}"
++        if min_subgroup_septic_stays != 10:
++            base += f" --min-subgroup-septic-stays {min_subgroup_septic_stays}"
+ 
+     table = metrics_table(run, bootstrap, seed)
+     table.to_csv(output / "metrics_table.csv", index=False)
+@@ -525,11 +842,56 @@ def build_report(run_dir: Path, output: Path, *, tuning_dir: Path | None = None,
+         add("F8", "fig_tuning.png", "Hyperparameter search", "Cross-validated average precision of every "
+             "configuration tried, with the reference and best marked.", [str(Path(tuning_dir) / "tuning_results.csv")])
+     test_table = None
++    tables = [("metrics_table.md", "Every candidate and the SIRS baseline on validation (also `metrics_table.csv`)")]
++    cooldown = int(run["selection"].get("cooldown_hours", 6))
++    if set(SUBGROUP_COLUMNS) <= set(run["scores"].columns):
++        column = f"{SCORE_PREFIX}{selected['model']}"
++        subgroups = subgroup_table(run["scores"], column, float(selected["threshold"]), cooldown,
++                                   stay_attributes(run["scores"]), scope="validation", draws=bootstrap, seed=seed,
++                                   min_septic_stays=min_subgroup_septic_stays)
++        subgroups.to_csv(output / "subgroup_table.csv", index=False)
++        (output / "subgroup_table.md").write_text(subgroup_markdown(
++            subgroups, str(selected["model"]), float(selected["threshold"]), min_subgroup_septic_stays,
++            "on the validation split (hospital A)"), encoding="utf-8")
++        tables.append(("subgroup_table.md", "Bias audit: the selected model by recorded sex and age band on "
++                       "validation, with the largest gap (also `subgroup_table.csv`)"))
++    else:
++        skipped.append({"id": "T2", "title": "Subgroup table", "reason":
++                        "validation_scores.csv has no Age and Gender columns; re-run `train` with the current code"})
++    if run["importance"] is not None and len(run["importance"]):
++        run["importance"].to_csv(output / "feature_importance.csv", index=False)
++        (output / "feature_importance.md").write_text(
++            importance_markdown(run["importance"], str(selected["model"])), encoding="utf-8")
++        tables.append(("feature_importance.md", "Grouped permutation importance of the selected model on "
++                       "validation (also `feature_importance.csv`)"))
++        figure_importance(run["importance"], str(selected["model"]), output / "fig_feature_importance.png", base)
++        add("F10", "fig_feature_importance.png", "Important features", "Drop in average precision when all columns "
++            "built from one measurement, or all columns of one kind, are shuffled.", ["feature_importance.csv"])
++    else:
++        skipped.append({"id": "F10", "title": "Important features", "reason":
++                        "the run folder has no feature_importance.csv; re-run `train` with the current code "
++                        "(and without --importance-repeats 0)"})
+     if evaluation_dir:
+         test_table, held = evaluation_tables(Path(evaluation_dir), run, bootstrap, seed)
+         test_table.to_csv(output / "test_metrics_table.csv", index=False)
+         (output / "test_metrics_table.md").write_text(markdown_table(test_table.assign(
+-            model=test_table["model"] + " / " + test_table["role"], role="candidate")), encoding="utf-8")
++            model=test_table["model"] + " / " + test_table["role"], role="candidate"), TEST_NOTE), encoding="utf-8")
++        tables.append(("test_metrics_table.md", "The frozen model and the baselines on the internal test and "
++                       "hospital B (also `test_metrics_table.csv`)"))
++        if not held["baselines"]:
++            skipped.append({"id": "T1", "title": "SIRS rows in the test table", "reason":
++                            "held_out_predictions.csv has no sirs_score column (written by an older `evaluate`)"})
++        test_subgroups = held_out_subgroup_table(held, bootstrap, seed, min_subgroup_septic_stays)
++        if test_subgroups is not None:
++            test_subgroups.to_csv(output / "test_subgroup_table.csv", index=False)
++            (output / "test_subgroup_table.md").write_text(subgroup_markdown(
++                test_subgroups, held["evaluation"]["selected_model"], float(held["evaluation"]["threshold"]),
++                min_subgroup_septic_stays, "on the test splits (scored once by `evaluate`)"), encoding="utf-8")
++            tables.append(("test_subgroup_table.md", "Bias audit on the test splits: sex and age band within each "
++                           "split, then hospital A against hospital B (also `test_subgroup_table.csv`)"))
++        else:
++            skipped.append({"id": "T3", "title": "Test subgroup table", "reason":
++                            "held_out_predictions.csv has no Age and Gender columns (written by an older `evaluate`)"})
+         figure_test_pr(held, test_table, output / "fig_test_pr.png", base)
+         add("F9", "fig_test_pr.png", "Frozen model on the test splits", "Precision-recall curves for the internal "
+             "test and hospital B, from the model's one frozen evaluation.",
+@@ -537,11 +899,13 @@ def build_report(run_dir: Path, output: Path, *, tuning_dir: Path | None = None,
+ 
+     notes = environment_notes()
+     (output / "environment.json").write_text(json.dumps(notes, indent=2) + "\n", encoding="utf-8")
++    figures.sort(key=lambda figure: int(figure["id"][1:]))
+     manifest = {
+         "run_dir": str(run_dir), "seed": seed, "bootstrap_draws": bootstrap, "selected_model": str(selected["model"]),
+         "split_used": "validation" + (" + the frozen test evaluation" if evaluation_dir else ""),
+         "metrics_files": ["metrics_table.csv", "metrics_table.md"] + (["test_metrics_table.csv",
+                                                                         "test_metrics_table.md"] if test_table is not None else []),
++        "tables": [{"file": name, "shows": shows} for name, shows in tables],
+         "figures": figures, "skipped": skipped, "environment": notes,
+     }
+     (output / "figures_manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+@@ -562,7 +926,9 @@ def figures_markdown(manifest: dict) -> str:
+     for skipped in manifest["skipped"]:
+         lines.append(f"| {skipped['id']} | (not made) | {skipped['title']}: {skipped['reason']} | | |")
+     commands = sorted({figure["recreate"] for figure in manifest["figures"]})
++    lines += ["", "## Tables", "", "The same command writes the tables (aggregates only; copy the `.md` files into "
++              "the report):", ""]
++    lines += [f"- `{table['file']}`: {table['shows']}." for table in manifest.get("tables", [])]
+     lines += ["", "## Recreate", "", "```bash", *commands, "```", "",
+-              "Tables: `metrics_table.md` (copy into the report) and `metrics_table.csv`. "
+               "Environment and hardware notes: `environment.json`.", ""]
+     return "\n".join(lines)
+diff --git a/tests/test_aws_api_shapes.py b/tests/test_aws_api_shapes.py
+index be7821d..dca7ade 100644
+--- a/tests/test_aws_api_shapes.py
++++ b/tests/test_aws_api_shapes.py
+@@ -9,10 +9,16 @@ import sys
+ import unittest
+ from pathlib import Path
+ 
+-import botocore.session
+ import yaml
+-from botocore import xform_name
+-from botocore.validate import ParamValidator
++
++try:
++    import botocore.session
++    from botocore import xform_name
++    from botocore.validate import ParamValidator
++except ImportError:  # the AWS API models ship with botocore (aws extra)
++    botocore = None
++
++NEEDS_BOTOCORE = unittest.skipUnless(botocore, "needs `pip install -e .[aws]`")
+ 
+ ROOT = Path(__file__).resolve().parents[1]
+ sys.path.insert(0, str(ROOT / "scripts"))
+@@ -21,7 +27,7 @@ import aws_approval as approval  # noqa: E402
+ import aws_power as power  # noqa: E402
+ import aws_run_task as run_task  # noqa: E402
+ 
+-SESSION = botocore.session.get_session()
++SESSION = botocore.session.get_session() if botocore else None
+ 
+ 
+ def model(service: str):
+@@ -80,6 +86,7 @@ class CheckedSession:
+         return self._clients[name]
+ 
+ 
++@NEEDS_BOTOCORE
+ class TheCheckBitesTests(unittest.TestCase):
+     def test_a_wrong_name_or_an_invented_response_field_is_reported(self):
+         problems = []
+@@ -97,6 +104,7 @@ class TheCheckBitesTests(unittest.TestCase):
+         self.assertIn("TaskDefinitionArn", wrong[0])
+ 
+ 
++@NEEDS_BOTOCORE
+ class ClientCallTests(unittest.TestCase):
+     def test_the_power_script_only_makes_calls_the_real_apis_accept(self):
+         import test_power
+@@ -166,6 +174,7 @@ _Loader.add_multi_constructor("!", lambda loader, suffix, node: loader.construct
+                               else (loader.construct_sequence(node) if isinstance(node, yaml.SequenceNode) else loader.construct_mapping(node)))
+ 
+ 
++@NEEDS_BOTOCORE
+ class StateMachineParameterTests(unittest.TestCase):
+     def states(self, name: str) -> dict:
+         template = yaml.load((ROOT / "infra" / "cloudformation" / name).read_text(encoding="utf-8"), Loader=_Loader)
+diff --git a/tests/test_cloud_pipeline.py b/tests/test_cloud_pipeline.py
+index 8ce129c..2fa0abc 100644
+--- a/tests/test_cloud_pipeline.py
++++ b/tests/test_cloud_pipeline.py
+@@ -133,8 +133,9 @@ class FetchDataTests(unittest.TestCase):
+                 "  case \"$3\" in *training_setA/) echo 'Total Objects: 20336';; *) echo 'Total Objects: ' $COUNT_B;; esac; exit 0; fi\n"
+                 "exit 0\n")
+             fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
++            # TAG is set so the script does not need a Git checkout (a downloaded zip has none).
+             env = {**os.environ, "PATH": f"{temp}:{os.environ['PATH']}", "AWS_REGION": "ap-southeast-2", "ENVIRONMENT": "dev",
+-                   "CALLS": str(log), "COUNT_B": "20000"}
++                   "TAG": "abc123", "CALLS": str(log), "COUNT_B": "20000"}
+             result = subprocess.run(["bash", str(ROOT / "scripts" / "aws_deploy.sh"), "fetch-data"], env=env,
+                                     capture_output=True, text=True, cwd=ROOT)
+             self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+diff --git a/tests/test_ecs_mlflow.py b/tests/test_ecs_mlflow.py
+index 6b67de3..2906205 100644
+--- a/tests/test_ecs_mlflow.py
++++ b/tests/test_ecs_mlflow.py
+@@ -1,5 +1,6 @@
+ """MLflow on ECS: which tracking servers the code accepts, who is acting, and the promote step."""
+ 
++import importlib.util
+ import json
+ import os
+ import tempfile
+@@ -28,6 +29,7 @@ class ProjectServerTests(unittest.TestCase):
+             self.assertTrue(tracking.is_project_server("http://other.example.org:5000"))
+             self.assertFalse(tracking.is_project_server("http://54.9.9.9:5000"))
+ 
++    @unittest.skipUnless(importlib.util.find_spec("boto3"), "needs `pip install -e .[aws]`")
+     def test_on_aws_the_actor_is_the_task_role_not_the_local_user(self):
+         with mock.patch("boto3.client") as client:
+             client.return_value.get_caller_identity.return_value = {"Arn": "arn:aws:sts::1:assumed-role/sepsis-approver/task"}
+diff --git a/tests/test_model_report.py b/tests/test_model_report.py
+index 546893b..c3b6a7d 100644
+--- a/tests/test_model_report.py
++++ b/tests/test_model_report.py
+@@ -1,18 +1,23 @@
+ """Evaluation script: table content, figures with recreate commands, no test data touched."""
+ 
+ import json
++import shutil
+ import tempfile
+ import unittest
++from argparse import Namespace
+ from pathlib import Path
+ from unittest import mock
+ 
+ import numpy as np
+ import pandas as pd
+ 
+-from sepsis_warning import cli, model_report
++from sepsis_warning import cli, model_report, policy
++from sepsis_warning.data import generate_synthetic
++from sepsis_warning.evaluation import run_frozen_evaluation
++from sepsis_warning.importance import PATTERN, STATIC_FAMILY, VALUES, feature_groups, grouped_permutation_importance
+ 
+ 
+-def synthetic_run(folder: Path, stays: int = 40, hours: int = 20) -> Path:
++def synthetic_run(folder: Path, stays: int = 40, hours: int = 20, attributes: bool = False) -> Path:
+     rng = np.random.default_rng(0)
+     rows = []
+     for stay in range(stays):
+@@ -20,9 +25,13 @@ def synthetic_run(folder: Path, stays: int = 40, hours: int = 20) -> Path:
+         for hour in range(hours):
+             label = int(septic and hour >= 12)
+             base = 0.6 if label else 0.03
+-            rows.append({"patient_id": f"s{stay}", "hospital": "A", "hour": hour, "label": label,
+-                         "p_good": min(1, max(0, base + rng.normal(0, 0.05))),
+-                         "p_weak": float(rng.uniform(0, 0.3)), "sirs_score": float(label * 2 + rng.integers(0, 2))})
++            row = {"patient_id": f"s{stay}", "hospital": "A", "hour": hour, "label": label,
++                   "p_good": min(1, max(0, base + rng.normal(0, 0.05))),
++                   "p_weak": float(rng.uniform(0, 0.3)), "sirs_score": float(label * 2 + rng.integers(0, 2))}
++            if attributes:
++                # Ages 30-69 and alternating blocks of four: septic stays fall in both sexes and three age bands.
++                row.update({"Age": 30 + stay, "Gender": (stay // 4) % 2})
++            rows.append(row)
+     folder.mkdir(parents=True)
+     pd.DataFrame(rows).to_csv(folder / "validation_scores.csv", index=False)
+     pd.DataFrame([
+@@ -97,6 +106,174 @@ class ModelReportTests(unittest.TestCase):
+             with self.assertRaises(model_report.ReportInputError):
+                 model_report.build_report(run, Path(temp) / "o", evaluation_dir=Path(temp) / "nope", bootstrap=5)
+ 
++    def test_utility_and_its_interval_agree_with_the_policy_code(self):
++        with tempfile.TemporaryDirectory() as temp:
++            scores = model_report._read_run(synthetic_run(Path(temp) / "run"))["scores"]
++            scores = scores.sample(frac=1, random_state=0).reset_index(drop=True)  # row order must not matter
++            decisions = scores["p_weak"] >= 0.25
++            fast = float(model_report._utility(model_report._stay_utilities(scores, decisions).sum(axis=0)))
++            self.assertAlmostEqual(fast, policy.normalized_utility(scores.assign(hourly_positive=decisions.astype(int))))
++            interval = model_report.bootstrap_intervals(scores, "p_weak", 0.25, 60, 1)
++            self.assertLess(interval["utility_ci_low"], fast)
++            self.assertGreater(interval["utility_ci_high"], fast)
++            # A row without a recorded utility gets the computed one, and the table prints its interval.
++            row = model_report._row(scores, "p_weak", "weak", "candidate", 0.25, {}, 60, 1)
++            self.assertAlmostEqual(row["normalized_hourly_utility"], fast)
++            cell = model_report.markdown_table(pd.DataFrame([row]).reindex(columns=model_report.TABLE_COLUMNS))
++            self.assertIn(f"{fast:.3f} ({interval['utility_ci_low']:.3f}-{interval['utility_ci_high']:.3f})", cell)
++
++    def test_subgroup_table_counts_scores_and_gaps(self):
++        with tempfile.TemporaryDirectory() as temp:
++            scores = model_report._read_run(synthetic_run(Path(temp) / "run", attributes=True))["scores"]
++            table = model_report.subgroup_table(scores, "p_weak", 0.25, 6, model_report.stay_attributes(scores),
++                                                scope="validation", draws=40, seed=1, min_septic_stays=3)
++            rows = table.set_index(["attribute", "group"])
++            everyone = rows.loc[("all", "all stays")]
++            reference = policy.summarize(policy.apply_policy(scores.rename(columns={"p_weak": "probability"}), 0.25, 6))
++            self.assertAlmostEqual(everyone["utility"], reference["normalized_hourly_utility"])
++            self.assertAlmostEqual(everyone["false_alerts_per_day"], reference["false_alert_events_per_nonseptic_patient_day"])
++            self.assertGreater(everyone["false_alerts_per_day"], 0)
++            sexes = table[(table["attribute"] == "sex") & (table["group"] != model_report.GAP_GROUP)]
++            self.assertEqual((int(sexes["stays"].sum()), int(sexes["septic_stays"].sum())), (40, 10))
++            self.assertEqual(int(sexes["hours"].sum()), len(scores))
++            # One septic stay aged 65-79: counted, not scored, and left out of the gap.
++            small = rows.loc[("age_band", "65-79")]
++            self.assertEqual((int(small["stays"]), int(small["septic_stays"]), bool(small["sufficient"])), (5, 1, False))
++            self.assertTrue(pd.isna(small["recall"]))
++            # The whole-cohort row is the reference and is scored even when no subgroup is large enough.
++            strict = model_report.subgroup_table(scores, "p_weak", 0.25, 6, model_report.stay_attributes(scores),
++                                                 scope="validation", draws=0, min_septic_stays=50)
++            self.assertEqual(list(strict.loc[strict["sufficient"], "group"]), ["all stays"])
++            self.assertAlmostEqual(strict.loc[0, "utility"], everyone["utility"])
++            scored = table[(table["attribute"] == "age_band") & table["sufficient"] & (table["group"] != model_report.GAP_GROUP)]
++            gap = rows.loc[("age_band", model_report.GAP_GROUP)]
++            self.assertEqual(list(scored["group"]), ["<45", "45-64"])
++            self.assertAlmostEqual(gap["utility"], scored["utility"].max() - scored["utility"].min())
++            self.assertLessEqual(gap["utility_ci_low"], gap["utility_ci_high"])
++            text = model_report.subgroup_markdown(table, "weak", 0.25, 3, "on the validation split")
++            self.assertIn("not scored (fewer than 3 septic stays)", text)
++            self.assertIn("Not checked", text)
++
++
++class FakeModel:
++    """Scores from the last heart rate only."""
++
++    def predict_proba(self, features):
++        risk = 1 / (1 + np.exp(-(features["HR__last"].to_numpy(dtype=float) - 100) / 5))
++        return np.column_stack([1 - risk, risk])
++
++
++class ImportanceTests(unittest.TestCase):
++    def test_only_the_columns_the_model_uses_matter(self):
++        rng = np.random.default_rng(0)
++        table = pd.DataFrame({
++            "HR__last": rng.normal(100, 15, 600), "HR__missing_now": rng.integers(0, 2, 600).astype(float),
++            "Temp__last": rng.normal(37, 1, 600), "Temp__hours_since_seen": rng.integers(0, 9, 600).astype(float),
++            "Age": rng.integers(20, 90, 600).astype(float),
++        })
++        table["label"] = (table["HR__last"] + rng.normal(0, 5, 600) > 110).astype(int)
++        columns = [name for name in table if name != "label"]
++        before = table.copy()
++        result = grouped_permutation_importance(FakeModel(), table, columns, repeats=2, seed=0)
++        pd.testing.assert_frame_equal(table, before)  # shuffling works on a copy
++        drop = result.set_index(["level", "group"])["ap_drop_mean"]
++        self.assertGreater(drop[("variable", "HR")], 0.2)
++        self.assertEqual((drop[("variable", "Temp")], drop[("variable", "Age")]), (0.0, 0.0))
++        self.assertGreater(drop[("family", VALUES)], 0.2)
++        self.assertEqual((drop[("family", PATTERN)], drop[("family", STATIC_FAMILY)]), (0.0, 0.0))
++        self.assertEqual(result["group"].iloc[0], "HR")  # largest first
++        groups = feature_groups(columns)
++        self.assertEqual(groups["variable"]["HR"], ["HR__last", "HR__missing_now"])
++        self.assertEqual(groups["family"][PATTERN], ["HR__missing_now", "Temp__hours_since_seen"])
++        for level in groups.values():
++            self.assertEqual(sorted(name for names in level.values() for name in names), sorted(columns))
++
++
++class TrainEvaluateReportTests(unittest.TestCase):
++    """The real chain on the synthetic fixture: train, the one frozen evaluation, then the report."""
++
++    @classmethod
++    def setUpClass(cls):
++        cls.temp = tempfile.TemporaryDirectory()
++        cls.root = Path(cls.temp.name)
++        data = cls.root / "data"
++        generate_synthetic(data, source_size=80, external_size=20)
++        (data / "SYNTHETIC.json").write_text("{}")
++        cls.run_dir, cls.evaluation, cls.out = cls.root / "run", cls.root / "evaluation", cls.root / "report"
++        cli.run_experiment(Namespace(
++            data=data, splits=None, output=cls.run_dir, seed=42, window=6, budget=0.2, cooldown=6,
++            splits_summary=None, dvc_lock=None, mlflow_uri=None, register_model=False, importance_repeats=1))
++        cls.summary = run_frozen_evaluation(data=data, model=cls.run_dir / "model.joblib", output=cls.evaluation)
++        cls.manifest = model_report.build_report(cls.run_dir, cls.out, evaluation_dir=cls.evaluation, bootstrap=20,
++                                                 min_subgroup_septic_stays=1)
++        cls.predictions = pd.read_csv(cls.evaluation / "held_out_predictions.csv")
++
++    @classmethod
++    def tearDownClass(cls):
++        cls.temp.cleanup()
++
++    def test_test_table_is_labelled_as_test_and_holds_the_baselines(self):
++        text = (self.out / "test_metrics_table.md").read_text()
++        self.assertIn("on the test splits", text)
++        self.assertNotIn("on the validation split, each model", text)
++        self.assertIn("on the validation split, each model", (self.out / "metrics_table.md").read_text())
++        table = pd.read_csv(self.out / "test_metrics_table.csv")
++        selected = self.summary["selected_model"]
++        for split in ("internal_test", "external_test"):
++            rows = table[table["role"] == split].set_index("model")
++            self.assertTrue({selected, "sirs_rule (>= 2 criteria, standard)", "always_no (never alerts)"} <= set(rows.index))
++            frame = self.predictions[self.predictions["split"] == split]
++            flagged = frame["sirs_score"] >= 0.5
++            sirs = rows.loc["sirs_rule (>= 2 criteria, standard)"]
++            self.assertEqual((int(sirs["tp"]), int(sirs["fp"])),
++                             (int((flagged & (frame["label"] == 1)).sum()), int((flagged & (frame["label"] == 0)).sum())))
++            self.assertFalse(pd.isna(sirs["normalized_hourly_utility"]))
++            nothing = rows.loc["always_no (never alerts)"]
++            self.assertEqual((nothing["recall"], nothing["normalized_hourly_utility"]), (0.0, 0.0))
++            self.assertAlmostEqual(nothing["accuracy"], 1 - frame["label"].mean())
++            model = rows.loc[selected]
++            self.assertAlmostEqual(model["normalized_hourly_utility"],
++                                   self.summary["splits"][split]["normalized_hourly_utility"])
++            self.assertLessEqual(model["utility_ci_low"], model["normalized_hourly_utility"])
++            self.assertGreaterEqual(model["utility_ci_high"], model["normalized_hourly_utility"])
++
++    def test_subgroup_tables_cover_sex_age_and_hospital(self):
++        validation = pd.read_csv(self.out / "subgroup_table.csv")
++        self.assertEqual(set(validation["scope"]), {"validation"})
++        self.assertTrue({"all", "sex", "age_band"} <= set(validation["attribute"]))
++        held = pd.read_csv(self.out / "test_subgroup_table.csv")
++        hospitals = held[held["attribute"] == "hospital"].set_index("group")
++        self.assertTrue({"A (internal_test)", "B (external_test)"} <= set(hospitals.index))
++        stays = self.predictions.groupby("split")["patient_id"].nunique()
++        self.assertEqual(int(hospitals.loc["A (internal_test)", "stays"]), stays["internal_test"])
++        self.assertEqual(int(hospitals.loc["B (external_test)", "stays"]), stays["external_test"])
++        self.assertIn("Not checked", (self.out / "test_subgroup_table.md").read_text())
++
++    def test_importance_is_written_by_train_and_drawn_by_the_report(self):
++        importance = pd.read_csv(self.run_dir / "feature_importance.csv")
++        columns = json.loads((self.run_dir / "config.json").read_text())["feature_columns"]
++        by_level = importance.groupby("level")["columns"].agg(["size", "sum"])
++        self.assertEqual(tuple(by_level.loc["variable"]), (38, len(columns)))   # 34 measurements + 4 static values
++        self.assertEqual(tuple(by_level.loc["family"]), (3, len(columns)))
++        models = pd.read_csv(self.run_dir / "validation_models.csv").set_index("model")
++        self.assertAlmostEqual(importance["baseline_average_precision"].iloc[0],
++                               models.loc[self.summary["selected_model"], "average_precision"])
++        self.assertIn("fig_feature_importance.png", {figure["file"] for figure in self.manifest["figures"]})
++        self.assertTrue((self.out / "feature_importance.md").is_file())
++        self.assertNotIn("F10", {item["id"] for item in self.manifest["skipped"]})
++
++    def test_an_older_evaluate_folder_still_gives_a_report(self):
++        older = self.root / "older-evaluation"
++        shutil.copytree(self.evaluation, older)
++        self.predictions.drop(columns=["sirs_score", "Age", "Gender"]).to_csv(older / "held_out_predictions.csv", index=False)
++        out = self.root / "older-report"
++        manifest = model_report.build_report(self.run_dir, out, evaluation_dir=older, bootstrap=5)
++        self.assertTrue({"T1", "T3"} <= {item["id"] for item in manifest["skipped"]})
++        table = pd.read_csv(out / "test_metrics_table.csv")
++        self.assertFalse(table["model"].str.startswith("sirs_rule").any())
++        self.assertTrue(table["model"].eq("always_no (never alerts)").any())
++        self.assertFalse((out / "test_subgroup_table.csv").exists())
++
+ 
+ if __name__ == "__main__":
+     unittest.main()
+diff --git a/tests/test_registry.py b/tests/test_registry.py
+index 715111b..db9468f 100644
+--- a/tests/test_registry.py
++++ b/tests/test_registry.py
+@@ -65,7 +65,9 @@ class Registry(unittest.TestCase):
+ 
+     def test_artifacts_stay_next_to_the_database(self):
+         experiment = self.client.get_experiment(self.client.get_run(self.run_id).info.experiment_id)
+-        self.assertEqual(Path(experiment.artifact_location.replace("file://", "")).parent, self.root / "store")
++        # Resolved on both sides: on macOS the temporary folder is a symlink (/var -> /private/var).
++        location = Path(experiment.artifact_location.replace("file://", "")).parent.resolve()
++        self.assertEqual(location, (self.root / "store").resolve())
+         names = {item.path for item in self.client.list_artifacts(self.run_id)}
+         self.assertNotIn("held_out_predictions.csv", names)
+         self.assertNotIn("split_manifest.csv", names)
+

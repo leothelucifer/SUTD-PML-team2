@@ -1,14 +1,28 @@
 # Early sepsis warning across hospitals
 
-Rough project sketch and runnable classical-ML scaffold for the selected proposal.
-The question is: **can an hourly early-warning model retain useful performance
-at another hospital under a limited notification budget?**
+A classical machine-learning pipeline (no deep learning) for hourly early warning of
+sepsis in intensive care, built on the public PhysioNet 2019 challenge data. It
+covers data checks, causal features, hyperparameter search, model selection,
+probability calibration, an alert policy, a scoring API, drift monitoring and an
+AWS deployment design. Course project for 61.501 Production Ready ML (theme: AI
+for Social Good), Team 2. The question is: **can an hourly early-warning model
+retain useful performance at another hospital under a limited notification budget?**
 
-The first version runs with an explicitly synthetic software fixture. It produces
-a model comparison, a saved model with its manifest, and an offline patient
-replay of validation stays. Test-split results come from a separate, one-time
-`evaluate` step. Synthetic scores demonstrate software behavior only. Real-data model
-quality has not been established.
+**Status of the results.** Every command runs end to end on an explicitly
+synthetic software fixture. Synthetic scores demonstrate software behaviour only.
+On the real data this repository holds the SIRS baseline results and the
+hospital A against B comparison (both below). Trained-model results on the real
+data are not committed yet: they come from the commands under
+[Tune, evaluate and write the report](#tune-evaluate-and-write-the-report), and
+the report draft is [reports/final/report.md](reports/final/report.md).
+
+Start here:
+
+- [Run the synthetic demo](#run-the-synthetic-demo): five commands, no data needed.
+- [Use real PhysioNet data](#use-real-physionet-data): download, prepare, split, baseline.
+- [Tune, evaluate and write the report](#tune-evaluate-and-write-the-report): the results tables and figures, each with its recreate command.
+- [Run tracking and the research API](#run-tracking-and-the-research-api-l01-l02): MLflow, the registry and the scoring service.
+- Who did what: [contributions.md](contributions.md). Code map: [docs/agent-repository-guide.md](docs/agent-repository-guide.md).
 
 ## System sketch
 
@@ -48,7 +62,9 @@ python -m unittest discover -s tests -v
 
 Open `artifacts/demo/replay.html` in a browser. Select a validation patient,
 play the hourly sequence, and inspect probabilities, threshold crossings,
-notifications, and retrospective positive labels.
+notifications, and retrospective positive labels. The demo writes a model
+comparison, a saved model with its manifest and that replay of validation stays.
+Tests that need an optional extra that is not installed are skipped, not failed.
 
 `train` and `demo` never score the test splits. Once a model is reviewed and
 frozen, score internal test and hospital B one time:
@@ -73,9 +89,6 @@ Demo generation and experiment outputs require empty destinations. To repeat:
 python -m sepsis_warning demo --data data/demo2 --output artifacts/demo2 --seed 43
 ```
 
-The Codex workspace currently has an already-installed `.venv`; the commands
-above are the portable setup for teammates.
-
 ## Test the whole pipeline locally (macOS or Linux)
 
 Train, select, register, review, serve and call the model on synthetic data,
@@ -89,7 +102,7 @@ python3.12 -m venv .venv && source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -e ".[serve,test,tracking]"
 
-# 2. Tests (about 2-3 minutes)
+# 2. Tests (about 6 minutes; add the aws and checks extras to run the tests that are otherwise skipped)
 MPLBACKEND=Agg python -m unittest discover -s tests
 
 # 3. Train every candidate, select one on validation, register it as @candidate
@@ -186,11 +199,16 @@ python -m sepsis_warning split --data data/physionet/combined.parquet --output d
 python -m sepsis_warning baseline --data data/physionet/combined.parquet --output artifacts/baseline
 ```
 
-To train the models, which read the `.psv` folder:
+To train the models. `--data` takes the prepared Parquet file, which uses the
+saved `splits.csv` and runs the data checks first (`pip install -e ".[checks]"`),
+or the `.psv` folder, which is re-split with `--seed` into the same stays:
 
 ```bash
-python -m sepsis_warning train --data data/physionet --output artifacts/real
+python -m sepsis_warning train --data data/physionet/combined.parquet --output artifacts/real
 ```
+
+The full sequence with hyperparameter search, the results tables and the test
+evaluation is under [Tune, evaluate and write the report](#tune-evaluate-and-write-the-report).
 
 Check `split` against the stay counts in [Patient split](#patient-split). For the
 notebook, also run `python -m pip install -e ".[notebook]"`.
@@ -346,18 +364,22 @@ DVC records which data files belong with this code: see
 
 ## What is implemented
 
-| Component | First implementation |
+| Component | Implementation |
 |---|---|
 | Data checks | Required schema, binary nondecreasing labels, consecutive hours |
 | Features | Last observed value, current missingness, never-observed flag, hours since observation, rolling mean/std/count, six-hour change |
-| Models | Constant-prior baseline, logistic regression, random forest, histogram gradient boosting |
+| Baselines | SIRS rule (two or more of four criteria), never alerting, and a constant-prior model |
+| Models | Logistic regression, random forest, histogram gradient boosting; optional hand-written NumPy versions of the three (`--include-numpy-models`) |
+| Hyperparameters | Random or grid search with patient-grouped cross-validation on the training split only (`tune`) |
 | Missing values | Forward fill within a patient; training-only median imputation for logistic regression and random forest |
 | Calibration | Sigmoid calibration on a separate source-patient cohort |
-| Alert selection | Threshold grid, fixed six-hour cooldown, validation alarm budget |
-| Evaluation | Average precision, AUROC, Brier score, normalized hourly utility, alert count, early-detection recall, inferred warning lead time |
-| Serving sketch | Batch replay from a saved model; labels are not required |
+| Alert selection | Threshold grid, fixed six-hour cooldown, validation alarm budget, one-standard-error model choice |
+| Evaluation | Accuracy, precision, recall, F1, average precision, AUROC, Brier score, normalized hourly utility, alert count, early-detection recall, inferred warning lead time, with stay-grouped bootstrap intervals; test splits scored once (`evaluate`) |
+| Explanation and bias audit | Grouped permutation importance of the selected model; results by recorded sex, age band and hospital with intervals (`model-report`) |
+| Serving | FastAPI scoring service (`serve`), Docker images, a client with a SIRS fallback, and batch replay from a saved model; labels are not required |
+| Tracking and release | MLflow runs and model registry, promotion gates against the baselines, bundle hashes checked before loading |
 | Monitoring | Two-speed drift checks (fast: schema, missingness, input and score PSI, alert rate; slow: calibration, AUROC, utility, early recall, false alerts, subgroup gaps) with thresholds frozen from hospital A only |
-| Reproducibility | Seed, versions, file hashes, patient split manifest, model and predictions |
+| Reproducibility | Seed, versions, file hashes, patient split manifest, model and predictions; pinned and hash-locked requirements |
 
 Source hospital A is split approximately 55% training, 15% calibration,
 15% validation and 15% internal testing, stratified at patient level. Hospital B
@@ -520,11 +542,26 @@ python -m sepsis_warning model-report --run artifacts/real --output reports/resu
 
 `tune` never reads calibration, validation or test data; it writes `tuning_results.csv`, `tuning_best.json` and
 `tuned_models.toml`, and logs one nested MLflow run per configuration to the `sepsis-warning-tuning` experiment.
-`model-report` fits nothing: it reads the files `train` wrote and writes `metrics_table.md/.csv` (accuracy,
-precision, recall, F1, average precision, AUROC, hourly utility, stay-grouped 95% intervals, SIRS baseline), the
-figures, `figures_manifest.json` and `FIGURES.md` (each figure's recreate command, also printed on the image) and
-`environment.json`. After the model is frozen and `evaluate` has run once, add `--evaluation <evaluate folder>` for
-the test-split table and curves. The report skeleton with the 11 required sections is `reports/final/report.md`.
+`train` also writes `feature_importance.csv`: the drop in validation average precision when all columns built from
+one measurement, or all columns of one kind, are shuffled together (about one to two minutes on the full data;
+`--importance-repeats 0` skips it).
+
+`model-report` fits nothing: it reads the files `train` wrote and writes, all with stay-grouped 95% intervals:
+
+| Output | Content |
+|---|---|
+| `metrics_table.md/.csv` | Every candidate and the SIRS baseline on validation: accuracy, precision, recall, F1, average precision, AUROC, hourly utility, false alerts per non-septic patient-day |
+| `subgroup_table.md/.csv` | Bias audit of the selected model by recorded sex and age band: counts, recall, precision, utility, alert burden and the largest gap; groups with fewer than 10 septic stays are counted but not scored |
+| `feature_importance.md/.csv`, `fig_feature_importance.png` | The measurements and kinds of feature the selected model relies on |
+| `fig_*.png`, `figures_manifest.json`, `FIGURES.md` | Precision-recall curves, model comparison, threshold trade-off, calibration, confusion matrices, loss curves, failure examples and the tuning search; each figure's recreate command is listed and printed on the image |
+| `environment.json` | Python and package versions, platform and CPU count |
+
+After the model is frozen and `evaluate` has run once, add `--evaluation <evaluate folder>`. That adds
+`test_metrics_table.md/.csv` (the frozen model beside SIRS at the standard two criteria, SIRS at its validation
+alert-budget threshold and never alerting, on the internal test and hospital B), `test_subgroup_table.md/.csv`
+(sex and age band within each test split, then hospital A against hospital B) and `fig_test_pr.png`. No threshold
+is tuned on the test splits. `fig_failure_examples.png` shows individual stays: check it before it leaves the
+private folder. The report draft with the 11 required sections is `reports/final/report.md`.
 
 ## Deploy to AWS (serverless)
 
@@ -555,25 +592,42 @@ already in S3.
 
 ## Files and artifacts
 
+The main modules (a code map with data contracts is in
+[docs/agent-repository-guide.md](docs/agent-repository-guide.md)):
+
 ```text
 src/sepsis_warning/
-  data.py             # patient schema, splits, synthetic fixture
-  features.py         # causal feature construction
-  modeling.py         # classical models and calibration
-  policy.py           # thresholds, notifications, metrics
-  cli.py              # training and replay commands
-  report.py           # offline report generation
-  report_template.html
-  scoring.py          # score whole cohorts with a saved bundle (shared scorer)
-  monitoring.py       # two-speed drift monitoring (M02)
-scripts/download_data.py
-tests/test_invariants.py
-tests/test_monitoring.py
+  data.py, prepare.py, splits.py, schema.py   # records, Parquet preparation, saved split, data checks
+  features.py                                 # causal feature construction (shared by train and serve)
+  baselines.py                                # SIRS rule and never-alert baselines
+  modeling.py, models.toml                    # candidate models, settings and calibration
+  logistic.py, random_forest.py, gradient_boosting.py, histogram_trees.py   # hand-written NumPy models
+  tuning.py, tuning_space.toml                # patient-grouped hyperparameter search
+  policy.py                                   # thresholds, notifications, utility, model selection
+  importance.py                               # grouped permutation importance
+  evaluation.py                               # one frozen evaluation of the test splits
+  model_report.py                             # results tables and figures for the report
+  scoring.py, service.py, api.py, client.py   # shared scorer, scoring service and its client
+  tracking.py, registry.py, gates.py          # MLflow runs, model registry, promotion gates
+  monitoring.py, live_drift.py                # two-speed drift monitoring (M02)
+  cli.py                                      # every command
+scripts/      # data download, latency test, AWS deployment helpers
+tests/        # unit, contract, leakage and parity tests on synthetic fixtures
+infra/        # CloudFormation templates and the local production-like stack
+docs/         # design, runbooks, monitoring plan, risk register, presentation
+reports/      # committed figures, baseline results and the report draft
 ```
 
 The experiment creates:
 
 - `validation_models.csv`: model comparison using validation patients only.
+- `validation_scores.csv`: every candidate's validation score for every hour,
+  the SIRS score and the stay's recorded age and gender. `model-report` reads
+  it. Stay-level, so it stays in the git-ignored run folder.
+- `feature_importance.csv`: grouped permutation importance of the selected
+  model on validation (aggregates only).
+- `candidate_details.json`, `calibration.json`: each candidate's settings, fit
+  time and loss curve; calibration before and after Platt scaling.
 - `metrics.json` / `selection_metrics.json`: validation results, the selection
   rule and which models were within one standard error. No test results.
 - `split_manifest.csv`: patient-to-split mapping and raw record SHA256 hashes.
@@ -586,8 +640,10 @@ The experiment creates:
 - `validation_predictions.csv`, `replay.html`: hourly scores and an interactive
   replay for validation stays only.
 
-`evaluate` creates `evaluation_metrics.json`, `held_out_predictions.csv` and a
-`replay.html` for the test splits.
+`evaluate` creates `evaluation_metrics.json`, `held_out_predictions.csv` (the
+model's scores, the SIRS score and the stay's recorded age and gender for
+every test hour; stay-level, keep private) and a `replay.html` for the test
+splits.
 
 Training on `combined.parquet` first runs the schema checks (`pip install -e
 ".[checks]"`); a dropped label or a skipped hour stops the run before fitting.
@@ -608,24 +664,29 @@ are appended. The implementation is not yet an incremental streaming service.
 
 ## Work remaining for the course project
 
-1. Run full real-data experiments, including A-to-B and a separately prespecified
-   B-to-A study. Treat dataset cohorts as the public hospital sources, not as
-   identifiable hospitals.
-2. Perform patient-grouped hyperparameter tuning within source training data.
-   Current estimator settings are starting values, not a completed search.
-3. Add patient-bootstrap confidence intervals, calibration plots, precision-recall
-   plots, and a budget-versus-early-recall curve.
-4. Audit performance by age and recorded gender, with subgroup sample sizes.
-   Compare missingness features on/off to test sensitivity to care practices.
-5. Examine false alarms, missed cases, very early alarms, and measurement outages.
-   Document censored onset assumptions and post-onset rows in the challenge task.
-6. Add feature caching for the complete dataset and a lightweight API if needed.
-   Monitoring of missingness, calibration, cohort shift and alert volume is
-   implemented (M02, `monitor-setup`/`monitor-replay`); service latency (L05) remains.
+The code for tuning, intervals, plots, the subgroup audit, the API and the
+latency test is in place. What is still open:
 
-Suggested team split: data/splits; features/models; calibration/alert policy;
-evaluation/bias audit; replay/reproducibility/report integration. Each person
-should also review another person's component.
+1. Run the real-data experiment end to end (`tune`, `train`, `model-report`),
+   freeze the model, run `evaluate` once, and commit the aggregate results to
+   `reports/results/`. Only the SIRS baseline has real-data numbers in the
+   repository today. Treat dataset cohorts as the public hospital sources, not
+   as identifiable hospitals.
+2. Fill in the report draft (`reports/final/report.md`) and export it to PDF.
+3. A separately prespecified B-to-A study has no code yet.
+4. A budget-versus-early-recall curve is not drawn; the report has the
+   threshold trade-off of the selected model instead.
+5. Explanations stop at grouped permutation importance. SHAP (M03) is not
+   started, and there is no written model card document yet (M04).
+6. Compare missingness features on and off with the shared feature builder.
+   The `missingness` command is exploratory and builds its own features.
+7. Examine very early alarms and measurement outages. Document censored onset
+   assumptions and post-onset rows in the challenge task.
+8. Full feature tables are built in memory; there is no feature cache.
+9. The AWS design is not deployed (see [Deploy to AWS](#deploy-to-aws-serverless)).
+
+Task owners and status are in [TEAM-TASKS.md](TEAM-TASKS.md); the summary of who
+did what is in [contributions.md](contributions.md).
 
 ## Sources
 

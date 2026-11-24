@@ -55,6 +55,10 @@ installing the editable package. The canonical package name is
 | `hospital_comparison.py` | Descriptive A/B cohort comparison and figures | `run_comparison` |
 | `sirs_failures.py` | Validation-only aggregation of SIRS failure patterns | `failure_tables` |
 | `splits.py` | Persist and reload Parquet split manifests and summaries | `write_splits`, `load_split_patients` |
+| `tuning.py` | Patient-grouped hyperparameter search on the training split only | `run_search`, `write_outputs` |
+| `importance.py` | Grouped permutation importance of the selected model on validation (written by `train`) | `grouped_permutation_importance`, `feature_groups` |
+| `evaluation.py` | The one frozen evaluation of the test splits; also stores the SIRS score, age and gender per test hour | `run_frozen_evaluation` |
+| `model_report.py` | Results tables (metrics, subgroups, importance) and figures from the files `train` and `evaluate` wrote; fits and tunes nothing | `build_report`, `metrics_table`, `subgroup_table` |
 
 `cli.py` is intentionally thin for most commands, but `run_experiment` is the
 authoritative training flow. Keep production behavior in shared modules rather
