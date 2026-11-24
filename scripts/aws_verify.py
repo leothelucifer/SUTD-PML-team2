@@ -416,15 +416,22 @@ def verify(session, stack: str, region: str, *, expect_model: bool = False, tag:
     check_key(result, session.client("kms"), items)
     check_repositories(result, session.client("ecr"), items, tag)
     check_table(result, session.client("dynamodb"), items)
-    check_mlflow(result, session.client("sagemaker"), items)
+    # Nothing here calls a SageMaker API unless the stack uses one: with EnableSageMaker=false (or both backends on ECS)
+    # the account may have no SageMaker access at all.
+    if outputs.get("MlflowAppArn"):
+        check_mlflow(result, session.client("sagemaker"), items)
     check_ecs(result, session.client("ecs"), items)
     check_tools(result, session.client("ecs"), session.client("rds"), items)
     check_pipeline(result, session.client("stepfunctions"), items)
     check_alerts(result, session.client("sns"), session.client("cloudwatch"), items)
     account = session.client("sts").get_caller_identity()["Account"]
     check_budget(result, session.client("budgets", region_name="us-east-1"), account, items)
-    check_quotas(result, session.client("service-quotas"))
-    check_fargate_quota(result, session.client("service-quotas"))
+    if outputs.get("TrainingBackend", "sagemaker") == "sagemaker":
+        check_quotas(result, session.client("service-quotas"))
+    else:
+        result.add("PASS", "SageMaker", "not used: training runs on ECS (EnableSageMaker can stay false)")
+    if outputs.get("TrainingBackend") == "ecs":
+        check_fargate_quota(result, session.client("service-quotas"))
     check_iam(result, session.client("iam"), outputs)
     check_function(result, session.client("lambda"), items, outputs, expect_model, signed_health(session, region) if call_api else None)
     return result

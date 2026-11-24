@@ -1,7 +1,7 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
-  Serverless MLOps: SageMaker AI MLflow App (experiment tracking and model registry,
-  no hourly server) and the role SageMaker training jobs run as. Training jobs are
+  Team policies (train, approve, deploy) and, only with EnableSageMaker, the SageMaker AI MLflow App (experiment
+  tracking and model registry, no hourly server) and the role SageMaker training jobs run as. Training jobs are
   started on demand by scripts/sagemaker_train.py; nothing here runs or bills between jobs.
 
 Parameters:
@@ -19,6 +19,13 @@ Parameters:
     Type: String
   ScoringRepositoryArn:
     Type: String
+  EnableSageMaker:
+    Type: String
+    Default: "true"
+    AllowedValues: ["false", "true"]
+    Description: >-
+      Master switch for everything SageMaker: the training role, the SageMaker statements of the team policies and the
+      MLflow App. Off while the account has no SageMaker access; training then runs on ECS.
   EnableMlflowApp:
     Type: String
     Default: "true"
@@ -31,7 +38,10 @@ Parameters:
     Description: Weekly MLflow App maintenance start in UTC (Sun 18:00 UTC is Mon 02:00 in Singapore).
 
 Conditions:
-  HasMlflowApp: !Equals [!Ref EnableMlflowApp, "true"]
+  HasSageMaker: !Equals [!Ref EnableSageMaker, "true"]
+  HasMlflowApp: !And
+    - !Condition HasSageMaker
+    - !Equals [!Ref EnableMlflowApp, "true"]
 
 Resources:
   # The MLflow App reads and writes run artifacts and registered models under mlflow/.
@@ -98,6 +108,7 @@ Resources:
   # pull the training image, log and register in the MLflow App.
   SageMakerExecutionRole:
     Type: AWS::IAM::Role
+    Condition: HasSageMaker
     Properties:
       Description: Role for sepsis-warning SageMaker AI training jobs.
       # Confused-deputy guard as documented for SageMaker training jobs.
@@ -216,21 +227,27 @@ Resources:
                 - sagemaker:CreatePresignedMlflowAppUrl
               Resource: !GetAtt MlflowApp.Arn
             - !Ref AWS::NoValue
-          - Sid: RunTrainingJobs
-            Effect: Allow
-            Action:
-              - sagemaker:CreateTrainingJob
-              - sagemaker:DescribeTrainingJob
-              - sagemaker:StopTrainingJob
-              - sagemaker:AddTags
-            Resource: !Sub "arn:${AWS::Partition}:sagemaker:${AWS::Region}:${AWS::AccountId}:training-job/sepsis-*"
-          - Sid: PassTrainingRole
-            Effect: Allow
-            Action: iam:PassRole
-            Resource: !GetAtt SageMakerExecutionRole.Arn
-            Condition:
-              StringEquals:
-                "iam:PassedToService": sagemaker.amazonaws.com
+          - !If
+            - HasSageMaker
+            - Sid: RunTrainingJobs
+              Effect: Allow
+              Action:
+                - sagemaker:CreateTrainingJob
+                - sagemaker:DescribeTrainingJob
+                - sagemaker:StopTrainingJob
+                - sagemaker:AddTags
+              Resource: !Sub "arn:${AWS::Partition}:sagemaker:${AWS::Region}:${AWS::AccountId}:training-job/sepsis-*"
+            - !Ref AWS::NoValue
+          - !If
+            - HasSageMaker
+            - Sid: PassTrainingRole
+              Effect: Allow
+              Action: iam:PassRole
+              Resource: !GetAtt SageMakerExecutionRole.Arn
+              Condition:
+                StringEquals:
+                  "iam:PassedToService": sagemaker.amazonaws.com
+            - !Ref AWS::NoValue
           - Sid: UploadTrainingData
             Effect: Allow
             Action:
@@ -372,6 +389,7 @@ Outputs:
     Description: Tracking URI for MLflow (with the sagemaker-mlflow plugin). Only exists when the flag is on.
     Value: !GetAtt MlflowApp.Arn
   SageMakerExecutionRoleArn:
+    Condition: HasSageMaker
     Value: !GetAtt SageMakerExecutionRole.Arn
   TrainerPolicyArn:
     Value: !Ref TrainerPolicy

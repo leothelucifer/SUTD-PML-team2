@@ -217,22 +217,37 @@ cmd_fetch_data() {
 }
 
 cmd_train() {
+  [ -n "$(output MlflowAppArn)" ] || fail "this stack has no SageMaker MLflow App (EnableSageMaker=false or MlflowBackend=ecs); train with the pipeline workflow (ECS), or enable SageMaker first"
+  [ "$(output TrainingBackend)" = sagemaker ] || fail "training runs on ECS here: use the pipeline workflow"
   "$PYTHON" "$ROOT/scripts/sagemaker_train.py" --stack "$STACK" --region "$AWS_REGION" \
     --image-tag "training-$TAG" --wait "$@"
 }
 
 cmd_mlflow_ui() {
+  [ -n "$(output MlflowAppArn)" ] || fail "this stack has no SageMaker MLflow App (EnableSageMaker=false or MlflowBackend=ecs); open the ECS MLflow with: power start --allow-cidr <your address>/32"
   aws sagemaker create-presigned-mlflow-app-url --arn "$(output MlflowAppArn)" \
     --query AuthorizedUrl --output text
 }
 
 cmd_promote() {
+  [ -n "$(output MlflowAppArn)" ] || fail "this stack has no SageMaker MLflow App (EnableSageMaker=false or MlflowBackend=ecs); promote with the promote workflow, or: promote-task"
   [ $# -eq 2 ] || fail "usage: $0 promote VERSION REVIEWER"
   local real=(--require-real-data); [ "${ALLOW_SYNTHETIC:-}" = 1 ] && real=()
   "$PYTHON" -m sepsis_warning promote --version "$1" --reviewed-by "$2" --mlflow-uri "$(output MlflowAppArn)" "${real[@]}"
 }
 
+# publish: with the SageMaker MLflow App, copy the promoted version to S3 from here. With MLflow on ECS the registry is
+# private and the pipeline's last step already published the approved model, so read that from S3 instead.
 cmd_publish() {
+  if [ -z "$(output MlflowAppArn)" ]; then
+    local allow=(); [ "${ALLOW_SYNTHETIC:-}" = 1 ] && allow=(--allow-synthetic)
+    "$PYTHON" "$ROOT/scripts/aws_published_model.py" --stack "$STACK" --region "$AWS_REGION" \
+      ${MODEL_VERSION:+--version "$MODEL_VERSION"} "${allow[@]}" | tee "$STATE/publish.log"
+    [ "${PIPESTATUS[0]}" = 0 ] || fail "no approved published model yet"
+    grep -o 'ModelS3Uri=[^ ]*' "$STATE/publish.log" | cut -d= -f2 > "$STATE/model_s3_uri"
+    grep -o 'ModelSha256=[0-9a-f]*' "$STATE/publish.log" | cut -d= -f2 > "$STATE/model_sha256"
+    return 0
+  fi
   "$PYTHON" -m sepsis_warning publish --mlflow-uri "$(output MlflowAppArn)" \
     --bucket "$(output ArtifactBucketName)" --model-uri "${MODEL_URI:-models:/sepsis-warning@production}" \
     | tee "$STATE/publish.log"

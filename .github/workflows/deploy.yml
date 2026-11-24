@@ -35,8 +35,11 @@ on:
         options: [stack and images only, full deploy]
         default: stack and images only
       model_uri:
-        description: Registered model to deploy (full deploy only; must already be promoted in that account's MLflow App)
+        description: SageMaker MLflow App only. Registered model to deploy (full deploy; must already be promoted there). Ignored when MLflow runs on ECS
         default: models:/sepsis-warning@production
+      model_version:
+        description: MLflow on ECS only. Published model version to deploy (full deploy). Empty = the newest one the pipeline published and had approved
+        default: ""
 
 permissions:
   contents: read
@@ -150,6 +153,7 @@ jobs:
           AWS_REGION: ${{ steps.target.outputs.region }}
           BUDGET_EMAIL: ${{ vars.BUDGET_EMAIL }}
           ALERT_EMAIL: ${{ vars.ALERT_EMAIL }}
+          MODEL_VERSION: ${{ inputs.model_version }}
           MODEL_URI: ${{ inputs.model_uri }}
           TAG: ${{ github.sha }}
         run: |
