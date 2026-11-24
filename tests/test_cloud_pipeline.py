@@ -129,6 +129,7 @@ class FetchDataTests(unittest.TestCase):
                 "echo \"$@\" >> \"$CALLS\"\n"
                 "if [ \"$1\" = cloudformation ]; then echo my-artifact-bucket; exit 0; fi\n"
                 "if [ \"$1\" = s3api ]; then [ -n \"$MARKER\" ] && exit 0 || exit 1; fi\n"
+                "if [ \"$1\" = s3 ] && [ \"$2\" = cp ]; then cat > /dev/null; exit 0; fi\n"   # like the real CLI, read the piped marker
                 "if [ \"$1\" = s3 ] && [ \"$2\" = ls ]; then\n"
                 "  case \"$3\" in *training_setA/) echo 'Total Objects: 20336';; *) echo 'Total Objects: ' $COUNT_B;; esac; exit 0; fi\n"
                 "exit 0\n")
