@@ -6,68 +6,54 @@
 <p style="font-size:24px;line-height:1.3;color:#5b6870">hourly, from the hospital</p>
 </div>
 <div style="flex:1;display:flex;flex-direction:column;gap:6px;background:#ffffff;padding:14px;border:1px solid #dcdfdc;border-radius:12px">
-<img src="/_blob/f2f53795603d51df73ecd7c796fdb9ff" alt="AWS Site-to-Site VPN" style="width:52px;height:52px;object-fit:contain">
-<p style="font-size:26px;font-weight:600">VPN</p>
-<p style="font-size:24px;line-height:1.3;color:#5b6870">site-to-site</p>
-</div>
-<x-shape kind="arrow-right" style="width:32px;height:20px;background:#2c6285;align-self:center"></x-shape>
-<div style="flex:1;display:flex;flex-direction:column;gap:6px;background:#ffffff;padding:14px;border:1px solid #dcdfdc;border-radius:12px">
-<img src="/_blob/8287e4d9d7ec77240e954fb96cf6a129" alt="Amazon API Gateway" style="width:52px;height:52px;object-fit:contain">
-<p style="font-size:26px;font-weight:600">API Gateway</p>
-<p style="font-size:24px;line-height:1.3;color:#5b6870">private, OAuth2</p>
-</div>
-<x-shape kind="arrow-right" style="width:32px;height:20px;background:#2c6285;align-self:center"></x-shape>
-<div style="flex:1;display:flex;flex-direction:column;gap:6px;background:#ffffff;padding:14px;border:1px solid #dcdfdc;border-radius:12px">
-<img src="/_blob/f575024b91cc2b37fd8b31721a70cd64" alt="Elastic Load Balancing" style="width:52px;height:52px;object-fit:contain">
-<p style="font-size:26px;font-weight:600">Load balancer</p>
-<p style="font-size:24px;line-height:1.3;color:#5b6870">internal</p>
+<p style="font-size:26px;font-weight:600">Hospital system</p>
+<p style="font-size:24px;line-height:1.3;color:#5b6870">IAM-signed HTTPS</p>
 </div>
 <x-shape kind="arrow-right" style="width:32px;height:20px;background:#2c6285;align-self:center"></x-shape>
 <div style="flex:1;display:flex;flex-direction:column;gap:6px;background:#0f2a33;color:#f5f3ee;padding:14px;border-radius:12px">
-<img src="/_blob/7cc1b007450e1eff9a7c4d29932add5b" alt="AWS Fargate" style="width:52px;height:52px;object-fit:contain">
-<p style="font-size:26px;font-weight:600">ECS Fargate</p>
-<p style="font-size:24px;line-height:1.3;color:#c9d4d8">FastAPI scoring</p>
+<img src="/_blob/e17f4bbc8a1fc7ce94851f57f801f621" alt="AWS Lambda" style="width:52px;height:52px;object-fit:contain">
+<p style="font-size:26px;font-weight:600">Lambda</p>
+<p style="font-size:24px;line-height:1.3;color:#c9d4d8">function URL, scoring image</p>
+</div>
+<x-shape kind="arrow-right" style="width:32px;height:20px;background:#2c6285;align-self:center"></x-shape>
+<div style="flex:1;display:flex;flex-direction:column;gap:6px;background:#ffffff;padding:14px;border:1px solid #dcdfdc;border-radius:12px">
+<img src="/_blob/9bb8596c927521a8603a5357288ad09a" alt="Amazon S3" style="width:52px;height:52px;object-fit:contain">
+<p style="font-size:26px;font-weight:600">S3</p>
+<p style="font-size:24px;line-height:1.3;color:#5b6870">pinned model bundle</p>
 </div>
 <x-shape kind="arrow-right" style="width:32px;height:20px;background:#2c6285;align-self:center"></x-shape>
 <div style="flex:1;display:flex;flex-direction:column;gap:6px;background:#ffffff;padding:14px;border:1px solid #dcdfdc;border-radius:12px">
 <img src="/_blob/ee726f198e4fcc98450b214dd50cf527" alt="Amazon DynamoDB" style="width:52px;height:52px;object-fit:contain">
 <p style="font-size:26px;font-weight:600">DynamoDB</p>
-<p style="font-size:24px;line-height:1.3;color:#5b6870">state per stay</p>
+<p style="font-size:24px;line-height:1.3;color:#5b6870">alert ledger</p>
 </div>
 </div>
 <div style="display:flex;gap:16px;align-items:stretch">
 <div style="width:180px;display:flex;flex-direction:column;justify-content:center;gap:4px">
-<p style="font-size:28px;font-weight:600">Build</p>
-<p style="font-size:24px;line-height:1.3;color:#5b6870">CI and training</p>
+<p style="font-size:28px;font-weight:600">Build and train</p>
+<p style="font-size:24px;line-height:1.3;color:#5b6870">one approval</p>
 </div>
 <div style="flex:1;display:flex;flex-direction:column;gap:6px;background:#ffffff;padding:14px;border:1px solid #dcdfdc;border-radius:12px">
-<x-icon name="Code" style="color:#16232a;width:52px;height:52px"></x-icon>
 <p style="font-size:26px;font-weight:600">GitHub Actions</p>
-<p style="font-size:24px;line-height:1.3;color:#5b6870">tests, build</p>
+<p style="font-size:24px;line-height:1.3;color:#5b6870">deploy, pipeline (OIDC)</p>
 </div>
 <x-shape kind="arrow-right" style="width:32px;height:20px;background:#2c6285;align-self:center"></x-shape>
 <div style="flex:1;display:flex;flex-direction:column;gap:6px;background:#ffffff;padding:14px;border:1px solid #dcdfdc;border-radius:12px">
-<img src="/_blob/f8ad0c27b33d4cb3971c8a02381a62f9" alt="Amazon Elastic Container Registry" style="width:52px;height:52px;object-fit:contain">
+<img src="/_blob/f8ad0c27b33d4cb3971c8a02381a62f9" alt="Amazon ECR" style="width:52px;height:52px;object-fit:contain">
 <p style="font-size:26px;font-weight:600">ECR</p>
-<p style="font-size:24px;line-height:1.3;color:#5b6870">scanned image</p>
+<p style="font-size:24px;line-height:1.3;color:#5b6870">images by commit</p>
 </div>
-<p style="font-size:32px;font-weight:600;color:#2c6285;align-self:center;width:32px;text-align:center">+</p>
-<div style="flex:1;display:flex;flex-direction:column;gap:6px;background:#ffffff;padding:14px;border:1px solid #dcdfdc;border-radius:12px">
-<img src="/_blob/9bb8596c927521a8603a5357288ad09a" alt="Amazon S3" style="width:52px;height:52px;object-fit:contain">
-<p style="font-size:26px;font-weight:600">S3</p>
-<p style="font-size:24px;line-height:1.3;color:#5b6870">data, DVC</p>
+<x-shape kind="arrow-right" style="width:32px;height:20px;background:#2c6285;align-self:center"></x-shape>
+<div style="flex:1;display:flex;flex-direction:column;gap:6px;background:#0f2a33;color:#f5f3ee;padding:14px;border-radius:12px">
+<img src="/_blob/22c6fcd2692949e22d5e5ed70605d4ff" alt="AWS Step Functions" style="width:52px;height:52px;object-fit:contain">
+<p style="font-size:26px;font-weight:600">Step Functions</p>
+<p style="font-size:24px;line-height:1.3;color:#c9d4d8">prepare, tune, train, approve</p>
 </div>
 <x-shape kind="arrow-right" style="width:32px;height:20px;background:#2c6285;align-self:center"></x-shape>
 <div style="flex:1;display:flex;flex-direction:column;gap:6px;background:#ffffff;padding:14px;border:1px solid #dcdfdc;border-radius:12px">
 <img src="/_blob/5c2e4297d1301dd949734f617021f8e3" alt="Amazon SageMaker AI" style="width:52px;height:52px;object-fit:contain">
 <p style="font-size:26px;font-weight:600">SageMaker</p>
-<p style="font-size:24px;line-height:1.3;color:#5b6870">training job</p>
-</div>
-<x-shape kind="arrow-right" style="width:32px;height:20px;background:#2c6285;align-self:center"></x-shape>
-<div style="flex:1;display:flex;flex-direction:column;gap:6px;background:#ffffff;padding:14px;border:1px solid #dcdfdc;border-radius:12px">
-<img src="/_blob/5c2e4297d1301dd949734f617021f8e3" alt="Amazon SageMaker AI" style="width:52px;height:52px;object-fit:contain">
-<p style="font-size:26px;font-weight:600">SageMaker</p>
-<p style="font-size:24px;line-height:1.3;color:#5b6870">MLflow registry</p>
+<p style="font-size:24px;line-height:1.3;color:#5b6870">spot jobs and MLflow App</p>
 </div>
 </div>
 <div style="display:flex;gap:16px;align-items:stretch">
@@ -78,25 +64,25 @@
 <div style="flex:1;display:flex;flex-direction:column;gap:6px;background:#ffffff;padding:14px;border:1px solid #dcdfdc;border-radius:12px">
 <img src="/_blob/45f30bf32054e64e00f7c4bfa7e18fd0" alt="Amazon EventBridge" style="width:52px;height:52px;object-fit:contain">
 <p style="font-size:26px;font-weight:600">EventBridge</p>
-<p style="font-size:24px;line-height:1.3;color:#5b6870">hourly, weekly</p>
+<p style="font-size:24px;line-height:1.3;color:#5b6870">scheduled checks</p>
 </div>
 <x-shape kind="arrow-right" style="width:32px;height:20px;background:#2c6285;align-self:center"></x-shape>
 <div style="flex:1;display:flex;flex-direction:column;gap:6px;background:#ffffff;padding:14px;border:1px solid #dcdfdc;border-radius:12px">
-<img src="/_blob/7cc1b007450e1eff9a7c4d29932add5b" alt="AWS Fargate" style="width:52px;height:52px;object-fit:contain">
-<p style="font-size:26px;font-weight:600">Monitor jobs</p>
-<p style="font-size:24px;line-height:1.3;color:#5b6870">PSI drift, labels</p>
+<img src="/_blob/e17f4bbc8a1fc7ce94851f57f801f621" alt="AWS Lambda" style="width:52px;height:52px;object-fit:contain">
+<p style="font-size:26px;font-weight:600">Drift job</p>
+<p style="font-size:24px;line-height:1.3;color:#5b6870">PSI, alert rate</p>
+</div>
+<x-shape kind="arrow-right" style="width:32px;height:20px;background:#2c6285;align-self:center"></x-shape>
+<div style="flex:1;display:flex;flex-direction:column;gap:6px;background:#ffffff;padding:14px;border:1px solid #dcdfdc;border-radius:12px">
+<img src="/_blob/83bc000f96e51b6dc5193c3ef15f9638" alt="Amazon CloudWatch" style="width:52px;height:52px;object-fit:contain">
+<p style="font-size:26px;font-weight:600">CloudWatch</p>
+<p style="font-size:24px;line-height:1.3;color:#5b6870">logs, alarms</p>
 </div>
 <x-shape kind="arrow-right" style="width:32px;height:20px;background:#2c6285;align-self:center"></x-shape>
 <div style="flex:1;display:flex;flex-direction:column;gap:6px;background:#ffffff;padding:14px;border:1px solid #dcdfdc;border-radius:12px">
 <img src="/_blob/553ba0bb8d0e715a3cd9953863bc10e6" alt="Amazon SNS" style="width:52px;height:52px;object-fit:contain">
 <p style="font-size:26px;font-weight:600">SNS</p>
 <p style="font-size:24px;line-height:1.3;color:#5b6870">email the owner</p>
-</div>
-<x-shape kind="arrow-left" style="width:32px;height:20px;background:#2c6285;align-self:center"></x-shape>
-<div style="flex:1;display:flex;flex-direction:column;gap:6px;background:#ffffff;padding:14px;border:1px solid #dcdfdc;border-radius:12px">
-<img src="/_blob/83bc000f96e51b6dc5193c3ef15f9638" alt="Amazon CloudWatch" style="width:52px;height:52px;object-fit:contain">
-<p style="font-size:26px;font-weight:600">CloudWatch</p>
-<p style="font-size:24px;line-height:1.3;color:#5b6870">logs, alarms</p>
 </div>
 </div>
 <div style="display:flex;gap:28px;align-items:center;background:#0f2a33;color:#f5f3ee;padding:16px 24px;border-radius:12px">
@@ -106,6 +92,6 @@
 <div style="display:flex;gap:10px;align-items:center"><img src="/_blob/816ca1b72680601438d3e97858d418ad" alt="AWS Secrets Manager" style="width:40px;height:40px;object-fit:contain"><p style="font-size:24px">Secrets Manager</p></div>
 <div style="display:flex;gap:10px;align-items:center"><img src="/_blob/06877701e1c99d72c3edcf603aa4c748" alt="AWS CloudTrail" style="width:40px;height:40px;object-fit:contain"><p style="font-size:24px">CloudTrail audit</p></div>
 </div>
-<p style="position:absolute;left:128px;bottom:64px;width:1664px;font-size:24px;color:#5b6870">Target design in ap-southeast-1 (Singapore); the project runs locally in Docker · icons: AWS Architecture Icons · 18</p>
-<aside>Read the top row left to right: the hospital's integration engine sends the last 7 hourly rows over the VPN to a private API Gateway, which checks the OAuth2 token and forwards to the scoring service on Fargate. The service reads and writes each stay's carry-forward state in DynamoDB. The same Docker image from ECR runs SageMaker training and the API. Monitoring alarms email the owner; retraining needs team approval. Before any real use, check data-residency and health-data rules in the hospital's country.</aside>
+<p style="position:absolute;left:128px;bottom:64px;width:1664px;font-size:24px;color:#5b6870">Serverless design for ap-southeast-1 or ap-southeast-2, one CloudFormation stack per environment · icons: AWS Architecture Icons · 18</p>
+<aside>Top row: the hospital system sends a stay's history, signed with IAM, to the Lambda function URL. The scoring image loads the pinned model bundle from S3 and keeps only the alert ledger in DynamoDB. Middle row: GitHub Actions builds images tagged by commit into ECR; Step Functions runs prepare, tune and train on SageMaker spot, emails for approval, then runs the one frozen evaluation and a write-once publish. There are three image targets: scoring, Lambda and training. Alarms email the owner and retraining needs team approval. Fargate is an optional alternative. Before any real use, check data-residency and health-data rules in the hospital's country.</aside>
 </section>

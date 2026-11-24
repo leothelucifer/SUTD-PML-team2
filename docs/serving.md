@@ -59,6 +59,19 @@ Two optional settings help on restricted networks:
 The image is about 1 GB, mostly NumPy, pandas, SciPy, scikit-learn, PyArrow
 and Matplotlib.
 
+## Alert ledger semantics
+
+- `POST /predict` checks **every** stay in the request before it records anything. If one stay is
+  invalid (422), no alert from the other stays is written, so a rejected request never silences a
+  later real alert.
+- `/predict` returns only the latest hour of each stay, so it records at most that hour's alert.
+  Earlier threshold crossings in the history it was sent are not recorded as delivered and do not
+  start a cooldown; `POST /score`, which returns an alert flag for every hour, records all of them.
+- Request bodies are capped at 5,000,000 bytes. With a `Content-Length` header the limit is checked
+  before parsing; for chunked uploads the bytes are counted as they arrive.
+- The `Path` metric dimension is the matched route (`/score`, `/predict`, `/health`, `/model`);
+  every unmatched URL shares the label `unmatched`.
+
 ## Latency (L05)
 
 ```bash

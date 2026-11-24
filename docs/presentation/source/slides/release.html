@@ -9,34 +9,34 @@
 <x-shape kind="arrow-right" style="width:44px;height:28px;background:#2c6285"></x-shape>
 <div style="flex:1;display:flex;flex-direction:column;gap:10px;background:#ffffff;padding:28px;border:1px solid #dcdfdc;border-radius:16px">
 <h3 style="font-size:30px;font-weight:600">Training run</h3>
-<p style="font-size:24px;line-height:1.4">Data and split hashes in MLflow</p>
+<p style="font-size:24px;line-height:1.4">SageMaker spot job; hashes in MLflow</p>
+</div>
+<x-shape kind="arrow-right" style="width:44px;height:28px;background:#2c6285"></x-shape>
+<div style="flex:1;display:flex;flex-direction:column;gap:10px;background:#ffffff;padding:28px;border:1px solid #dcdfdc;border-radius:16px">
+<h3 style="font-size:30px;font-weight:600">Gates</h3>
+<p style="font-size:24px;line-height:1.4">Data checks and promotion gates</p>
 </div>
 <x-shape kind="arrow-right" style="width:44px;height:28px;background:#2c6285"></x-shape>
 <div style="flex:1;display:flex;flex-direction:column;gap:10px;background:#ffffff;padding:28px;border:1px solid #dcdfdc;border-radius:16px">
 <h3 style="font-size:30px;font-weight:600">Candidate</h3>
-<p style="font-size:24px;line-height:1.4">Registered and frozen</p>
-</div>
-<x-shape kind="arrow-right" style="width:44px;height:28px;background:#2c6285"></x-shape>
-<div style="flex:1;display:flex;flex-direction:column;gap:10px;background:#ffffff;padding:28px;border:1px solid #dcdfdc;border-radius:16px">
-<h3 style="font-size:30px;font-weight:600">Evaluate</h3>
-<p style="font-size:24px;line-height:1.4">Internal test and B replay</p>
+<p style="font-size:24px;line-height:1.4">Registered; nothing tested yet</p>
 </div>
 </div>
 <p style="font-size:26px;font-weight:600;color:#5b6870;letter-spacing:1px">RELEASE AND RUN</p>
 <div style="display:flex;gap:16px;align-items:center">
 <div style="flex:1;display:flex;flex-direction:column;gap:10px;background:#0f2a33;color:#f5f3ee;padding:28px;border-radius:16px">
 <h3 style="font-size:30px;font-weight:600">Approve</h3>
-<p style="font-size:24px;line-height:1.4">Team review with the model card</p>
+<p style="font-size:24px;line-height:1.4">Promote, then a different person approves</p>
 </div>
 <x-shape kind="arrow-right" style="width:44px;height:28px;background:#2c6285"></x-shape>
 <div style="flex:1;display:flex;flex-direction:column;gap:10px;background:#ffffff;padding:28px;border:1px solid #dcdfdc;border-radius:16px">
-<h3 style="font-size:30px;font-weight:600">Staging</h3>
-<p style="font-size:24px;line-height:1.4">Smoke, parity and latency tests</p>
+<h3 style="font-size:30px;font-weight:600">Frozen evaluation</h3>
+<p style="font-size:24px;line-height:1.4">Internal test, scored once</p>
 </div>
 <x-shape kind="arrow-right" style="width:44px;height:28px;background:#2c6285"></x-shape>
 <div style="flex:1;display:flex;flex-direction:column;gap:10px;background:#0f2a33;color:#f5f3ee;padding:28px;border-radius:16px">
-<h3 style="font-size:30px;font-weight:600">Production</h3>
-<p style="font-size:24px;line-height:1.4">Registry alias moved; rollback ready</p>
+<h3 style="font-size:30px;font-weight:600">Publish and deploy</h3>
+<p style="font-size:24px;line-height:1.4">Write-once S3 copy; deploy workflow</p>
 </div>
 <x-shape kind="arrow-right" style="width:44px;height:28px;background:#2c6285"></x-shape>
 <div style="flex:1;display:flex;flex-direction:column;gap:10px;background:#ffffff;padding:28px;border:1px solid #dcdfdc;border-radius:16px">
@@ -48,6 +48,6 @@
 <p style="flex:1;font-size:26px;line-height:1.45;background:#eaf1f6;padding:24px;border-radius:12px"><b>Two versions:</b> the image is tagged by git commit, the model by MLflow version. Each rolls back on its own.</p>
 <p style="flex:1;font-size:26px;line-height:1.45;background:#fbe9df;padding:24px;border-radius:12px"><b>Silent mode:</b> replaying hospital B hour by hour through the API is our simulated pilot, with nobody acting on alerts.</p>
 </div>
-<p style="position:absolute;left:128px;bottom:64px;width:1664px;font-size:24px;color:#5b6870">Dark boxes are the two human gates · 17</p>
-<aside>Nothing retrains or redeploys automatically. Parity means the API gives exactly the same scores as the batch replay for the same stay. Staging uses synthetic stays only.</aside>
+<p style="position:absolute;left:128px;bottom:64px;width:1664px;font-size:24px;color:#5b6870">Dark boxes are the human gates (approve, deploy) · 17</p>
+<aside>Nothing retrains or redeploys automatically. The test split is scored once, after approval, and only a model with a recorded evaluation can be published. Parity means the API gives exactly the same scores as the batch replay for the same stay.</aside>
 </section>

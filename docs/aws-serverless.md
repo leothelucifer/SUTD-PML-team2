@@ -162,8 +162,10 @@ hand when the project ends.
 - **Data.** The artifact bucket is private, versioned, KMS-encrypted and denies
   non-TLS access. Training outputs (`model.tar.gz`) contain the full run,
   including patient-level validation predictions (no test-split results), so they stay in this bucket
-  and expire after `TrainingOutputRetentionDays`. Nothing patient-level is
-  logged to MLflow, and `/model` serves validation results only.
+  and expire after `TrainingOutputRetentionDays`. The approval step's frozen evaluation writes its
+  patient-level test predictions and replay page to a scratch folder that is deleted when the step
+  ends: only `evaluation_metrics.json` and `publish.json` go into that job's `model.tar.gz`. Nothing
+  patient-level is logged to MLflow, and `/model` serves validation results only.
 - **Least privilege.** The training role reads `data/`, writes
   `training-output/` and calls only this MLflow App. The Lambda role reads only
   `models/`. The MLflow App's role reaches only `mlflow/`.

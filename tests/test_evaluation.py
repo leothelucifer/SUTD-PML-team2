@@ -129,6 +129,25 @@ class ManifestTests(TrainedRun):
         with self.assertRaisesRegex(ManifestMismatch, "format"):
             check_runtime(dict(manifest, format=99))
 
+    def test_numpy_models_are_hashed_and_checked_against_numpy_not_scikit_learn(self):
+        from sepsis_warning.manifest import model_code_sha256
+
+        manifest = json.loads((self.run_dir / MANIFEST_FILE).read_text())
+        self.assertEqual(manifest["model_family"], "scikit-learn")       # the default candidate set
+        self.assertIsNone(manifest["model_code_sha256"])
+        numpy_manifest = dict(manifest, model_family="numpy", model_code_sha256=model_code_sha256())
+        packages = dict(numpy_manifest["packages"])
+        # A scikit-learn release change does not matter to a hand-written model...
+        sk_major, sk_minor = packages["scikit-learn"].split(".")[:2]
+        packages["scikit-learn"] = f"{sk_major}.{int(sk_minor) + 1}.0"
+        check_runtime(dict(numpy_manifest, packages=packages))
+        # ...but another NumPy minor does.
+        np_major, np_minor = packages["numpy"].split(".")[:2]
+        packages["numpy"] = f"{np_major}.{int(np_minor) + 1}.0"
+        with self.assertRaisesRegex(ManifestMismatch, "numpy"):
+            check_runtime(dict(numpy_manifest, packages=packages))
+        self.assertEqual(len(model_code_sha256()), 64)
+
     def test_health_returns_the_manifest(self):
         health = ScoringService.from_path(self.run_dir / "model.joblib").health()
         self.assertEqual(health["manifest"]["format"], 1)

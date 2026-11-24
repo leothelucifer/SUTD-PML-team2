@@ -20,7 +20,10 @@ MANIFEST_FORMAT = 1
 MANIFEST_FILE = "manifest.json"
 # The code that defines what the model's inputs and alerts mean.
 CONTRACT_MODULES = ("data.py", "features.py", "policy.py")
-STRICT_PACKAGES = ("scikit-learn",)
+# The hand-written models are pickled objects of these classes: their scores depend on this source.
+NUMPY_MODEL_MODULES = ("logistic.py", "random_forest.py", "gradient_boosting.py", "histogram_trees.py")
+# The package a pickled model depends on most: scikit-learn for its estimators, NumPy for ours.
+STRICT_PACKAGES = {"scikit-learn": ("scikit-learn",), "numpy": ("numpy",)}
 PACKAGES = ("numpy", "pandas", "scipy", "scikit-learn", "joblib")
 
 
@@ -37,12 +40,21 @@ def code_sha256() -> str:
     return digest.hexdigest()
 
 
+def model_code_sha256() -> str:
+    """Hash of the hand-written model source (logistic, forest, boosting, histogram trees)."""
+    digest = hashlib.sha256()
+    for name in NUMPY_MODEL_MODULES:
+        digest.update(Path(__file__).with_name(name).read_bytes().replace(b"\r\n", b"\n"))
+    return digest.hexdigest()
+
+
 def package_versions() -> dict:
     return {name: importlib.metadata.version(name) for name in PACKAGES}
 
 
 def build_manifest(*, model_name, threshold, cooldown, window, synthetic, feature_columns,
-                   metadata: dict, validation: dict, models_config_sha256: str | None) -> dict:
+                   metadata: dict, validation: dict, models_config_sha256: str | None,
+                   numpy_model: bool = False) -> dict:
     """``metadata`` is ``run_metadata`` (seed, split, data and git fingerprints)."""
     lineage = {key: metadata.get(key) for key in (
         "seed", "data_mode", "alarm_budget", "git_commit", "split_seed", "splits_csv_sha256",
@@ -57,6 +69,10 @@ def build_manifest(*, model_name, threshold, cooldown, window, synthetic, featur
         "feature_count": len(feature_columns),
         "feature_columns_sha256": hashlib.sha256("\n".join(feature_columns).encode()).hexdigest(),
         "contract_code_sha256": code_sha256(),
+        # "numpy" bundles hold our own model classes: they record the model source and are checked against
+        # the NumPy release, not scikit-learn's.
+        "model_family": "numpy" if numpy_model else "scikit-learn",
+        "model_code_sha256": model_code_sha256() if numpy_model else None,
         "models_config_sha256": models_config_sha256,
         "python": platform.python_version(),
         "packages": package_versions(),
@@ -89,12 +105,14 @@ def _minor(version: str) -> str:
 
 
 def check_runtime(manifest: dict, runtime: dict | None = None) -> None:
-    """Refuse a bundle fitted under another scikit-learn major.minor, or an unknown format."""
+    """Refuse a bundle fitted under another major.minor of the package its model depends on
+    (scikit-learn for scikit-learn models, NumPy for the hand-written ones), or an unknown format."""
     if manifest.get("format") != MANIFEST_FORMAT:
         raise ManifestMismatch(f"model manifest format {manifest.get('format')!r} is not supported "
                                f"(this code reads format {MANIFEST_FORMAT})")
     runtime = runtime or package_versions()
-    for name in STRICT_PACKAGES:
+    # Bundles made before model_family existed were all treated as scikit-learn.
+    for name in STRICT_PACKAGES[manifest.get("model_family") or "scikit-learn"]:
         built = (manifest.get("packages") or {}).get(name)
         if built and _minor(built) != _minor(runtime[name]):
             raise ManifestMismatch(

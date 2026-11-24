@@ -110,6 +110,27 @@ class LiveDriftTests(unittest.TestCase):
         self.assertEqual(live_checks(frame.head(0), self.reference)["status"], "insufficient_data")
         self.assertEqual(emf_record(live_checks(frame.head(50), self.reference), "t")["DriftLevel"], -1)
 
+    def test_a_reference_for_another_model_reaches_the_alarm_line(self):
+        frame = read_prediction_log([self.normal])
+        other = dict(self.reference, model_sha256="f" * 64)
+        level = emf_record(live_checks(frame, other), "t")["DriftLevel"]
+        self.assertGreaterEqual(level, 2, "the CloudWatch alarm fires at DriftLevel >= 2")
+
+    def test_limits_come_from_the_frozen_reference(self):
+        frame = read_prediction_log([self.normal])
+        result = live_checks(frame, self.reference)
+        self.assertEqual(result["threshold_source"]["score_psi"], "reference")
+        self.assertEqual(result["checks"]["score_psi"]["thresholds"]["warn"],
+                         self.reference["thresholds"]["score_psi"]["warn"])
+        # A reference with an impossibly tight score limit must flag even an unchanged stream.
+        tight = json.loads(json.dumps(self.reference))
+        tight["thresholds"]["score_psi"]["warn"] = -1.0
+        tight["thresholds"]["score_psi"]["alert"] = -0.5
+        self.assertEqual(live_checks(frame, tight)["checks"]["score_psi"]["status"], "alarm")
+        # An older reference without limits falls back to the built-in defaults.
+        old = {key: value for key, value in self.reference.items() if key != "thresholds"}
+        self.assertEqual(live_checks(frame, old)["threshold_source"]["score_psi"], "defaults")
+
     def test_cloudwatch_firehose_batches_are_read(self):
         lines = self.normal.read_text().splitlines()[:5]
         batch = json.dumps({"messageType": "DATA_MESSAGE", "logEvents": [{"message": line} for line in lines]

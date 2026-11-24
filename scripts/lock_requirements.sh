@@ -14,7 +14,7 @@
 # MLFLOW_VERSION pins the training image to the SageMaker MLflow App's version.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-MLFLOW_VERSION="${MLFLOW_VERSION:-3.16.1}"
+MLFLOW_VERSION="${MLFLOW_VERSION:-3.17.2}"
 work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
 grep -v '^python-dateutil\|^#' requirements.txt > "$work/base.txt"
 
@@ -24,6 +24,8 @@ lock() {  # lock NAME "extra1 extra2 ..." [extra constraint line]
   for extra in $2; do extras+=(--extra "$extra"); done
   uv pip compile pyproject.toml "${extras[@]}" -c "$work/$name.txt" --generate-hashes \
     --python-version 3.12 --python-platform x86_64-manylinux_2_28 --no-header -q -o "requirements/$name.txt"
+  # The constraint file lives in a temporary folder; keep that path out of the committed lock file.
+  sed -i -E "s#-c [^ ]*/([A-Za-z0-9_.-]+\\.txt)#-c constraints/\\1#" "requirements/$name.txt"
   echo "requirements/$name.txt: $(grep -c '==' "requirements/$name.txt") packages"
 }
 

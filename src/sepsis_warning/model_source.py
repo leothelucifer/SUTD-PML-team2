@@ -90,6 +90,29 @@ def _put_once(s3, bucket: str, key: str, path: Path, metadata: dict | None = Non
         raise
 
 
+def ensure_promoted(model_uri: str, tracking_uri: str, version: str, tags: dict, alias: str = "production") -> None:
+    """A real-data version is published only if it went through ``promote``: the gates passed, a named
+    reviewer approved it, and ``@production`` still points at it (a later promote of another version
+    makes this one stale)."""
+    from .registry import _client, parse_model_uri
+
+    missing = [key for key in (f"{alias}_reviewed_by", f"{alias}_approved_by", f"{alias}_promoted_at")
+               if not tags.get(key)]
+    if missing:
+        raise PublishRefused(
+            f"version {version} was not promoted to @{alias} (missing {', '.join(missing)}); "
+            f"run `promote --version {version}` with a named reviewer first"
+        )
+    name = parse_model_uri(model_uri)[0]
+    try:
+        holder = str(_client(tracking_uri).get_model_version_by_alias(name, alias).version)
+    except Exception as error:
+        raise PublishRefused(f"{name}@{alias} does not exist, so version {version} cannot be published") from error
+    if holder != str(version):
+        raise PublishRefused(f"{name}@{alias} now points at version {holder}, not {version}; "
+                             "publish the promoted version, or promote this one again after review")
+
+
 def publish_model(model_uri: str, tracking_uri: str, bucket: str, prefix: str = "models", client=None) -> dict:
     """Copy a registered version to S3 for deployment. Returns what to pin.
 
@@ -110,6 +133,8 @@ def publish_model(model_uri: str, tracking_uri: str, bucket: str, prefix: str = 
                 f"version {version} has not had its frozen evaluation; run `evaluate --model-uri "
                 f"models:/<name>/{version}` once before publishing"
             )
+        if tags.get("synthetic") != "true":
+            ensure_promoted(model_uri, tracking_uri, version, tags)
         base = f"{prefix.strip('/')}/v{version}"
         registry = {
             "model_uri": model_uri, "version": version,

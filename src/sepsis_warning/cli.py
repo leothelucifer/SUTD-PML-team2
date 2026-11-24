@@ -32,6 +32,7 @@ from .modeling import (
     candidate_models,
     complexity_ranks,
     fit_calibrated,
+    is_numpy_model,
     load_model_config,
 )
 from .monitoring import (
@@ -239,7 +240,7 @@ def run_experiment(args):
     manifest = build_manifest(
         model_name=name, threshold=threshold, cooldown=args.cooldown, window=args.window,
         synthetic=synthetic, feature_columns=columns, metadata=metadata, validation=selected,
-        models_config_sha256=model_config_sha,
+        models_config_sha256=model_config_sha, numpy_model=is_numpy_model(fitted[name]),
     )
     bundle = {
         "model": fitted[name], "model_name": name, "feature_columns": columns,
