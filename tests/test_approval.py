@@ -183,3 +183,26 @@ class WorkflowTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ExistingFamilyTests(unittest.TestCase):
+    def test_a_stack_owned_task_definition_is_run_as_it_is_and_its_log_is_found(self):
+        class Ecs(FakeEcs):
+            def describe_task_definition(self, taskDefinition):
+                self.calls.append(("describe_definition", taskDefinition))
+                return {"taskDefinition": {"containerDefinitions": [{"name": "report", "logConfiguration": {"options": {
+                    "awslogs-group": "/ecs/x-evidently", "awslogs-stream-prefix": "report"}}}]}}
+
+        ecs, streams = Ecs(), []
+        session = FakeSession(ecs)
+        session.clients["logs"] = type("Logs", (), {"get_log_events": lambda self, **kw: streams.append(kw) or {"events": []}})()
+        code = run_task.run(session, "sepsis-dev", role="task", image_tag="", env=["REPORT_DAYS=2"], family_suffix="",
+                            region="ap-southeast-2", sleep=lambda _: None, out=lambda *_: None,
+                            existing_family="sepsis-dev-evidently-report", container="report")
+        self.assertEqual(code, 0)
+        self.assertFalse(any(kind == "register" for kind, *_ in ecs.calls))          # nothing is registered
+        run = next(item[1] for item in ecs.calls if item[0] == "run")
+        self.assertEqual(run["taskDefinition"], "sepsis-dev-evidently-report")
+        self.assertEqual(run["overrides"]["containerOverrides"][0], {"name": "report", "environment": [{"name": "REPORT_DAYS", "value": "2"}]})
+        self.assertEqual(streams[0]["logGroupName"], "/ecs/x-evidently")
+        self.assertEqual(streams[0]["logStreamName"], "report/report/abc123")

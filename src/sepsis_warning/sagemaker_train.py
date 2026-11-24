@@ -8,7 +8,8 @@ SageMaker starts the training image with the argument ``train``. This module:
    ``register_model`` ("true"/"false"), ``git_commit``, ``require_gates`` (do
    not register a model that fails the promotion gates), ``mode`` (``train``,
    ``prepare`` to build the data in S3, ``tune`` for the grouped-CV search,
-   ``promote`` to move ``@production`` after the gates, or ``evaluate_publish`` for
+   ``promote`` to move ``@production`` after the gates, ``monitor_reference`` to
+   build the Evidently reference of the served model, or ``evaluate_publish`` for
    the pipeline step after approval);
 2. reads the ``data`` channel, ``/opt/ml/input/data/data/``: either
    ``combined.parquet`` with ``splits.csv`` (and optionally
@@ -113,6 +114,45 @@ def promote_model(root: Path, params: dict) -> dict:
     print(f"Promoted {change['name']} version {change['version']} to @{change['alias']} "
           f"(reviewer {change['reviewed_by']}, approver {change['approved_by']})", flush=True)
     return change
+
+
+def monitor_reference(root: Path, params: dict, args: Namespace, client=None) -> list[str]:
+    """Build the Evidently reference for the model that is (or will be) served, from hospital A validation only.
+
+    The frozen model scores the validation stays in batch; the result, reduced to the columns the live prediction
+    log can also provide (``evidently_frames``), goes to ``monitoring/evidently/<bundle>/``. The test splits are never
+    read. Hyperparameters: ``mlflow_tracking_uri``, ``publish_bucket`` and optionally ``model_uri``
+    (default ``models:/sepsis-warning@production``).
+    """
+    import datetime
+
+    from .data import DYNAMIC
+    from .evidently_frames import reference_frame
+    from .registry import resolve_model
+    from .scoring import load_bundle, score_patients
+    from .splits import load_split_patients
+
+    tracking, bucket = params.get("mlflow_tracking_uri"), params.get("publish_bucket")
+    if not tracking or not bucket:
+        raise ValueError("mode monitor_reference needs mlflow_tracking_uri and publish_bucket")
+    if args.splits is None:
+        raise ValueError("mode monitor_reference needs combined.parquet with splits.csv in the data channel")
+    model_uri = params.get("model_uri") or "models:/sepsis-warning@production"
+    with tempfile.TemporaryDirectory(prefix="sepsis-reference-") as scratch:
+        path, sha, _ = resolve_model(model_uri, tracking, Path(scratch))
+        bundle = load_bundle(path, sha)
+        cohorts = load_split_patients(args.data, args.splits)
+        reference = reference_frame(score_patients(bundle, cohorts["validation"], DYNAMIC))
+    output = root / "model" / "reference"
+    output.mkdir(parents=True, exist_ok=True)
+    reference.to_parquet(output / "reference.parquet", index=False)
+    (output / "reference.json").write_text(json.dumps({
+        "bundle_sha256": sha, "model_name": bundle["model_name"], "threshold": float(bundle["threshold"]),
+        "rows": int(len(reference)), "alert_rate": float(reference["new_alert"].mean()), "split": "validation",
+        "created_at": datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds")}, indent=2), encoding="utf-8")
+    uris = _upload(output, bucket, f"monitoring/evidently/{sha[:12]}", client=client)
+    print(f"Evidently reference for bundle {sha[:12]} ({len(reference)} hourly rows): " + ", ".join(uris), flush=True)
+    return uris
 
 
 def evaluate_and_publish(root: Path, params: dict, args: Namespace) -> dict:
@@ -360,6 +400,9 @@ def main(argv=None) -> int:
         if args.mlflow_uri:
             check_tracking_uri(args.mlflow_uri)
             require_mlflow()
+        if mode == "monitor_reference":
+            monitor_reference(root, params, args)
+            return 0
         if mode == "evaluate_publish":
             evaluate_and_publish(root, params, args)
             return 0

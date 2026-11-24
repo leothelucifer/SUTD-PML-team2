@@ -56,22 +56,36 @@ def register(ecs, family: str, image: str, execution_role: str, task_role: str, 
     return response["taskDefinition"]["taskDefinitionArn"]
 
 
+def log_location(ecs, definition: str, container: str) -> tuple[str, str]:
+    """(log group, stream prefix) of a container in an existing task definition."""
+    containers = ecs.describe_task_definition(taskDefinition=definition)["taskDefinition"]["containerDefinitions"]
+    options = next(c for c in containers if c["name"] == container)["logConfiguration"]["options"]
+    return options["awslogs-group"], options["awslogs-stream-prefix"]
+
+
 def run(session, stack: str, *, role: str, image_tag: str, env: list[str], family_suffix: str, region: str,
-        sleep=time.sleep, timeout: int = 1800, out=print) -> int:
+        sleep=time.sleep, timeout: int = 1800, out=print, existing_family: str = "", container: str = "step") -> int:
     cloudformation, ecs, logs = session.client("cloudformation"), session.client("ecs"), session.client("logs")
     outputs = stack_outputs(cloudformation, stack)
-    o = needed(outputs, "EcsClusterArn", "EcsSubnetIds", "EcsTaskSecurityGroupId", "EcsExecutionRoleArn",
-               "EcsTaskRoleArn", "EcsApproverTaskRoleArn", "EcsLogGroupName", "TrainingRepositoryUri")
-    task_role = o["EcsApproverTaskRoleArn"] if role == "approver" else o["EcsTaskRoleArn"]
-    family = f"{stack}-{family_suffix}"
-    definition = register(ecs, family, f"{o['TrainingRepositoryUri']}:{image_tag}", o["EcsExecutionRoleArn"],
-                          task_role, o["EcsLogGroupName"], region)
+    if existing_family:
+        # A task definition the stack already owns (the Evidently report): run its latest revision as it is.
+        o = needed(outputs, "EcsClusterArn", "EcsSubnetIds", "EcsTaskSecurityGroupId")
+        definition, family = existing_family, existing_family
+        log_group, log_prefix = log_location(ecs, existing_family, container)
+    else:
+        o = needed(outputs, "EcsClusterArn", "EcsSubnetIds", "EcsTaskSecurityGroupId", "EcsExecutionRoleArn",
+                   "EcsTaskRoleArn", "EcsApproverTaskRoleArn", "EcsLogGroupName", "TrainingRepositoryUri")
+        task_role = o["EcsApproverTaskRoleArn"] if role == "approver" else o["EcsTaskRoleArn"]
+        family = f"{stack}-{family_suffix}"
+        definition = register(ecs, family, f"{o['TrainingRepositoryUri']}:{image_tag}", o["EcsExecutionRoleArn"],
+                              task_role, o["EcsLogGroupName"], region)
+        log_group, log_prefix = o["EcsLogGroupName"], f"{family}/step"
     started = ecs.run_task(
         cluster=o["EcsClusterArn"], taskDefinition=definition, launchType="FARGATE", count=1,
         networkConfiguration={"awsvpcConfiguration": {
             "subnets": o["EcsSubnetIds"].split(","), "securityGroups": [o["EcsTaskSecurityGroupId"]],
             "assignPublicIp": "ENABLED"}},
-        overrides={"containerOverrides": [{"name": "step", "environment": parse_env(env)}]})
+        overrides={"containerOverrides": [{"name": container, "environment": parse_env(env)}]})
     if started.get("failures"):
         raise RuntimeError(f"the task could not be started: {started['failures']}")
     task_arn = started["tasks"][0]["taskArn"]
@@ -85,11 +99,13 @@ def run(session, stack: str, *, role: str, image_tag: str, env: list[str], famil
             ecs.stop_task(cluster=o["EcsClusterArn"], task=task_arn, reason="timed out")
             raise TimeoutError(f"the task did not finish within {timeout} seconds and was stopped")
         sleep(10)
-    container = task["containers"][0]
-    show_log(logs, o["EcsLogGroupName"], f"{family}/step/{task_arn.rsplit('/', 1)[-1]}", out)
-    code = container.get("exitCode")
+    finished = task["containers"][0]
+    task_id = task_arn.rsplit("/", 1)[-1]
+    stream = f"{log_prefix}/{container}/{task_id}" if existing_family else f"{log_prefix}/{task_id}"
+    show_log(logs, log_group, stream, out)
+    code = finished.get("exitCode")
     if code is None:
-        out(f"The task stopped without an exit code: {task.get('stoppedReason', container.get('reason', 'unknown'))}")
+        out(f"The task stopped without an exit code: {task.get('stoppedReason', finished.get('reason', 'unknown'))}")
         return 1
     return int(code)
 
@@ -109,7 +125,9 @@ def main(argv=None) -> int:
     parser.add_argument("--stack", required=True)
     parser.add_argument("--region", required=True)
     parser.add_argument("--role", choices=["task", "approver"], default="task")
-    parser.add_argument("--image-tag", required=True, help="training-<git commit>")
+    parser.add_argument("--image-tag", default="", help="training-<git commit> (not needed with --existing-family)")
+    parser.add_argument("--existing-family", default="", help="run the latest revision of a task definition the stack owns")
+    parser.add_argument("--container", default="step", help="container name to override (report for the Evidently report)")
     parser.add_argument("--family", default="step", help="task definition family suffix")
     parser.add_argument("--env", action="append", default=[], help="NAME=VALUE for the task (HP_*, CH_*, JOB_OUTPUT)")
     args = parser.parse_args(argv)
@@ -117,7 +135,8 @@ def main(argv=None) -> int:
 
     try:
         code = run(boto3.Session(region_name=args.region), args.stack, role=args.role, image_tag=args.image_tag,
-                   env=args.env, family_suffix=args.family, region=args.region)
+                   env=args.env, family_suffix=args.family, region=args.region,
+                   existing_family=args.existing_family, container=args.container)
     except (ValueError, RuntimeError, TimeoutError) as error:
         print(f"FAIL: {error}", file=sys.stderr)
         return 1

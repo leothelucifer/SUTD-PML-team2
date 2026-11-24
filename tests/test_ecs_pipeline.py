@@ -231,3 +231,62 @@ class MlflowOnEcsTests(unittest.TestCase):
             self.assertIn(package, lock)
         ci = (ROOT / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
         self.assertIn("scoring lambda training tools", ci)
+
+
+class EvidentlyOnEcsTests(unittest.TestCase):
+    def test_the_ui_has_no_inbound_rule_and_carries_the_power_tags(self):
+        template = load("evidently-ecs.yaml")
+        group = template["Resources"]["UiSecurityGroup"]["Properties"]
+        self.assertNotIn("SecurityGroupIngress", group)
+        self.assertEqual({t["Key"]: t["Value"] for t in group["Tags"]}["power:ui-port"], "8000")
+        tags = {t["Key"]: t["Value"] for t in template["Resources"]["UiService"]["Properties"]["Tags"]}
+        self.assertEqual((tags["power:group"], tags["power:desired"]), ("evidently", "1"))
+        self.assertEqual(template["Resources"]["UiService"]["Condition"], "HasImage")
+
+    def test_the_ui_can_only_read_and_the_report_job_cannot_touch_models_or_data(self):
+        roles = load("evidently-ecs.yaml")["Resources"]
+        ui = json.dumps(roles["UiTaskRole"]["Properties"]["Policies"])
+        self.assertNotIn("s3:PutObject", ui)
+        report = json.dumps(roles["ReportTaskRole"]["Properties"]["Policies"])
+        for forbidden in ("/models/", "/data/", "/raw/", "mlflow-artifacts"):
+            self.assertNotIn(forbidden, report)
+        self.assertIn("cloudwatch:namespace", report)
+        self.assertIn("SepsisWarning/Evidently", report)
+
+    def test_the_report_runs_on_demand_not_on_a_schedule_and_the_alarm_emails_the_owner(self):
+        text = (CFN / "evidently-ecs.yaml").read_text(encoding="utf-8")
+        self.assertNotIn("AWS::Events::Rule", text)
+        self.assertNotIn("ScheduleExpression", text)
+        alarm = load("evidently-ecs.yaml")["Resources"]["DriftAlarm"]["Properties"]
+        self.assertEqual((alarm["Namespace"], alarm["MetricName"]), ("SepsisWarning/Evidently", "DriftedColumnsShare"))
+        self.assertEqual(alarm["AlarmActions"], ["AlarmTopicArn"])
+        self.assertEqual(alarm["TreatMissingData"], "notBreaching")
+
+    def test_root_flag_rule_and_outputs(self):
+        root = load("root.yaml")
+        self.assertEqual(root["Parameters"]["EnableEvidently"]["Default"], "false")
+        self.assertEqual(root["Resources"]["EvidentlyEcs"]["Condition"], "UseEvidently")
+        self.assertIn("EvidentlyNeedsTheEcsPlatform", root["Rules"])
+        self.assertIn("EvidentlyReportFamily", root["Outputs"])
+        dev = json.loads((ROOT / "infra" / "params" / "dev.json").read_text(encoding="utf-8"))
+        self.assertEqual(dev["EnableEvidently"], "true")
+
+    def test_the_monitor_workflow_is_manual_and_uses_the_two_commands(self):
+        workflow = yaml.safe_load((ROOT / ".github" / "workflows" / "monitor.yml").read_text(encoding="utf-8"))
+        self.assertEqual(set(workflow[True]), {"workflow_dispatch"})
+        self.assertEqual(workflow[True]["workflow_dispatch"]["inputs"]["action"]["options"], ["report", "reference"])
+        text = (ROOT / ".github" / "workflows" / "monitor.yml").read_text(encoding="utf-8")
+        self.assertIn("monitor-reference", text)
+        self.assertIn("monitor-report", text)
+        for step in workflow["jobs"]["monitor"]["steps"]:
+            self.assertNotIn("${{ inputs.", step.get("run", ""))
+        script = (ROOT / "scripts" / "aws_deploy.sh").read_text(encoding="utf-8")
+        self.assertIn("monitor-reference) cmd_monitor_reference", script)
+        self.assertIn("monitor-report) cmd_monitor_report", script)
+
+    def test_the_tools_lock_uses_the_pandas_evidently_can_import(self):
+        lock = (ROOT / "requirements" / "tools.txt").read_text(encoding="utf-8")
+        version = re.search(r"^pandas==(\d+)\.", lock, flags=re.M).group(1)
+        self.assertEqual(version, "2")          # evidently 0.7 does not import under pandas 3
+        script = (ROOT / "scripts" / "lock_requirements.sh").read_text(encoding="utf-8")
+        self.assertIn('pandas<3', script)

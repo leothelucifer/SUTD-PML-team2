@@ -335,6 +335,27 @@ cmd_promote_task() {
     --env "JOB_OUTPUT=s3://$(output ArtifactBucketName)/training-output/promote-$MODEL_VERSION-$(date +%s)/"
 }
 
+# monitor-reference: build the Evidently reference (hospital A validation, frozen model) as a one-off task in the VPC.
+cmd_monitor_reference() {
+  local tracking bucket; tracking="$(output MlflowTrackingUri)"; bucket="$(output ArtifactBucketName)"
+  [ -n "$tracking" ] || tracking="$(output MlflowAppArn)"
+  [ -n "$tracking" ] || fail "the stack has no MLflow output; deploy it first"
+  [ "$(output MlflowBackend)" != ecs ] || cmd_power require-on --component mlflow || fail "start MLflow first: the power workflow with action start"
+  "$PYTHON" "$ROOT/scripts/aws_run_task.py" --stack "$STACK" --region "$AWS_REGION" --role task \
+    --image-tag "training-$TAG" --family monitor-reference \
+    --env HP_mode=monitor_reference --env "HP_mlflow_tracking_uri=$tracking" --env "HP_publish_bucket=$bucket" \
+    --env "CH_data=s3://$bucket/data/${DATA_FOLDER:-physionet}/" \
+    --env "JOB_OUTPUT=s3://$bucket/training-output/monitor-reference-$(date +%s)/"
+}
+
+# monitor-report: run the Evidently drift report over the last DAYS days of the prediction log.
+cmd_monitor_report() {
+  local family; family="$(output EvidentlyReportFamily)"
+  [ -n "$family" ] || fail "Evidently is not deployed (EnableEvidently=true, then 'stack' once the tools image exists)"
+  "$PYTHON" "$ROOT/scripts/aws_run_task.py" --stack "$STACK" --region "$AWS_REGION" \
+    --existing-family "$family" --container report --env "REPORT_DAYS=${DAYS:-1}"
+}
+
 # approve-run: answer the waiting pipeline from a workflow (DECISION approve|reject, EXECUTION, REASON, DECIDED_BY).
 cmd_approve_run() {
   "$PYTHON" "$ROOT/scripts/aws_approval.py" --stack "$STACK" --region "$AWS_REGION" \
@@ -405,6 +426,8 @@ case "${1:-}" in
   call) shift; cmd_call "$@" ;;
   power) shift; cmd_power "$@" ;;
   demo) cmd_demo ;;
+  monitor-reference) cmd_monitor_reference ;;
+  monitor-report) cmd_monitor_report ;;
   pipeline) cmd_pipeline ;;
   pipeline-wait) shift; cmd_pipeline_wait "$@" ;;
   approve) shift; cmd_approve "$@" ;;

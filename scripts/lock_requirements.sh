@@ -20,6 +20,9 @@ grep -v '^python-dateutil\|^#' requirements.txt > "$work/base.txt"
 
 lock() {  # lock NAME "extra1 extra2 ..." [extra constraint line]
   local name="$1" extras=() ; cp "$work/base.txt" "$work/$name.txt"
+  # Evidently (the "tools" image) does not import under pandas 3, which the training stack pins; the tools image
+  # only reads prediction logs and reference tables, so it takes pandas 2 and never loads a model bundle.
+  [ "$name" = tools ] && { grep -v '^pandas==' "$work/$name.txt" > "$work/$name.tmp"; mv "$work/$name.tmp" "$work/$name.txt"; echo "pandas<3" >> "$work/$name.txt"; }
   [ -n "${3:-}" ] && echo "$3" >> "$work/$name.txt"
   for extra in $2; do extras+=(--extra "$extra"); done
   uv pip compile pyproject.toml "${extras[@]}" -c "$work/$name.txt" --generate-hashes \

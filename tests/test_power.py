@@ -39,6 +39,7 @@ class World:
                          ("AWS::RDS::DBInstance", "Database", "db-1"),
                          ("AWS::EC2::SecurityGroup", "MlflowSecurityGroup", "sg-mlflow"),
                          ("AWS::EC2::SecurityGroup", "TaskSecurityGroup", "sg-tasks"),
+                         ("AWS::EC2::SecurityGroup", "UiSecurityGroup", "sg-ui"),
                          ("AWS::ElasticLoadBalancingV2::LoadBalancer", "Alb", "arn:alb")]
                 return {"StackResourceSummaries": [{"ResourceType": t, "LogicalResourceId": l, "PhysicalResourceId": p,
                                                     "ResourceStatus": "CREATE_COMPLETE"} for t, l, p in items]}
@@ -51,8 +52,9 @@ class World:
 
             def describe_services(self, cluster, services):
                 svc = world.services[services[0]]
-                return {"services": [{"desiredCount": svc["desired"], "runningCount": svc["running"],
-                                      "taskDefinition": "td:1"}]}
+                group = "sg-mlflow" if services[0] == "sepsis-dev-mlflow" else "sg-ui"
+                return {"services": [{"desiredCount": svc["desired"], "runningCount": svc["running"], "taskDefinition": "td:1",
+                                      "networkConfiguration": {"awsvpcConfiguration": {"securityGroups": [group]}}}]}
 
             def describe_task_definition(self, taskDefinition):
                 return {"taskDefinition": {"cpu": "512", "memory": "2048"}}
@@ -73,7 +75,7 @@ class World:
                     if task == "t-one":
                         out.append({"taskArn": "t-one", "group": "family:sepsis-dev-training"})
                     else:
-                        out.append({"taskArn": task, "group": "service:sepsis-dev-mlflow",
+                        out.append({"taskArn": task, "group": "service:sepsis-dev",
                                     "attachments": [{"details": [{"name": "networkInterfaceId", "value": "eni-1"}]}]})
                 return {"tasks": out}
 
@@ -91,13 +93,17 @@ class World:
 
         class Ec2:
             def describe_security_groups(self, GroupIds):
-                perms = [{"IpProtocol": "tcp", "FromPort": 5000, "ToPort": 5000,
-                          "IpRanges": [{"CidrIp": cidr, "Description": f"power-allow {cidr}"}]} for g, cidr in world.rules if g == "sg-mlflow"]
+                def rules(group, port):
+                    return [{"IpProtocol": "tcp", "FromPort": port, "ToPort": port,
+                             "IpRanges": [{"CidrIp": cidr, "Description": f"power-allow {cidr}"}]} for g, cidr in world.rules if g == group]
+
                 return {"SecurityGroups": [
-                    {"GroupId": "sg-mlflow", "Tags": [{"Key": "power:ui-port", "Value": "5000"}], "IpPermissions": perms},
+                    {"GroupId": "sg-mlflow", "Tags": [{"Key": "power:ui-port", "Value": "5000"}], "IpPermissions": rules("sg-mlflow", 5000)},
+                    {"GroupId": "sg-ui", "Tags": [{"Key": "power:ui-port", "Value": "8000"}], "IpPermissions": rules("sg-ui", 8000)},
                     {"GroupId": "sg-tasks", "Tags": [], "IpPermissions": []}]}
 
             def authorize_security_group_ingress(self, GroupId, IpPermissions):
+                world.calls.append(("authorize", GroupId, IpPermissions[0]["FromPort"]))
                 cidr = IpPermissions[0]["IpRanges"][0]["CidrIp"]
                 if (GroupId, cidr) in world.rules:
                     raise RuntimeError("InvalidPermission.Duplicate")
@@ -194,6 +200,18 @@ class PowerTests(unittest.TestCase):
         self.assertIn("http://54.1.2.3:5000", result.table())
         world.power().start("mlflow", allow_cidr="203.0.113.7/32")      # opening twice is not an error
         self.assertEqual(len(world.rules), 1)
+
+    def test_each_tool_gets_its_own_port_and_url(self):
+        world = World()
+        result = world.power().start(allow_cidr="203.0.113.7/32")
+        self.assertIn(("sg-mlflow", "203.0.113.7/32"), world.rules)
+        self.assertIn(("sg-ui", "203.0.113.7/32"), world.rules)
+        table = result.table()
+        self.assertIn("mlflow: http://54.1.2.3:5000", table)
+        self.assertIn("evidently: http://54.1.2.3:8000", table)
+        self.assertIn(("authorize", "sg-ui", 8000), world.calls)
+        world.power().stop()
+        self.assertEqual(world.rules, [])                        # stop closes every rule it opened, on both tools
 
     def test_the_whole_internet_needs_an_explicit_flag(self):
         with self.assertRaisesRegex(ValueError, "whole internet"):

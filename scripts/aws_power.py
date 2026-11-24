@@ -78,7 +78,8 @@ class Power:
             service = described[0]
             found.append({"cluster": cluster, "name": name, "arn": arn, "group": group_of(tags),
                           "desired_tag": int(tags.get("power:desired", "1")), "desired": service["desiredCount"],
-                          "running": service["runningCount"], "task_definition": service["taskDefinition"]})
+                          "running": service["runningCount"], "task_definition": service["taskDefinition"],
+                          "security_groups": service.get("networkConfiguration", {}).get("awsvpcConfiguration", {}).get("securityGroups", [])})
         return found
 
     def databases(self) -> list[dict]:
@@ -195,7 +196,8 @@ class Power:
                           f"service {service['name']}")
                 self.result.add("PASS", f"ECS service {service['name']}", f"running {want} task(s)")
         if allow_cidr:
-            for line in self.open_access(allow_cidr):
+            started = {sg for service in self.services() if service["group"] in groups for sg in service["security_groups"]}
+            for line in self.open_access(allow_cidr, started):
                 self.result.add("PASS", "Browser access", line)
         for line in self.urls():
             self.result.add("PASS", "Open in a browser", line)
@@ -223,9 +225,11 @@ class Power:
                               "rules": group.get("IpPermissions", [])})
         return found
 
-    def open_access(self, cidr: str) -> list[str]:
+    def open_access(self, cidr: str, only: set | None = None) -> list[str]:
         lines = []
         for group in self.ui_groups():
+            if only is not None and group["id"] not in only:
+                continue
             try:
                 self.ec2.authorize_security_group_ingress(GroupId=group["id"], IpPermissions=[{
                     "IpProtocol": "tcp", "FromPort": group["port"], "ToPort": group["port"],
@@ -252,6 +256,7 @@ class Power:
         lines = []
         ports = {g["id"]: g["port"] for g in self.ui_groups()}
         for service in self.services():
+            service_ports = [ports[g] for g in service["security_groups"] if g in ports]
             if service["group"] not in ("mlflow", "evidently") or not service["running"]:
                 continue
             listed = self.ecs.list_tasks(cluster=service["cluster"], serviceName=service["name"], desiredStatus="RUNNING").get("taskArns", [])
@@ -265,7 +270,7 @@ class Power:
                         continue
                     association = self.ec2.describe_network_interfaces(NetworkInterfaceIds=[eni])["NetworkInterfaces"][0].get("Association", {})
                     if association.get("PublicIp"):
-                        port = next(iter(ports.values()), 5000) if service["group"] == "mlflow" else 8000
+                        port = service_ports[0] if service_ports else (5000 if service["group"] == "mlflow" else 8000)
                         lines.append(f"{service['group']}: http://{association['PublicIp']}:{port}")
         return lines
 

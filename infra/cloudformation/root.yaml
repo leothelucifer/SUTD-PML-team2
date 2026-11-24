@@ -139,6 +139,18 @@ Parameters:
     Type: String
     Default: ""
     Description: Image (Dockerfile target "tools") with its tag for the MLflow server. Empty creates only the database; `aws_deploy.sh stack` fills it in once the image exists.
+  EnableEvidently:
+    Type: String
+    Default: "false"
+    AllowedValues: ["false", "true"]
+    Description: >-
+      Feature flag. Evidently monitoring on ECS: a live UI service (started and stopped by the power workflow), a
+      drift report task run by the monitor workflow, and an alarm. Needs the ECS platform (TrainingBackend=ecs or
+      MlflowBackend=ecs) and the tools image.
+  EvidentlyDriftedShareAlarm:
+    Type: String
+    Default: "0.5"
+    Description: Alarm when this share of the monitored columns (or more) drifted in a report.
   TrainingBackend:
     Type: String
     Default: sagemaker
@@ -220,6 +232,13 @@ Rules:
     Assertions:
       - Assert: !Equals [!Ref EnableSageMakerMlflowApp, "true"]
         AssertDescription: MlflowBackend=sagemaker needs EnableSageMakerMlflowApp=true.
+  EvidentlyNeedsTheEcsPlatform:
+    RuleCondition: !Equals [!Ref EnableEvidently, "true"]
+    Assertions:
+      - Assert: !Or
+          - !Equals [!Ref TrainingBackend, ecs]
+          - !Equals [!Ref MlflowBackend, ecs]
+        AssertDescription: EnableEvidently needs the ECS platform; set TrainingBackend=ecs or MlflowBackend=ecs.
   ModelRequiredWhenEnabled:
     RuleCondition: !Equals [!Ref DeployScoringService, "true"]
     Assertions:
@@ -263,6 +282,9 @@ Conditions:
     - !Condition CreatePipeline
     - !Equals [!Ref TrainingBackend, ecs]
   UseEcsMlflow: !Equals [!Ref MlflowBackend, ecs]
+  UseEvidently: !And
+    - !Condition NeedsEcsPlatform
+    - !Equals [!Ref EnableEvidently, "true"]
   NeedsEcsPlatform: !Or
     - !Condition UseEcsTraining
     - !Condition UseEcsMlflow
@@ -386,6 +408,29 @@ Resources:
         ArtifactKeyArn: !GetAtt Artifacts.Outputs.ArtifactKeyArn
         ToolsRepositoryArn: !GetAtt Artifacts.Outputs.ToolsRepositoryArn
         ToolsImageUri: !Ref ToolsImageUri
+      Tags:
+        - Key: Project
+          Value: sepsis-warning-research
+
+  # Only with EnableEvidently: the live UI, the drift report task definition and the alarm.
+  EvidentlyEcs:
+    Type: AWS::CloudFormation::Stack
+    Condition: UseEvidently
+    Properties:
+      TemplateURL: evidently-ecs.yaml
+      Parameters:
+        EnvironmentName: !Ref EnvironmentName
+        VpcId: !GetAtt EcsPlatform.Outputs.VpcId
+        SubnetAId: !GetAtt EcsPlatform.Outputs.SubnetAId
+        SubnetBId: !GetAtt EcsPlatform.Outputs.SubnetBId
+        ClusterArn: !GetAtt EcsPlatform.Outputs.ClusterArn
+        ArtifactBucketName: !GetAtt Artifacts.Outputs.ArtifactBucketName
+        ArtifactBucketArn: !GetAtt Artifacts.Outputs.ArtifactBucketArn
+        ArtifactKeyArn: !GetAtt Artifacts.Outputs.ArtifactKeyArn
+        ToolsRepositoryArn: !GetAtt Artifacts.Outputs.ToolsRepositoryArn
+        ToolsImageUri: !Ref ToolsImageUri
+        AlarmTopicArn: !GetAtt Monitoring.Outputs.AlarmTopicArn
+        DriftedShareAlarm: !Ref EvidentlyDriftedShareAlarm
       Tags:
         - Key: Project
           Value: sepsis-warning-research
@@ -545,6 +590,10 @@ Outputs:
     Value: !GetAtt MlflowEcs.Outputs.TrackingUri
   MlflowBackend:
     Value: !Ref MlflowBackend
+  EvidentlyReportFamily:
+    Condition: UseEvidently
+    Description: Task definition family of the drift report (run it with the monitor workflow).
+    Value: !GetAtt EvidentlyEcs.Outputs.ReportTaskDefinitionFamily
   EcsClusterArn:
     Condition: NeedsEcsPlatform
     Value: !GetAtt EcsPlatform.Outputs.ClusterArn
