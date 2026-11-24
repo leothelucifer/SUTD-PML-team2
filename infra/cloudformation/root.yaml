@@ -121,6 +121,14 @@ Parameters:
       - "false"
       - "true"
     Description: Step Functions training pipeline with gates and a human approval. No standing cost.
+  EnableSageMaker:
+    Type: String
+    Default: "true"
+    AllowedValues: ["false", "true"]
+    Description: >-
+      Master switch for everything SageMaker. false removes the training role, the SageMaker permissions and the MLflow
+      App, and no script calls a SageMaker API; use it while the account has no SageMaker access (TrainingBackend and
+      MlflowBackend must then be ecs). Set true once access is approved.
   MlflowBackend:
     Type: String
     Default: sagemaker
@@ -222,6 +230,13 @@ Parameters:
     Description: Email recipient required to create the optional budget.
 
 Rules:
+  SageMakerBackendsNeedSageMaker:
+    RuleCondition: !Or
+      - !Equals [!Ref TrainingBackend, sagemaker]
+      - !Equals [!Ref MlflowBackend, sagemaker]
+    Assertions:
+      - Assert: !Equals [!Ref EnableSageMaker, "true"]
+        AssertDescription: TrainingBackend=sagemaker or MlflowBackend=sagemaker needs EnableSageMaker=true. Without SageMaker access set both backends to ecs.
   EcsTaskSize1024:
     RuleCondition: !Equals [!Ref EcsTrainingCpu, "1024"]
     Assertions:
@@ -313,8 +328,11 @@ Conditions:
   NeedsEcsPlatform: !Or
     - !Condition UseEcsTraining
     - !Condition UseEcsMlflow
-  HasSageMakerMlflowApp: !And
+  HasSageMaker: !And
     - !Condition CreateMlops
+    - !Equals [!Ref EnableSageMaker, "true"]
+  HasSageMakerMlflowApp: !And
+    - !Condition HasSageMaker
     - !Equals [!Ref EnableSageMakerMlflowApp, "true"]
   UseSageMakerTraining: !And
     - !Condition CreatePipeline
@@ -369,6 +387,7 @@ Resources:
         TrainingRepositoryArn: !GetAtt Artifacts.Outputs.TrainingRepositoryArn
         LambdaRepositoryArn: !GetAtt Artifacts.Outputs.LambdaRepositoryArn
         ScoringRepositoryArn: !GetAtt Artifacts.Outputs.EcrRepositoryArn
+        EnableSageMaker: !Ref EnableSageMaker
         EnableMlflowApp: !Ref EnableSageMakerMlflowApp
       Tags:
         - Key: Project
@@ -641,7 +660,7 @@ Outputs:
     Condition: NeedsEcsPlatform
     Value: !GetAtt EcsPlatform.Outputs.LogGroupName
   SageMakerExecutionRoleArn:
-    Condition: CreateMlops
+    Condition: HasSageMaker
     Value: !GetAtt Mlops.Outputs.SageMakerExecutionRoleArn
   TrainerPolicyArn:
     Condition: CreateMlops

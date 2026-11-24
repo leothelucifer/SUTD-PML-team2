@@ -324,6 +324,28 @@ def check_fargate_quota(result: Result, service_quotas, needed_vcpu: float = 5.0
     guarded(result, "Fargate quotas", check)
 
 
+def check_service_linked_roles(result: Result, iam, outputs: dict) -> None:
+    """The first ECS cluster (and RDS database) of an account needs the service's linked role; without it the stack fails with
+    "Unable to assume the service linked role". The deploy script creates it, this says whether it is there."""
+    wanted = []
+    if outputs.get("TrainingBackend") == "ecs" or outputs.get("MlflowBackend") == "ecs":
+        wanted.append(("ecs.amazonaws.com", "AWSServiceRoleForECS"))
+    if outputs.get("MlflowBackend") == "ecs":
+        wanted.append(("rds.amazonaws.com", "AWSServiceRoleForRDS"))
+    for service, role in wanted:
+        def check(service=service, role=role):
+            try:
+                iam.get_role(RoleName=role)
+                result.add("PASS", f"Service-linked role {role}", "exists")
+            except Exception as error:  # noqa: BLE001
+                if "NoSuchEntity" in str(error) or getattr(error, "response", {}).get("Error", {}).get("Code") == "NoSuchEntity":
+                    result.add("FAIL", f"Service-linked role {role}", f"missing: run aws iam create-service-linked-role --aws-service-name {service}")
+                else:
+                    raise
+
+        guarded(result, f"Service-linked role {role}", check)
+
+
 def check_budget(result: Result, budgets, account: str, items: list[dict]) -> None:
     found = of_type(items, "AWS::Budgets::Budget")
     if not found:
@@ -416,15 +438,23 @@ def verify(session, stack: str, region: str, *, expect_model: bool = False, tag:
     check_key(result, session.client("kms"), items)
     check_repositories(result, session.client("ecr"), items, tag)
     check_table(result, session.client("dynamodb"), items)
-    check_mlflow(result, session.client("sagemaker"), items)
+    # Nothing here calls a SageMaker API unless the stack uses one: with EnableSageMaker=false (or both backends on ECS)
+    # the account may have no SageMaker access at all.
+    if outputs.get("MlflowAppArn"):
+        check_mlflow(result, session.client("sagemaker"), items)
     check_ecs(result, session.client("ecs"), items)
     check_tools(result, session.client("ecs"), session.client("rds"), items)
     check_pipeline(result, session.client("stepfunctions"), items)
     check_alerts(result, session.client("sns"), session.client("cloudwatch"), items)
     account = session.client("sts").get_caller_identity()["Account"]
     check_budget(result, session.client("budgets", region_name="us-east-1"), account, items)
-    check_quotas(result, session.client("service-quotas"))
-    check_fargate_quota(result, session.client("service-quotas"))
+    if outputs.get("TrainingBackend", "sagemaker") == "sagemaker":
+        check_quotas(result, session.client("service-quotas"))
+    else:
+        result.add("PASS", "SageMaker", "not used: training runs on ECS (EnableSageMaker can stay false)")
+    if outputs.get("TrainingBackend") == "ecs":
+        check_fargate_quota(result, session.client("service-quotas"))
+    check_service_linked_roles(result, session.client("iam"), outputs)
     check_iam(result, session.client("iam"), outputs)
     check_function(result, session.client("lambda"), items, outputs, expect_model, signed_health(session, region) if call_api else None)
     return result

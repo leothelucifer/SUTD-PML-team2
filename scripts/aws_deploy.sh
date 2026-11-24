@@ -62,6 +62,20 @@ output() {  # output NAME -> stack output value (empty if absent)
 
 account() { aws sts get-caller-identity --query Account --output text; }
 
+# A new account has no service-linked role for ECS (or RDS) until something creates it, and the CloudFormation handler may not:
+# the first cluster then fails with "Unable to assume the service linked role. Please verify that the ECS service linked role
+# exists." AWS documents the fix: `aws iam create-service-linked-role --aws-service-name ecs.amazonaws.com` (IAM user guide,
+# "Creating a service-linked role"). Done here, once, only when the stack uses the service; an existing role is left alone.
+ensure_service_linked_role() {  # ensure_service_linked_role SERVICE ROLE-NAME
+  aws iam get-role --role-name "$2" >/dev/null 2>&1 && return 0
+  echo "Creating the service-linked role $2 for $1 (the account has none yet)"
+  local out
+  if out="$(aws iam create-service-linked-role --aws-service-name "$1" 2>&1)"; then return 0; fi
+  case "$out" in *"has been taken"*|*InvalidInput*taken*) return 0 ;; esac
+  echo "$out" >&2
+  fail "could not create $2. Ask an administrator to run: aws iam create-service-linked-role --aws-service-name $1 (or allow iam:CreateServiceLinkedRole for the deploy role / lift a service control policy that denies it)"
+}
+
 cmd_stack() {
   local extra=("$@")
   # A first create that failed leaves the stack in ROLLBACK_COMPLETE, which cannot be updated. It holds no
@@ -93,6 +107,14 @@ for key, value in json.load(open(sys.argv[1])).items():
         print(f"{key}={value}")' "$ROOT/infra/params/$ENVIRONMENT.json")
   fi
   [ -n "${TRAINING_BACKEND:-}" ] && params+=("TrainingBackend=$TRAINING_BACKEND")
+  local uses_ecs=false uses_rds=false item
+  [ "$SERVING_MODE" = fargate ] && uses_ecs=true
+  for item in "${params[@]}" "${extra[@]}"; do
+    case "$item" in TrainingBackend=ecs|MlflowBackend=ecs) uses_ecs=true ;; esac
+    case "$item" in MlflowBackend=ecs) uses_rds=true ;; esac
+  done
+  ! $uses_ecs || ensure_service_linked_role ecs.amazonaws.com AWSServiceRoleForECS
+  ! $uses_rds || ensure_service_linked_role rds.amazonaws.com AWSServiceRoleForRDS
   # The MLflow server needs its image (target "tools"), which can only be pushed once the stack and its ECR
   # repository exist. Once the image for this commit is there, every stack update passes it, so the service
   # is created by the second `stack` run and is not removed by later ones.
@@ -217,22 +239,37 @@ cmd_fetch_data() {
 }
 
 cmd_train() {
+  [ -n "$(output MlflowAppArn)" ] || fail "this stack has no SageMaker MLflow App (EnableSageMaker=false or MlflowBackend=ecs); train with the pipeline workflow (ECS), or enable SageMaker first"
+  [ "$(output TrainingBackend)" = sagemaker ] || fail "training runs on ECS here: use the pipeline workflow"
   "$PYTHON" "$ROOT/scripts/sagemaker_train.py" --stack "$STACK" --region "$AWS_REGION" \
     --image-tag "training-$TAG" --wait "$@"
 }
 
 cmd_mlflow_ui() {
+  [ -n "$(output MlflowAppArn)" ] || fail "this stack has no SageMaker MLflow App (EnableSageMaker=false or MlflowBackend=ecs); open the ECS MLflow with: power start --allow-cidr <your address>/32"
   aws sagemaker create-presigned-mlflow-app-url --arn "$(output MlflowAppArn)" \
     --query AuthorizedUrl --output text
 }
 
 cmd_promote() {
+  [ -n "$(output MlflowAppArn)" ] || fail "this stack has no SageMaker MLflow App (EnableSageMaker=false or MlflowBackend=ecs); promote with the promote workflow, or: promote-task"
   [ $# -eq 2 ] || fail "usage: $0 promote VERSION REVIEWER"
   local real=(--require-real-data); [ "${ALLOW_SYNTHETIC:-}" = 1 ] && real=()
   "$PYTHON" -m sepsis_warning promote --version "$1" --reviewed-by "$2" --mlflow-uri "$(output MlflowAppArn)" "${real[@]}"
 }
 
+# publish: with the SageMaker MLflow App, copy the promoted version to S3 from here. With MLflow on ECS the registry is
+# private and the pipeline's last step already published the approved model, so read that from S3 instead.
 cmd_publish() {
+  if [ -z "$(output MlflowAppArn)" ]; then
+    local allow=(); [ "${ALLOW_SYNTHETIC:-}" = 1 ] && allow=(--allow-synthetic)
+    "$PYTHON" "$ROOT/scripts/aws_published_model.py" --stack "$STACK" --region "$AWS_REGION" \
+      ${MODEL_VERSION:+--version "$MODEL_VERSION"} "${allow[@]}" | tee "$STATE/publish.log"
+    [ "${PIPESTATUS[0]}" = 0 ] || fail "no approved published model yet"
+    grep -o 'ModelS3Uri=[^ ]*' "$STATE/publish.log" | cut -d= -f2 > "$STATE/model_s3_uri"
+    grep -o 'ModelSha256=[0-9a-f]*' "$STATE/publish.log" | cut -d= -f2 > "$STATE/model_sha256"
+    return 0
+  fi
   "$PYTHON" -m sepsis_warning publish --mlflow-uri "$(output MlflowAppArn)" \
     --bucket "$(output ArtifactBucketName)" --model-uri "${MODEL_URI:-models:/sepsis-warning@production}" \
     | tee "$STATE/publish.log"

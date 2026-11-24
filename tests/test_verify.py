@@ -137,6 +137,23 @@ class VerifyTests(unittest.TestCase):
             verify.check_tools(result, ecs, rds, items)
             self.assertEqual(list(statuses(result).values()), expected)
 
+    def test_a_missing_service_linked_role_is_reported_with_the_command_that_fixes_it(self):
+        class NoSuchEntity(Exception):
+            response = {"Error": {"Code": "NoSuchEntity"}}
+
+        def get_role(RoleName):
+            if RoleName == "AWSServiceRoleForECS":
+                raise NoSuchEntity("The role cannot be found")
+            return {"Role": {}}
+
+        result = verify.Result()
+        verify.check_service_linked_roles(result, Namespace(get_role=get_role), {"TrainingBackend": "ecs", "MlflowBackend": "ecs"})
+        self.assertEqual(statuses(result), {"Service-linked role AWSServiceRoleForECS": "FAIL", "Service-linked role AWSServiceRoleForRDS": "PASS"})
+        self.assertIn("create-service-linked-role --aws-service-name ecs.amazonaws.com", result.table())
+        nothing = verify.Result()
+        verify.check_service_linked_roles(nothing, Namespace(), {"TrainingBackend": "sagemaker", "MlflowBackend": "sagemaker"})
+        self.assertEqual(statuses(nothing), {})
+
     def test_missing_outputs_fail(self):
         result = verify.Result()
         verify.check_outputs(result, {"ArtifactBucketName": "b"}, False)
