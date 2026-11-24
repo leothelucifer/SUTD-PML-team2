@@ -33,6 +33,13 @@ the real response shape. The IAM actions in the templates were looked up in the 
 | `cloudwatch:PutMetricData` can be limited with `StringEquals` on `cloudwatch:namespace`, resource `*` | Confirmed | [Condition keys for CloudWatch namespaces](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/iam-cw-condition-keys-namespace.html) |
 | Alarm `Period` may be any multiple of 60 (we use 86400) | Confirmed | [PutMetricAlarm](https://docs.aws.amazon.com/AmazonCloudWatch/latest/APIReference/API_PutMetricAlarm.html) |
 
+## Found by a real run (deploy run 22), then checked
+
+| What happened | Why | Fix |
+|---|---|---|
+| `CreateCluster Invalid Request: Unable to assume the service linked role. Please verify that the ECS service linked role exists.` | A new account has no ECS service-linked role. The CreateCluster API reference says Amazon ECS "attempts to create the Amazon ECS service-linked role" and that "if the user that makes the call doesn't have permissions to create the service-linked role, it isn't created" ([CreateCluster](https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_CreateCluster.html)). In practice the CloudFormation handler did not create it | `aws_deploy.sh stack` creates `AWSServiceRoleForECS` (and `AWSServiceRoleForRDS` for MLflow on ECS) first with the documented command `aws iam create-service-linked-role --aws-service-name SERVICE.amazonaws.com` ([IAM user guide](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_create-service-linked-role.html)); it leaves an existing role alone and, if the creation is denied, says what to ask an administrator for. `verify` reports the role. The IAM guide says RDS creates its role automatically with the first DB instance; it is created in advance anyway so the first create cannot fail the same way |
+| `verify` showed the Fargate quota as 30 vCPU | The documented default is 6, but quotas are per account and can be higher | Nothing to fix; the check compares with what the account actually has |
+
 ## Not stated in the documentation (handled so a wrong guess cannot break a run)
 
 | Question | What the documentation says | How the pipeline copes |

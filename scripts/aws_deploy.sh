@@ -62,6 +62,20 @@ output() {  # output NAME -> stack output value (empty if absent)
 
 account() { aws sts get-caller-identity --query Account --output text; }
 
+# A new account has no service-linked role for ECS (or RDS) until something creates it, and the CloudFormation handler may not:
+# the first cluster then fails with "Unable to assume the service linked role. Please verify that the ECS service linked role
+# exists." AWS documents the fix: `aws iam create-service-linked-role --aws-service-name ecs.amazonaws.com` (IAM user guide,
+# "Creating a service-linked role"). Done here, once, only when the stack uses the service; an existing role is left alone.
+ensure_service_linked_role() {  # ensure_service_linked_role SERVICE ROLE-NAME
+  aws iam get-role --role-name "$2" >/dev/null 2>&1 && return 0
+  echo "Creating the service-linked role $2 for $1 (the account has none yet)"
+  local out
+  if out="$(aws iam create-service-linked-role --aws-service-name "$1" 2>&1)"; then return 0; fi
+  case "$out" in *"has been taken"*|*InvalidInput*taken*) return 0 ;; esac
+  echo "$out" >&2
+  fail "could not create $2. Ask an administrator to run: aws iam create-service-linked-role --aws-service-name $1 (or allow iam:CreateServiceLinkedRole for the deploy role / lift a service control policy that denies it)"
+}
+
 cmd_stack() {
   local extra=("$@")
   # A first create that failed leaves the stack in ROLLBACK_COMPLETE, which cannot be updated. It holds no
@@ -93,6 +107,14 @@ for key, value in json.load(open(sys.argv[1])).items():
         print(f"{key}={value}")' "$ROOT/infra/params/$ENVIRONMENT.json")
   fi
   [ -n "${TRAINING_BACKEND:-}" ] && params+=("TrainingBackend=$TRAINING_BACKEND")
+  local uses_ecs=false uses_rds=false item
+  [ "$SERVING_MODE" = fargate ] && uses_ecs=true
+  for item in "${params[@]}" "${extra[@]}"; do
+    case "$item" in TrainingBackend=ecs|MlflowBackend=ecs) uses_ecs=true ;; esac
+    case "$item" in MlflowBackend=ecs) uses_rds=true ;; esac
+  done
+  ! $uses_ecs || ensure_service_linked_role ecs.amazonaws.com AWSServiceRoleForECS
+  ! $uses_rds || ensure_service_linked_role rds.amazonaws.com AWSServiceRoleForRDS
   # The MLflow server needs its image (target "tools"), which can only be pushed once the stack and its ECR
   # repository exist. Once the image for this commit is there, every stack update passes it, so the service
   # is created by the second `stack` run and is not removed by later ones.
