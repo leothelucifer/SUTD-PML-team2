@@ -23,15 +23,17 @@ from .baselines import (
     plot_sirs_threshold_tradeoff,
     sirs_threshold_sweep,
 )
-from .data import generate_synthetic, load_patients, read_patient, split_patients
+from .data import SUBGROUP_COLUMNS, generate_synthetic, load_patients, read_patient, split_patients
 from .features import META, build_features, feature_table, select_saved_features
 from .hospital_comparison import run_comparison
+from .importance import grouped_permutation_importance
 from .manifest import build_manifest, write_manifest
 from .missingness import run_missingness_analysis
 from .modeling import (
     candidate_models,
     complexity_ranks,
     fit_calibrated,
+    is_numpy_model,
     load_model_config,
 )
 from .monitoring import (
@@ -246,7 +248,7 @@ def run_experiment(args):
     manifest = build_manifest(
         model_name=name, threshold=threshold, cooldown=args.cooldown, window=args.window,
         synthetic=synthetic, feature_columns=columns, metadata=metadata, validation=selected,
-        models_config_sha256=model_config_sha,
+        models_config_sha256=model_config_sha, numpy_model=is_numpy_model(fitted[name]),
     )
     bundle = {
         "model": fitted[name], "model_name": name, "feature_columns": columns,
@@ -255,10 +257,22 @@ def run_experiment(args):
     }
     joblib.dump(bundle, args.output / "model.joblib")
     write_manifest(args.output, manifest, file_sha256(args.output / "model.joblib"))
+    # Which measurements the selected model relies on: validation rows only, nothing is refitted.
+    importance_repeats = getattr(args, "importance_repeats", 3)
+    if importance_repeats > 0:
+        print(f"Permutation importance of {name} on validation ({importance_repeats} shuffle(s) per group)...",
+              flush=True)
+        with threadpool_limits(limits=2):
+            grouped_permutation_importance(
+                fitted[name], tables["validation"], columns, repeats=importance_repeats, seed=args.seed,
+            ).to_csv(args.output / "feature_importance.csv", index=False)
     # Every candidate's validation scores, plus the SIRS score, so `model-report` can compare all models
     # and the baseline (precision, recall, F1, PR curves) without refitting. Validation stays only.
     # Patient-level, so it stays in the run folder (git-ignored) and is never logged to MLflow.
     all_scores = validation_scores[name][META].copy()
+    # Recorded age and gender of each stay, for the subgroup table (bias audit) in `model-report`.
+    for attribute in SUBGROUP_COLUMNS:
+        all_scores[attribute] = tables["validation"][attribute].to_numpy()
     for candidate, table in validation_scores.items():
         all_scores[f"p_{candidate}"] = table["probability"].to_numpy()
     all_scores = all_scores.merge(
@@ -528,6 +542,9 @@ def main():
                              help="Also fit the hand-written NumPy models as candidates (slower)")
         command.add_argument("--skip-data-checks", action="store_true",
                              help="Do not run the schema checks on a Parquet table before training")
+        command.add_argument("--importance-repeats", type=int, default=3,
+                             help="Shuffles per feature group for the selected model's permutation importance "
+                                  "on validation (0 = skip it)")
     tune = sub.add_parser(
         "tune", help="Hyperparameter search with patient-grouped cross-validation on the training split only")
     tune.add_argument("--data", type=Path, required=True, help=DATA_HELP)
@@ -555,6 +572,8 @@ def main():
                         help="Folder written by `evaluate` (adds test-split table and PR curves; reads only)")
     report.add_argument("--bootstrap", type=int, default=200, help="Stay-grouped bootstrap draws (0 = no intervals)")
     report.add_argument("--seed", type=int, default=42)
+    report.add_argument("--min-subgroup-septic-stays", type=int, default=10,
+                        help="Subgroups with fewer septic stays are counted but not scored")
     evaluate = sub.add_parser(
         "evaluate", help="Score the test splits ONCE for a frozen model (never during model development)")
     evaluate.add_argument("--data", type=Path, required=True, help=DATA_HELP)
@@ -761,8 +780,9 @@ def main():
             from .model_report import build_report
 
             manifest = build_report(args.run, args.output, tuning_dir=args.tuning, evaluation_dir=args.evaluation,
-                                    bootstrap=args.bootstrap, seed=args.seed)
-            print(f"Wrote {len(manifest['figures'])} figures and the metrics table to {args.output.resolve()}")
+                                    bootstrap=args.bootstrap, seed=args.seed,
+                                    min_subgroup_septic_stays=args.min_subgroup_septic_stays)
+            print(f"Wrote {len(manifest['figures'])} figures and the metrics tables to {args.output.resolve()}")
             for item in manifest["skipped"]:
                 print(f"  skipped {item['title']}: {item['reason']}")
             print(f"Open {(args.output / 'FIGURES.md').resolve()}", flush=True)

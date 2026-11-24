@@ -125,7 +125,16 @@ Resources:
                 Resource: !Ref ArtifactKeyArn
                 Condition:
                   StringEquals:
-                    "kms:ViaService": !Sub "s3.${AWS::Region}.amazonaws.com"
+                    # The state table is encrypted with the same key, so reads need it through DynamoDB too.
+                    "kms:ViaService":
+                      - !Sub "s3.${AWS::Region}.amazonaws.com"
+                      - !Sub "dynamodb.${AWS::Region}.amazonaws.com"
+              - Effect: Allow
+                Action: kms:GenerateDataKey
+                Resource: !Ref ArtifactKeyArn
+                Condition:
+                  StringEquals:
+                    "kms:ViaService": !Sub "dynamodb.${AWS::Region}.amazonaws.com"
 
   LoadBalancerSecurityGroup:
     Type: AWS::EC2::SecurityGroup

@@ -113,6 +113,13 @@ def _records(hours: list) -> list[dict]:
     return [hour.model_dump(exclude_unset=True) for hour in hours]
 
 
+def route_label(request: Request) -> str:
+    """The matched route template (``/score``), never the raw URL: scans of random paths must not create
+    a new CloudWatch dimension value each, so unmatched requests all share one label."""
+    route = request.scope.get("route")
+    return getattr(route, "path", None) or "unmatched"
+
+
 def create_app(service: ScoringService, model_card: dict | None = None, telemetry=None) -> FastAPI:
     app = FastAPI(
         title="Sepsis early-warning research scorer",
@@ -128,17 +135,29 @@ def create_app(service: ScoringService, model_card: dict | None = None, telemetr
         request.state.stats = {}
         started = time.perf_counter()
         declared = request.headers.get("content-length")
-        if declared and declared.isdigit() and int(declared) > MAX_BODY_BYTES:
+        too_large = int(declared) if declared and declared.isdigit() and int(declared) > MAX_BODY_BYTES else None
+        if too_large is None and request.method in {"POST", "PUT", "PATCH"} and not (declared and declared.isdigit()):
+            # No usable Content-Length (chunked transfer): count the bytes as they arrive and stop at the limit.
+            received, chunks = 0, []
+            async for chunk in request.stream():
+                received += len(chunk)
+                if received > MAX_BODY_BYTES:
+                    too_large = received
+                    break
+                chunks.append(chunk)
+            if too_large is None:
+                request._body = b"".join(chunks)   # replayed to the route; the stream is not read twice
+        if too_large is not None:
             response = JSONResponse(status_code=413, content={
                 "error": "too_large",
-                "detail": f"request body is {int(declared)} bytes; at most {MAX_BODY_BYTES}. Send fewer stays per call",
+                "detail": f"request body is over {MAX_BODY_BYTES} bytes ({too_large} read); send fewer stays per call",
             })
         else:
             response = await call_next(request)
         response.headers["X-Request-Id"] = request_id
         if telemetry is not None:
             telemetry.request(
-                request_id=request_id, method=request.method, path=request.url.path, status=response.status_code,
+                request_id=request_id, method=request.method, path=route_label(request), status=response.status_code,
                 latency_ms=(time.perf_counter() - started) * 1000, model_version=service.model_version,
                 bundle_sha256=service.bundle_sha256, stats=request.state.stats,
             )

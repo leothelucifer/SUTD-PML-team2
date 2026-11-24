@@ -78,8 +78,9 @@ python -m sepsis_warning model-report --run artifacts/real --output reports/resu
 ```
 
 Pass: `reports/results/metrics_table.md` lists every model plus `sirs_rule` with accuracy, precision, recall, F1,
-average precision, AUROC, hourly utility and intervals; the PNGs exist; `FIGURES.md` gives each figure's recreate
-command. Check that the selected model beats `sirs_rule` on utility at the same alert budget. Copy the table and
+average precision, AUROC, hourly utility and intervals; `subgroup_table.md` (sex and age band) and
+`feature_importance.md` exist; the PNGs exist; `FIGURES.md` gives each figure's recreate
+command. Check that the selected model beats `sirs_rule` on utility at the same alert budget. Copy the tables and
 figures into `reports/final/report.md` section 7.
 
 ### A6. Review, promote, serve and call the API
@@ -120,7 +121,8 @@ python -m sepsis_warning model-report --run artifacts/real --output reports/resu
 ```
 
 Pass: `artifacts/evaluation/evaluation_metrics.json` has internal-test and external-test metrics;
-`reports/results_test/test_metrics_table.md` and `fig_test_pr.png` exist. A second `evaluate` on the same model is
+`reports/results_test/test_metrics_table.md` (the model beside the SIRS and never-alert rows),
+`test_subgroup_table.md` and `fig_test_pr.png` exist. A second `evaluate` on the same model is
 refused; that is the point. Report hospital A and hospital B separately.
 
 ### A9. Monitoring rehearsal

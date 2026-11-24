@@ -35,7 +35,13 @@ from mlflow.tracking import MlflowClient
 from .data import DYNAMIC, STATIC
 from .gates import require_gates
 from .scoring import file_sha256, load_bundle
-from .tracking import check_tracking_uri, is_mlflow_app, package_versions, prepare_store
+from .tracking import (
+    check_tracking_uri,
+    is_mlflow_app,
+    is_project_server,
+    package_versions,
+    prepare_store,
+)
 
 MODEL_NAME = "sepsis-warning"
 MODEL_EXPERIMENT = "sepsis-warning-selection"
@@ -129,8 +135,12 @@ def register_bundle(run_dir: Path, tracking_uri: str, run_id: str | None = None,
 
 
 def caller_identity(tracking_uri: str) -> str:
-    """Who is acting: the AWS principal on the SageMaker MLflow App, else the local user."""
-    if is_mlflow_app(tracking_uri):
+    """Who is acting: the AWS principal on the SageMaker MLflow App or the ECS MLflow server, else the local user.
+
+    On AWS the principal is what separates the person who registered a version from the one who approves it,
+    so a task running as the training role and one running as the approver role are different identities.
+    """
+    if is_mlflow_app(tracking_uri) or is_project_server(tracking_uri):
         import boto3
 
         return boto3.client("sts").get_caller_identity()["Arn"]

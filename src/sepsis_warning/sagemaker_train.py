@@ -7,8 +7,10 @@ SageMaker starts the training image with the argument ``train``. This module:
    ``cooldown``, ``mlflow_tracking_uri`` (the MLflow App ARN),
    ``register_model`` ("true"/"false"), ``git_commit``, ``require_gates`` (do
    not register a model that fails the promotion gates), ``mode`` (``train``,
-   ``prepare`` to build the data in S3, ``tune`` for the grouped-CV search, or
-   ``evaluate_publish`` for the pipeline step after approval);
+   ``prepare`` to build the data in S3, ``tune`` for the grouped-CV search,
+   ``promote`` to move ``@production`` after the gates, ``monitor_reference`` to
+   build the Evidently reference of the served model, or ``evaluate_publish`` for
+   the pipeline step after approval);
 2. reads the ``data`` channel, ``/opt/ml/input/data/data/``: either
    ``combined.parquet`` with ``splits.csv`` (and optionally
    ``splits.csv.summary.json`` and ``dvc.lock``), or a folder with
@@ -32,7 +34,9 @@ shows as the job's failure reason. ``SM_ROOT`` overrides ``/opt/ml`` for tests.
 
 import json
 import os
+import shutil
 import sys
+import tempfile
 import traceback
 from argparse import Namespace
 from pathlib import Path
@@ -82,6 +86,75 @@ def build_args(root: Path) -> Namespace:
     )
 
 
+# Only these files of a frozen evaluation may leave the step: no patient rows, no replay page.
+AGGREGATE_EVALUATION_FILES = ("evaluation_metrics.json",)
+
+
+def promote_model(root: Path, params: dict) -> dict:
+    """Approval step: gates, a named reviewer, then ``@production`` moves to the version.
+
+    Runs as its own task with a different role from the training task, so on AWS the principal that
+    registered the version cannot also promote it (see ``registry.promote``). Hyperparameters:
+    ``mlflow_tracking_uri``, ``model_version`` and ``reviewed_by`` (required), optionally ``alias``
+    (default production) and ``require_real_data``.
+    """
+    from .registry import MODEL_NAME, promote
+    from .tracking import check_tracking_uri, require_mlflow
+
+    tracking, version, reviewer = params.get("mlflow_tracking_uri"), params.get("model_version"), params.get("reviewed_by")
+    if not tracking or not version or not reviewer:
+        raise ValueError("mode promote needs mlflow_tracking_uri, model_version and reviewed_by")
+    check_tracking_uri(tracking)
+    require_mlflow()
+    change = promote(tracking, str(version), reviewer, name=params.get("model_name") or MODEL_NAME,
+                     alias=params.get("alias") or "production",
+                     require_real_data=_flag(params.get("require_real_data", "false")))
+    (root / "model").mkdir(parents=True, exist_ok=True)
+    (root / "model" / "promotion.json").write_text(json.dumps(change, indent=2), encoding="utf-8")
+    print(f"Promoted {change['name']} version {change['version']} to @{change['alias']} "
+          f"(reviewer {change['reviewed_by']}, approver {change['approved_by']})", flush=True)
+    return change
+
+
+def monitor_reference(root: Path, params: dict, args: Namespace, client=None) -> list[str]:
+    """Build the Evidently reference for the model that is (or will be) served, from hospital A validation only.
+
+    The frozen model scores the validation stays in batch; the result, reduced to the columns the live prediction
+    log can also provide (``evidently_frames``), goes to ``monitoring/evidently/<bundle>/``. The test splits are never
+    read. Hyperparameters: ``mlflow_tracking_uri``, ``publish_bucket`` and optionally ``model_uri``
+    (default ``models:/sepsis-warning@production``).
+    """
+    import datetime
+
+    from .data import DYNAMIC
+    from .evidently_frames import reference_frame
+    from .registry import resolve_model
+    from .scoring import load_bundle, score_patients
+    from .splits import load_split_patients
+
+    tracking, bucket = params.get("mlflow_tracking_uri"), params.get("publish_bucket")
+    if not tracking or not bucket:
+        raise ValueError("mode monitor_reference needs mlflow_tracking_uri and publish_bucket")
+    if args.splits is None:
+        raise ValueError("mode monitor_reference needs combined.parquet with splits.csv in the data channel")
+    model_uri = params.get("model_uri") or "models:/sepsis-warning@production"
+    with tempfile.TemporaryDirectory(prefix="sepsis-reference-") as scratch:
+        path, sha, _ = resolve_model(model_uri, tracking, Path(scratch))
+        bundle = load_bundle(path, sha)
+        cohorts = load_split_patients(args.data, args.splits)
+        reference = reference_frame(score_patients(bundle, cohorts["validation"], DYNAMIC))
+    output = root / "model" / "reference"
+    output.mkdir(parents=True, exist_ok=True)
+    reference.to_parquet(output / "reference.parquet", index=False)
+    (output / "reference.json").write_text(json.dumps({
+        "bundle_sha256": sha, "model_name": bundle["model_name"], "threshold": float(bundle["threshold"]),
+        "rows": int(len(reference)), "alert_rate": float(reference["new_alert"].mean()), "split": "validation",
+        "created_at": datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds")}, indent=2), encoding="utf-8")
+    uris = _upload(output, bucket, f"monitoring/evidently/{sha[:12]}", client=client)
+    print(f"Evidently reference for bundle {sha[:12]} ({len(reference)} hourly rows): " + ", ".join(uris), flush=True)
+    return uris
+
+
 def evaluate_and_publish(root: Path, params: dict, args: Namespace) -> dict:
     """Pipeline step after approval: the one frozen evaluation, then a write-once publish to S3.
 
@@ -89,19 +162,29 @@ def evaluate_and_publish(root: Path, params: dict, args: Namespace) -> dict:
     ``model_uri`` (default ``models:/sepsis-warning@production``).
     """
     from .evaluation import AlreadyEvaluated, run_frozen_evaluation
-    from .model_source import publish_model
+    from .model_source import check_promoted, publish_model
 
     tracking, bucket = params.get("mlflow_tracking_uri"), params.get("publish_bucket")
     if not tracking or not bucket:
         raise ValueError("mode evaluate_publish needs mlflow_tracking_uri and publish_bucket")
     model_uri = params.get("model_uri") or "models:/sepsis-warning@production"
-    try:
-        run_frozen_evaluation(data=args.data, splits=args.splits, seed=args.seed, model_uri=model_uri,
-                              mlflow_uri=tracking, output=root / "model" / "evaluation")
-    except AlreadyEvaluated as error:
-        print(f"Frozen evaluation already recorded ({error}); publishing without a second look.", flush=True)
+    # Before the one-time test evaluation: the version must have been promoted by a named reviewer.
+    check_promoted(model_uri, tracking)
+    # The evaluation writes patient-level test predictions and a replay page. SageMaker archives everything
+    # under /opt/ml/model into model.tar.gz, so those files go to a scratch folder that is deleted at the end
+    # of the step; only the aggregate metrics file is kept with the job's output.
+    (root / "model" / "evaluation").mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="sepsis-evaluation-") as scratch:
+        scratch_output = Path(scratch) / "evaluation"
+        try:
+            run_frozen_evaluation(data=args.data, splits=args.splits, seed=args.seed, model_uri=model_uri,
+                                  mlflow_uri=tracking, output=scratch_output)
+        except AlreadyEvaluated as error:
+            print(f"Frozen evaluation already recorded ({error}); publishing without a second look.", flush=True)
+        for name in AGGREGATE_EVALUATION_FILES:
+            if (scratch_output / name).is_file():
+                shutil.copy2(scratch_output / name, root / "model" / "evaluation" / name)
     published = publish_model(model_uri, tracking, bucket)
-    (root / "model").mkdir(parents=True, exist_ok=True)
     (root / "model" / "publish.json").write_text(json.dumps(published, indent=2), encoding="utf-8")
     print(f"Published {published['model_s3_uri']} sha256 {published['sha256']}", flush=True)
     return published
@@ -158,6 +241,30 @@ def fetch_raw_from_s3(bucket: str, prefix: str, destination: Path, limit: int, s
     return len(jobs)
 
 
+MARKER = "_SUCCESS"
+
+
+def _s3(client=None):
+    client = client or S3_CLIENT
+    if client is None:
+        import boto3
+
+        client = boto3.client("s3")
+    return client
+
+
+def read_marker(client, bucket: str, prefix: str) -> dict | None:
+    """The ``_SUCCESS`` record a finished prepare step leaves next to the data, or None."""
+    try:
+        body = client.get_object(Bucket=bucket, Key=f"{prefix.strip('/')}/{MARKER}")["Body"].read()
+    except Exception as error:  # noqa: BLE001 - only "not there" means None
+        code = getattr(error, "response", {}).get("Error", {}).get("Code", "")
+        if code in ("NoSuchKey", "404", "NotFound") or type(error).__name__ == "NoSuchKey":
+            return None
+        raise
+    return json.loads(body)
+
+
 def prepare_data(root: Path, params: dict, client=None) -> list[str]:
     """Pipeline step 1: build the data in S3 so nothing has to be prepared on a laptop.
 
@@ -175,6 +282,19 @@ def prepare_data(root: Path, params: dict, client=None) -> list[str]:
     if not bucket:
         raise ValueError("mode prepare needs publish_bucket")
     source, seed = params.get("data_source", "synthetic"), int(params.get("seed", 42))
+    prefix, limit = params.get("data_prefix", "data/physionet"), int(params.get("limit", 0))
+    # The real data never changes, so it is prepared once. A rerun with the same settings does nothing, and a
+    # rehearsal on the synthetic fixture can never overwrite it (force=true is the deliberate way around that).
+    existing = read_marker(_s3(client), bucket, prefix)
+    if existing and not _flag(params.get("force", "false")):
+        real = lambda name: str(name).startswith("physionet")   # noqa: E731
+        if real(existing.get("data_source")) and not real(source):
+            raise ValueError(f"s3://{bucket}/{prefix}/ holds real PhysioNet data (prepared {existing.get('prepared_at')}); "
+                             "refusing to overwrite it with the synthetic fixture. Use a different data prefix, or force=true")
+        if (existing.get("data_source"), existing.get("limit"), existing.get("seed")) == (source, limit, seed):
+            print(f"s3://{bucket}/{prefix}/ already holds {source} data prepared {existing.get('prepared_at')} "
+                  f"({existing.get('files', {}).get('combined.parquet', {}).get('sha256', '')[:12]}); nothing to do", flush=True)
+            return []
     raw = root / "work" / "raw"
     raw.mkdir(parents=True, exist_ok=True)
     if source == "synthetic":
@@ -199,7 +319,16 @@ def prepare_data(root: Path, params: dict, client=None) -> list[str]:
     manifest = raw / "download_manifest.json"
     if manifest.is_file():
         (built / "download_manifest.json").write_bytes(manifest.read_bytes())
-    uris = _upload(built, bucket, params.get("data_prefix", "data/physionet"), client=client)
+    import datetime
+    import hashlib
+
+    files = {name: {"sha256": hashlib.sha256((built / name).read_bytes()).hexdigest(), "bytes": (built / name).stat().st_size}
+             for name in ("combined.parquet", "splits.csv")}
+    (built / MARKER).write_text(json.dumps({
+        "data_source": source, "limit": limit, "seed": seed, "files": files,
+        "raw_records": sum(1 for _ in (raw).rglob("*.psv")),
+        "prepared_at": datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds")}, indent=2), encoding="utf-8")
+    uris = _upload(built, bucket, prefix, client=client)
     print(f"Prepared {source} data: " + ", ".join(uris), flush=True)
     return uris
 
@@ -264,10 +393,16 @@ def main(argv=None) -> int:
         if mode == "prepare":  # needs no input data: it makes it
             prepare_data(root, params)
             return 0
+        if mode == "promote":  # works on the registry only
+            promote_model(root, params)
+            return 0
         args = build_args(root)
         if args.mlflow_uri:
             check_tracking_uri(args.mlflow_uri)
             require_mlflow()
+        if mode == "monitor_reference":
+            monitor_reference(root, params, args)
+            return 0
         if mode == "evaluate_publish":
             evaluate_and_publish(root, params, args)
             return 0

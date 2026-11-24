@@ -161,10 +161,36 @@ class PromotionAndPublishTests(unittest.TestCase):
             with self.assertRaisesRegex(PublishRefused, "frozen evaluation"):
                 publish_model(uri, self.uri, "bucket2", client=s3)
             client.set_model_version_tag(MODEL_NAME, self.version, EVALUATED_TAG, "2026-11-15T00:00:00+00:00")
+            # Evaluated but never promoted: a real-data version still cannot be published, and the check
+            # that runs before the one-time evaluation refuses it too.
+            from sepsis_warning.model_source import check_promoted
+
+            with self.assertRaisesRegex(PublishRefused, "not promoted"):
+                check_promoted(uri, self.uri)
+            with self.assertRaisesRegex(PublishRefused, "not promoted"):
+                publish_model(uri, self.uri, "bucket2", client=s3)
+            for key in ("reviewed_by", "approved_by", "promoted_at"):
+                client.set_model_version_tag(MODEL_NAME, self.version, f"production_{key}", "tester")
+            # Promoted tags, but @production points at another version.
+            other = client.create_model_version(MODEL_NAME, source=client.get_model_version(MODEL_NAME, self.version).source,
+                                                run_id=None)
+            client.set_registered_model_alias(MODEL_NAME, "production", other.version)
+            with self.assertRaisesRegex(PublishRefused, "now points at version"):
+                publish_model(uri, self.uri, "bucket2", client=s3)
+            client.set_registered_model_alias(MODEL_NAME, "production", self.version)
             self.assertTrue(publish_model(uri, self.uri, "bucket2", client=s3)["created"])
         finally:
             client.set_model_version_tag(MODEL_NAME, self.version, "synthetic", "true")
             client.delete_model_version_tag(MODEL_NAME, self.version, EVALUATED_TAG)
+            for key in ("reviewed_by", "approved_by", "promoted_at"):
+                try:
+                    client.delete_model_version_tag(MODEL_NAME, self.version, f"production_{key}")
+                except Exception:
+                    pass
+            try:
+                client.delete_registered_model_alias(MODEL_NAME, "production")
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":

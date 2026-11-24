@@ -61,6 +61,23 @@ class DeployWorkflowTests(unittest.TestCase):
         self.assertIn("GitHubOwnerId=", script)
         self.assertIn("GitHubRepositoryId=", script)
 
+    def test_workflows_with_aws_access_install_only_hash_locked_packages(self):
+        import re
+
+        for name in ("deploy.yml", "pipeline.yml", "verify.yml", "teardown.yml"):
+            workflow = PATH.parents[2] / ".github" / "workflows" / name
+            for line in workflow.read_text(encoding="utf-8").splitlines():
+                if "pip install" not in line or line.strip().startswith("#"):
+                    continue
+                locked = "--require-hashes" in line
+                own_package = re.search(r"pip install --no-deps (-e )?\.", line)
+                tooling = re.search(r"pip install (--upgrade )?(pip|uv|pip-audit)\b", line)
+                self.assertTrue(locked or own_package or tooling, f"{workflow.name}: unpinned install: {line.strip()}")
+
+    def test_mlflow_floor_matches_the_api_the_registry_uses(self):
+        text = (PATH.parents[2] / "pyproject.toml").read_text(encoding="utf-8")
+        self.assertIn('tracking = ["mlflow>=3.0,<4"]', text)    # registry.py logs models with the MLflow 3 name= argument
+
     def test_untrusted_text_goes_through_env_not_inline(self):
         for step in self.workflow["jobs"]["deploy"]["steps"]:
             self.assertNotIn("inputs.model_uri", step.get("run", ""))

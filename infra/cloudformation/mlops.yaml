@@ -1,7 +1,7 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
-  Serverless MLOps: SageMaker AI MLflow App (experiment tracking and model registry,
-  no hourly server) and the role SageMaker training jobs run as. Training jobs are
+  Team policies (train, approve, deploy) and, only with EnableSageMaker, the SageMaker AI MLflow App (experiment
+  tracking and model registry, no hourly server) and the role SageMaker training jobs run as. Training jobs are
   started on demand by scripts/sagemaker_train.py; nothing here runs or bills between jobs.
 
 Parameters:
@@ -19,16 +19,35 @@ Parameters:
     Type: String
   ScoringRepositoryArn:
     Type: String
+  EnableSageMaker:
+    Type: String
+    Default: "true"
+    AllowedValues: ["false", "true"]
+    Description: >-
+      Master switch for everything SageMaker: the training role, the SageMaker statements of the team policies and the
+      MLflow App. Off while the account has no SageMaker access; training then runs on ECS.
+  EnableMlflowApp:
+    Type: String
+    Default: "true"
+    AllowedValues: ["false", "true"]
+    Description: Feature flag for the serverless SageMaker MLflow App. Off when MLflow runs on ECS instead.
   MlflowMaintenanceWindow:
     Type: String
     Default: "Sun:18:00"
     AllowedPattern: "(Mon|Tue|Wed|Thu|Fri|Sat|Sun):([01]\\d|2[0-3]):([0-5]\\d)"
     Description: Weekly MLflow App maintenance start in UTC (Sun 18:00 UTC is Mon 02:00 in Singapore).
 
+Conditions:
+  HasSageMaker: !Equals [!Ref EnableSageMaker, "true"]
+  HasMlflowApp: !And
+    - !Condition HasSageMaker
+    - !Equals [!Ref EnableMlflowApp, "true"]
+
 Resources:
   # The MLflow App reads and writes run artifacts and registered models under mlflow/.
   MlflowAppRole:
     Type: AWS::IAM::Role
+    Condition: HasMlflowApp
     Properties:
       Description: Lets the SageMaker MLflow App use its artifact store.
       # Trust policy as documented for MLflow Apps (Set up IAM permissions for MLflow Apps).
@@ -72,6 +91,7 @@ Resources:
   # Serverless MLflow: no instance, no hourly charge; storage is the S3 prefix above.
   MlflowApp:
     Type: AWS::SageMaker::MlflowApp
+    Condition: HasMlflowApp
     Properties:
       Name: !Sub "${EnvironmentName}-mlflow"
       ArtifactStoreUri: !Sub "s3://${ArtifactBucketName}/mlflow"
@@ -88,6 +108,7 @@ Resources:
   # pull the training image, log and register in the MLflow App.
   SageMakerExecutionRole:
     Type: AWS::IAM::Role
+    Condition: HasSageMaker
     Properties:
       Description: Role for sepsis-warning SageMaker AI training jobs.
       # Confused-deputy guard as documented for SageMaker training jobs.
@@ -174,12 +195,15 @@ Resources:
                 Condition:
                   StringLike:
                     "cloudwatch:namespace": "/aws/sagemaker/*"
-              - Sid: LogToMlflowApp
-                Effect: Allow
-                Action:
-                  - sagemaker:CallMlflowAppApi
-                  - sagemaker:DescribeMlflowApp
-                Resource: !GetAtt MlflowApp.Arn
+              - !If
+                - HasMlflowApp
+                - Sid: LogToMlflowApp
+                  Effect: Allow
+                  Action:
+                    - sagemaker:CallMlflowAppApi
+                    - sagemaker:DescribeMlflowApp
+                  Resource: !GetAtt MlflowApp.Arn
+                - !Ref AWS::NoValue
 
   # Three duties, three policies. Attach each to different people (or roles) so the person
   # who trains a model is not the one who approves it, and neither deploys alone.
@@ -193,28 +217,37 @@ Resources:
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
-          - Sid: UseMlflowApp
-            Effect: Allow
-            Action:
-              - sagemaker:CallMlflowAppApi
-              - sagemaker:DescribeMlflowApp
-              - sagemaker:CreatePresignedMlflowAppUrl
-            Resource: !GetAtt MlflowApp.Arn
-          - Sid: RunTrainingJobs
-            Effect: Allow
-            Action:
-              - sagemaker:CreateTrainingJob
-              - sagemaker:DescribeTrainingJob
-              - sagemaker:StopTrainingJob
-              - sagemaker:AddTags
-            Resource: !Sub "arn:${AWS::Partition}:sagemaker:${AWS::Region}:${AWS::AccountId}:training-job/sepsis-*"
-          - Sid: PassTrainingRole
-            Effect: Allow
-            Action: iam:PassRole
-            Resource: !GetAtt SageMakerExecutionRole.Arn
-            Condition:
-              StringEquals:
-                "iam:PassedToService": sagemaker.amazonaws.com
+          - !If
+            - HasMlflowApp
+            - Sid: UseMlflowApp
+              Effect: Allow
+              Action:
+                - sagemaker:CallMlflowAppApi
+                - sagemaker:DescribeMlflowApp
+                - sagemaker:CreatePresignedMlflowAppUrl
+              Resource: !GetAtt MlflowApp.Arn
+            - !Ref AWS::NoValue
+          - !If
+            - HasSageMaker
+            - Sid: RunTrainingJobs
+              Effect: Allow
+              Action:
+                - sagemaker:CreateTrainingJob
+                - sagemaker:DescribeTrainingJob
+                - sagemaker:StopTrainingJob
+                - sagemaker:AddTags
+              Resource: !Sub "arn:${AWS::Partition}:sagemaker:${AWS::Region}:${AWS::AccountId}:training-job/sepsis-*"
+            - !Ref AWS::NoValue
+          - !If
+            - HasSageMaker
+            - Sid: PassTrainingRole
+              Effect: Allow
+              Action: iam:PassRole
+              Resource: !GetAtt SageMakerExecutionRole.Arn
+              Condition:
+                StringEquals:
+                  "iam:PassedToService": sagemaker.amazonaws.com
+            - !Ref AWS::NoValue
           - Sid: UploadTrainingData
             Effect: Allow
             Action:
@@ -263,13 +296,16 @@ Resources:
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
-          - Sid: UseMlflowApp
-            Effect: Allow
-            Action:
-              - sagemaker:CallMlflowAppApi
-              - sagemaker:DescribeMlflowApp
-              - sagemaker:CreatePresignedMlflowAppUrl
-            Resource: !GetAtt MlflowApp.Arn
+          - !If
+            - HasMlflowApp
+            - Sid: UseMlflowApp
+              Effect: Allow
+              Action:
+                - sagemaker:CallMlflowAppApi
+                - sagemaker:DescribeMlflowApp
+                - sagemaker:CreatePresignedMlflowAppUrl
+              Resource: !GetAtt MlflowApp.Arn
+            - !Ref AWS::NoValue
           - Sid: ApprovePipeline
             Effect: Allow
             Action:
@@ -292,12 +328,15 @@ Resources:
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
-          - Sid: ReadMlflowApp
-            Effect: Allow
-            Action:
-              - sagemaker:CallMlflowAppApi
-              - sagemaker:DescribeMlflowApp
-            Resource: !GetAtt MlflowApp.Arn
+          - !If
+            - HasMlflowApp
+            - Sid: ReadMlflowApp
+              Effect: Allow
+              Action:
+                - sagemaker:CallMlflowAppApi
+                - sagemaker:DescribeMlflowApp
+              Resource: !GetAtt MlflowApp.Arn
+            - !Ref AWS::NoValue
           - Sid: PublishModels
             Effect: Allow
             Action:
@@ -346,9 +385,11 @@ Resources:
 
 Outputs:
   MlflowAppArn:
-    Description: Tracking URI for MLflow (with the sagemaker-mlflow plugin).
+    Condition: HasMlflowApp
+    Description: Tracking URI for MLflow (with the sagemaker-mlflow plugin). Only exists when the flag is on.
     Value: !GetAtt MlflowApp.Arn
   SageMakerExecutionRoleArn:
+    Condition: HasSageMaker
     Value: !GetAtt SageMakerExecutionRole.Arn
   TrainerPolicyArn:
     Value: !Ref TrainerPolicy

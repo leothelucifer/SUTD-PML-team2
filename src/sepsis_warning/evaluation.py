@@ -8,6 +8,11 @@ hospital B (``external_test``). After a model has been reviewed and frozen,
   evaluated again;
 * a local bundle gets ``frozen_evaluation.json`` beside it, with the same effect.
 
+``held_out_predictions.csv`` holds, for every test hour, the model's probability
+and decisions, the SIRS score of the same hour and the stay's recorded age and
+gender. ``model-report --evaluation`` reads it for the test-split table, the
+baseline rows and the subgroup table; it is stay-level and stays private.
+
 Repeated looks at a test set make its numbers optimistic, so there is no
 override for real data. Synthetic fixtures may be re-evaluated: their numbers
 carry no evidence either way.
@@ -22,6 +27,8 @@ import json
 from argparse import Namespace
 from pathlib import Path
 
+from .baselines import baseline_table
+from .data import SUBGROUP_COLUMNS
 from .policy import summarize
 from .report import write_report
 from .scoring import file_sha256, load_bundle, score_patients
@@ -107,8 +114,13 @@ def run_frozen_evaluation(*, data: Path, output: Path, splits: Path | None = Non
     output.mkdir(parents=True, exist_ok=True)
     scored, results = [], {}
     for split in TEST_SPLITS:
-        table = score_patients(bundle, cohorts[split])
+        table = score_patients(bundle, cohorts[split], input_columns=SUBGROUP_COLUMNS)
         results[split] = summarize(table)
+        # The SIRS score of the same hours, so `model-report` can put the baseline beside the model
+        # on the test splits. It is a fixed rule: nothing is tuned here.
+        sirs = baseline_table(cohorts[split], "sirs")[["patient_id", "hour", "probability"]]
+        table = table.merge(sirs.rename(columns={"probability": "sirs_score"}), on=["patient_id", "hour"],
+                            how="left", validate="one_to_one")
         table["split"] = split
         scored.append(table)
     evaluated_at = _now()

@@ -238,3 +238,56 @@ class StackFailureTests(unittest.TestCase):
         self.assertIn("'null' values are not allowed", text)
         self.assertNotIn("cancelled", text)
         self.assertIn("TrainingPipeline", text)
+
+
+class StaleFailureTests(unittest.TestCase):
+    """An earlier failed attempt must not be reported as the cause of the latest one (deploy runs 23 to 27)."""
+
+    def load(self):
+        spec = importlib.util.spec_from_file_location("aws_stack_failures", ROOT / "scripts" / "aws_stack_failures.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_only_the_latest_operation_is_reported(self):
+        import datetime
+
+        failures = self.load()
+        t = lambda hour, minute=0: datetime.datetime(2026, 11, 24, hour, minute, tzinfo=datetime.UTC)  # noqa: E731
+        old_nested = "arn:aws:cloudformation:ap-southeast-2:1:stack/sepsis-dev-EcsPlatform-OLD/aaa"
+        new_nested = "arn:aws:cloudformation:ap-southeast-2:1:stack/sepsis-dev-PipelineEcs-NEW/bbb"
+        events = {
+            "sepsis-dev": [   # newest first, as DescribeStackEvents returns them
+                {"StackName": "sepsis-dev", "LogicalResourceId": "PipelineEcs", "ResourceType": "AWS::CloudFormation::Stack",
+                 "PhysicalResourceId": new_nested, "ResourceStatus": "CREATE_FAILED", "Timestamp": t(15, 25),
+                 "ResourceStatusReason": "Embedded stack was not successfully created"},
+                {"StackName": "sepsis-dev", "LogicalResourceId": "sepsis-dev", "ResourceType": "AWS::CloudFormation::Stack",
+                 "PhysicalResourceId": "arn:aws:cloudformation:ap-southeast-2:1:stack/sepsis-dev/root", "ResourceStatus": "UPDATE_IN_PROGRESS",
+                 "Timestamp": t(15, 12), "ResourceStatusReason": "User Initiated"},
+                {"StackName": "sepsis-dev", "LogicalResourceId": "EcsPlatform", "ResourceType": "AWS::CloudFormation::Stack",
+                 "PhysicalResourceId": old_nested, "ResourceStatus": "CREATE_FAILED", "Timestamp": t(9, 13),
+                 "ResourceStatusReason": "Embedded stack was not successfully created"},
+            ],
+            new_nested: [
+                {"StackName": "sepsis-dev-PipelineEcs-NEW", "LogicalResourceId": "TrainingPipeline", "ResourceType": "AWS::StepFunctions::StateMachine",
+                 "PhysicalResourceId": "", "ResourceStatus": "CREATE_FAILED", "Timestamp": t(15, 24),
+                 "ResourceStatusReason": "State machine already exists"},
+            ],
+            old_nested: [
+                {"StackName": "sepsis-dev-EcsPlatform-OLD", "LogicalResourceId": "Cluster", "ResourceType": "AWS::ECS::Cluster",
+                 "PhysicalResourceId": "", "ResourceStatus": "CREATE_FAILED", "Timestamp": t(9, 13),
+                 "ResourceStatusReason": "Unable to assume the service linked role"},
+            ],
+        }
+        cfn = Namespace(describe_stack_events=lambda StackName, **kw: {"StackEvents": events[StackName]})
+        text = failures.report(failures.failures(cfn, "sepsis-dev"))
+        self.assertIn("State machine already exists", text)
+        self.assertNotIn("service linked role", text)               # the old attempt, long fixed
+        self.assertNotIn("EcsPlatform-OLD", text)
+
+    def test_events_without_timestamps_are_all_kept(self):
+        failures = self.load()
+        events = [{"StackName": "s", "LogicalResourceId": "X", "ResourceType": "AWS::S3::Bucket", "PhysicalResourceId": "",
+                   "ResourceStatus": "CREATE_FAILED", "ResourceStatusReason": "boom"}]
+        cfn = Namespace(describe_stack_events=lambda StackName, **kw: {"StackEvents": events})
+        self.assertIn("boom", failures.report(failures.failures(cfn, "s")))

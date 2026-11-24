@@ -244,7 +244,8 @@ Resources:
       AlarmName: !Sub "${EnvironmentName}-drift"
       AlarmDescription: >-
         The daily drift job reported an alarm: scores, alert rate or input missingness moved
-        away from the frozen reference. A person reviews; nothing is retrained automatically
+        away from the frozen reference, or the prediction log comes from a different model than the
+        reference (level 3: run monitor-setup for the deployed model). A person reviews; nothing is retrained automatically
         without approval. Runbook: docs/runbooks/drift-alarm.md
       Namespace: SepsisWarning/Drift
       MetricName: DriftLevel

@@ -1,9 +1,16 @@
 {
-  "_comment": "Parameters for the dev stack (sepsis-dev). Use a separate AWS account per environment. Budget and alert emails come from BUDGET_EMAIL / ALERT_EMAIL.",
+  "_comment": "Parameters for the dev stack (sepsis-dev). Use a separate AWS account per environment. Budget and alert emails come from BUDGET_EMAIL / ALERT_EMAIL. EnableSageMaker=false removes every SageMaker resource, permission and API call (the account has no SageMaker access yet); set it to true, TrainingBackend and MlflowBackend to sagemaker, once it is approved. TrainingBackend=ecs runs the pipeline steps as ECS Fargate tasks; MlflowBackend=ecs hosts MLflow on ECS (RDS PostgreSQL, S3 artifacts). EnableEvidently=true adds the Evidently UI service, the drift report task and its alarm.",
   "EnvironmentName": "sepsis-dev",
   "DeploymentType": "AllAtOnce",
   "MonthlyBudgetUsd": "20",
   "TrainingOutputRetentionDays": "30",
   "EnablePipeline": "true",
-  "EnableObservability": "true"
+  "EnableObservability": "true",
+  "TrainingBackend": "ecs",
+  "EcsTrainingCpu": "4096",
+  "EcsTrainingMemory": "16384",
+  "MlflowBackend": "ecs",
+  "EnableSageMakerMlflowApp": "false",
+  "EnableEvidently": "true",
+  "EnableSageMaker": "false"
 }

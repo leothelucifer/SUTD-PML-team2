@@ -18,6 +18,7 @@ tracking URI) is also accepted; it needs the ``sagemaker`` extra.
 
 import hashlib
 import importlib.metadata
+import ipaddress
 import json
 import math
 import os
@@ -163,12 +164,34 @@ def is_mlflow_app(uri: str) -> bool:
     return bool(MLFLOW_APP_ARN.match(uri or ""))
 
 
+def is_project_server(uri: str) -> bool:
+    """The team's own MLflow server on ECS: an http(s) URL on a private name or address.
+
+    Its Cloud Map name ends in ``.local`` and it only accepts connections from inside the project's VPC (or from
+    addresses opened with the power workflow), so it is part of the project, not another hosted service. A person
+    on a laptop can name extra hosts they were given in ``SEPSIS_MLFLOW_HOSTS`` (comma separated).
+    """
+    parsed = urlparse(uri or "")
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        return False
+    host = parsed.hostname.lower()
+    if host in LOCAL_HOSTS:
+        return False   # localhost servers are handled (and allowed) separately: they are not shared
+    extra = {h.strip().lower() for h in os.environ.get("SEPSIS_MLFLOW_HOSTS", "").split(",") if h.strip()}
+    if host in extra or host.endswith(".local"):
+        return True
+    try:
+        return ipaddress.ip_address(host).is_private
+    except ValueError:
+        return False
+
+
 def check_tracking_uri(uri: str) -> str:
-    """Allow local stores, localhost servers and the team's SageMaker MLflow App.
+    """Allow local stores, localhost servers, the team's SageMaker MLflow App and its MLflow server on ECS.
 
     Anything else (another hosted MLflow, a remote server) needs team approval first.
     """
-    if is_mlflow_app(uri):
+    if is_mlflow_app(uri) or is_project_server(uri):
         return uri
     parsed = urlparse(uri)
     # MLflow reads bare "databricks"/"databricks-uc" as a hosted workspace, not a folder.

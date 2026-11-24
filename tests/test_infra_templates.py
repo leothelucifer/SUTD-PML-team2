@@ -48,6 +48,24 @@ class TemplateTests(unittest.TestCase):
         self.assertIn("Reusing existing $target image", text)
         self.assertIn("docker push --quiet \"$repo:$image_tag\"", text)
 
+    def test_every_role_that_uses_the_encrypted_state_table_may_use_its_key_through_dynamodb(self):
+        # The state table is encrypted with the artifact key: without these two statements every ledger
+        # read or write fails with AccessDeniedException (found on the Fargate task role).
+        for name in ("service.yaml", "serverless.yaml"):
+            text = (Path(__file__).resolve().parents[1] / "infra" / "cloudformation" / name).read_text(encoding="utf-8")
+            self.assertIn("dynamodb:UpdateItem", text, name)
+            decrypt = text.split("Action: kms:Decrypt", 1)[1].split("- Effect", 1)[0]
+            self.assertIn("dynamodb.${AWS::Region}.amazonaws.com", decrypt, f"{name}: kms:Decrypt via DynamoDB")
+            generate = text.split("Action: kms:GenerateDataKey", 1)[1].split("\n\n", 1)[0]
+            self.assertIn("dynamodb.${AWS::Region}.amazonaws.com", generate, f"{name}: kms:GenerateDataKey via DynamoDB")
+
+    def test_lock_files_hold_no_local_paths(self):
+        root = Path(__file__).resolve().parents[1]
+        for path in sorted((root / "requirements").glob("*.txt")) + [root / "requirements.txt"]:
+            text = path.read_text(encoding="utf-8")
+            for marker in ("/tmp/", "scratchpad", "claude-0", "/home/"):
+                self.assertNotIn(marker, text, f"{path.name} contains a local path ({marker})")
+
     def test_the_budget_rule_still_exists(self):
         text = (Path(__file__).resolve().parents[1] / "infra" / "cloudformation" / "monitoring.yaml").read_text(encoding="utf-8")
         self.assertIn("MonthlyBudgetRequiresEmail", rules_block(text))
@@ -56,3 +74,27 @@ class TemplateTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StateMachineNameTests(unittest.TestCase):
+    def test_the_two_pipelines_never_share_a_state_machine_name(self):
+        # CloudFormation creates the new pipeline before it deletes the old one when a stack switches backends; a shared
+        # fixed name fails with "State machine already exists" (deploy runs 23 to 27).
+        names = {}
+        for template in ("pipeline.yaml", "pipeline-ecs.yaml"):
+            text = (Path(__file__).resolve().parents[1] / "infra" / "cloudformation" / template).read_text(encoding="utf-8")
+            match = re.search(r"StateMachineName: !Sub \"(.+?)\"", text)
+            self.assertIsNotNone(match, template)
+            names[template] = match.group(1)
+        self.assertEqual(len(set(names.values())), 2, names)
+
+    def test_no_resource_that_both_backends_create_has_the_same_fixed_name(self):
+        root = Path(__file__).resolve().parents[1] / "infra" / "cloudformation"
+        fixed = {}
+        for template in ("pipeline.yaml", "pipeline-ecs.yaml", "mlflow-ecs.yaml", "evidently-ecs.yaml", "ecs-platform.yaml", "mlops.yaml"):
+            text = (root / template).read_text(encoding="utf-8")
+            for key in ("StateMachineName", "ClusterName", "ServiceName", "AlarmName", "LogGroupName", "Family"):
+                for value in re.findall(rf"^\s+{key}: !Sub \"(.+?)\"", text, flags=re.M):
+                    fixed.setdefault((key, value), []).append(template)
+        clashes = {k: v for k, v in fixed.items() if len(v) > 1}
+        self.assertEqual(clashes, {})

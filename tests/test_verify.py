@@ -95,6 +95,79 @@ class VerifyTests(unittest.TestCase):
             verify.check_pipeline(result, sfn, items)
             self.assertEqual(statuses(result)["Pipeline run"], expected, latest)
 
+    def test_a_zero_training_quota_is_flagged_before_the_pipeline_fails(self):
+        quotas = [{"QuotaName": "ml.m5.xlarge for training job usage", "Value": 0.0},
+                  {"QuotaName": "ml.m5.xlarge for spot training job usage", "Value": 2.0}]
+        client = Namespace(get_paginator=lambda _: Namespace(paginate=lambda ServiceCode: [{"Quotas": quotas}]))
+        result = verify.Result()
+        verify.check_quotas(result, client)
+        self.assertEqual(sorted(statuses(result).values()), ["PASS", "WARN"])
+        self.assertIn("request an increase", result.table())
+
+    def test_a_low_fargate_quota_is_flagged_before_a_training_task_fails(self):
+        quotas = [{"QuotaName": "Fargate On-Demand vCPU resource count", "Value": 2.0},
+                  {"QuotaName": "Fargate Spot vCPU resource count", "Value": 6.0}]
+        client = Namespace(get_paginator=lambda _: Namespace(paginate=lambda ServiceCode: [{"Quotas": quotas}]))
+        result = verify.Result()
+        verify.check_fargate_quota(result, client, needed_vcpu=4)
+        self.assertEqual(statuses(result), {"Fargate quota (on demand)": "WARN", "Fargate quota (spot)": "PASS"})
+        self.assertIn("Raise it in Service Quotas", result.table())
+
+    def test_the_ecs_training_cluster_is_checked_only_when_it_exists(self):
+        result = verify.Result()
+        verify.check_ecs(result, Namespace(), [])
+        self.assertEqual(statuses(result), {})
+        items = [{"type": "AWS::ECS::Cluster", "physical": "sepsis-dev-training-cluster"}]
+        for providers, expected in ((["FARGATE", "FARGATE_SPOT"], "PASS"), (["FARGATE"], "FAIL")):
+            ecs = Namespace(describe_clusters=lambda clusters, providers=providers: {
+                "clusters": [{"status": "ACTIVE", "capacityProviders": providers}]})
+            result = verify.Result()
+            verify.check_ecs(result, ecs, items)
+            self.assertEqual(list(statuses(result).values()), [expected])
+
+    def test_the_hosted_tools_are_running_or_stopped_never_silently_missing(self):
+        items = [{"type": "AWS::ECS::Service", "logical": "Service", "physical": "arn:aws:ecs:r:1:service/c/sepsis-dev-mlflow"},
+                 {"type": "AWS::RDS::DBInstance", "logical": "Database", "physical": "db-1"}]
+        for running, desired, db, expected in ((1, 1, "available", ["PASS", "PASS"]), (0, 0, "stopped", ["WARN", "WARN"]),
+                                               (0, 1, "available", ["FAIL", "PASS"])):
+            ecs = Namespace(describe_services=lambda cluster, services, running=running, desired=desired: {"services": [
+                {"runningCount": running, "desiredCount": desired, "events": [{"message": "unable to place a task"}]}]})
+            rds = Namespace(describe_db_instances=lambda DBInstanceIdentifier, db=db: {"DBInstances": [{"DBInstanceStatus": db}]})
+            result = verify.Result()
+            verify.check_tools(result, ecs, rds, items)
+            self.assertEqual(list(statuses(result).values()), expected)
+
+    def test_a_missing_service_linked_role_is_reported_with_the_command_that_fixes_it(self):
+        class NoSuchEntity(Exception):
+            response = {"Error": {"Code": "NoSuchEntity"}}
+
+        def get_role(RoleName):
+            if RoleName == "AWSServiceRoleForECS":
+                raise NoSuchEntity("The role cannot be found")
+            return {"Role": {}}
+
+        result = verify.Result()
+        verify.check_service_linked_roles(result, Namespace(get_role=get_role), {"TrainingBackend": "ecs", "MlflowBackend": "ecs"})
+        self.assertEqual(statuses(result), {"Service-linked role AWSServiceRoleForECS": "FAIL", "Service-linked role AWSServiceRoleForRDS": "PASS"})
+        self.assertIn("create-service-linked-role --aws-service-name ecs.amazonaws.com", result.table())
+        nothing = verify.Result()
+        verify.check_service_linked_roles(nothing, Namespace(), {"TrainingBackend": "sagemaker", "MlflowBackend": "sagemaker"})
+        self.assertEqual(statuses(nothing), {})
+
+    def test_the_scoring_image_is_not_required_in_lambda_mode_but_is_with_fargate_serving(self):
+        items = [{"type": "AWS::ECR::Repository", "logical": "EcrRepository", "physical": "scoring-repo"},
+                 {"type": "AWS::ECR::Repository", "logical": "LambdaRepository", "physical": "lambda-repo"},
+                 {"type": "AWS::ECR::Repository", "logical": "TrainingRepository", "physical": "training-repo"}]
+        ecr = Namespace(describe_images=lambda repositoryName: {"imageDetails": (
+            [] if repositoryName == "scoring-repo" else [{"imageTags": ["lambda-abc123def456"]}])})
+        lambda_mode = verify.Result()
+        verify.check_repositories(lambda_mode, ecr, items, "abc123def456", "lambda")
+        self.assertEqual(statuses(lambda_mode)["ECR scoring-repo"], "PASS")
+        fargate = verify.Result()
+        verify.check_repositories(fargate, ecr, items, "abc123def456", "fargate")
+        self.assertEqual(statuses(fargate)["ECR scoring-repo"], "FAIL")
+        self.assertEqual(statuses(fargate)["ECR lambda-repo"], "PASS")
+
     def test_missing_outputs_fail(self):
         result = verify.Result()
         verify.check_outputs(result, {"ArtifactBucketName": "b"}, False)

@@ -35,8 +35,11 @@ on:
         options: [stack and images only, full deploy]
         default: stack and images only
       model_uri:
-        description: Registered model to deploy (full deploy only; must already be promoted in that account's MLflow App)
+        description: SageMaker MLflow App only. Registered model to deploy (full deploy; must already be promoted there). Ignored when MLflow runs on ECS
         default: models:/sepsis-warning@production
+      model_version:
+        description: MLflow on ECS only. Published model version to deploy (full deploy). Empty = the newest one the pipeline published and had approved
+        default: ""
 
 permissions:
   contents: read
@@ -110,11 +113,12 @@ jobs:
 
       - name: Install the deploy tools (locked)
         run: |
-          python -m pip install --require-hashes -r requirements/ci.txt
+          # The training lock holds MLflow at the App's version and sagemaker-mlflow, all with hashes.
+          python -m pip install --require-hashes -r requirements/training.txt
           python -m pip install --no-deps -e .
-          python -m pip install "sagemaker-mlflow>=0.5,<1"
 
       - name: Validate the templates and preview the stack (creates nothing)
+        timeout-minutes: 20
         env:
           ENVIRONMENT: ${{ inputs.environment }}
           CONFIRM_PROD: ${{ inputs.environment == 'prod' && 'yes' || '' }}
@@ -124,7 +128,23 @@ jobs:
           TAG: ${{ github.sha }}
         run: bash scripts/aws_deploy.sh validate
 
+      # A full deploy needs a published, approved model. Find out now, not after the images are built.
+      - name: Check that a model is ready to deploy (full deploy only)
+        if: inputs.steps == 'full deploy'
+        timeout-minutes: 5
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          CONFIRM_PROD: ${{ inputs.environment == 'prod' && 'yes' || '' }}
+          AWS_REGION: ${{ steps.target.outputs.region }}
+          BUDGET_EMAIL: ${{ vars.BUDGET_EMAIL }}
+          ALERT_EMAIL: ${{ vars.ALERT_EMAIL }}
+          TAG: ${{ github.sha }}
+          MODEL_VERSION: ${{ inputs.model_version }}
+          MODEL_URI: ${{ inputs.model_uri }}
+        run: bash scripts/aws_deploy.sh check-model
+
       - name: Stack and images
+        timeout-minutes: 45
         env:
           ENVIRONMENT: ${{ inputs.environment }}
           # Prod changes need this confirmation; the environment's required reviewers are the approval.
@@ -134,19 +154,37 @@ jobs:
           ALERT_EMAIL: ${{ vars.ALERT_EMAIL }}
           MODEL_URI: ${{ inputs.model_uri }}
           TAG: ${{ github.sha }}
+          IMAGES_PARALLEL: "1"
         run: |
           bash scripts/aws_deploy.sh stack
           bash scripts/aws_deploy.sh images
+          # The hosted tools (MLflow on ECS) need their image, which exists only after the first stack run:
+          # this second run, a no-op when nothing changed, creates the service.
+          bash scripts/aws_deploy.sh stack
 
-      - name: Publish the promoted model and serve it
-        id: publish
-        if: inputs.steps == 'full deploy'
+      # CloudFormation says the stack is done when the services were created; this says the tools actually work.
+      - name: Wait for the hosted tools to be running and healthy
+        timeout-minutes: 20
         env:
           ENVIRONMENT: ${{ inputs.environment }}
           CONFIRM_PROD: ${{ inputs.environment == 'prod' && 'yes' || '' }}
           AWS_REGION: ${{ steps.target.outputs.region }}
           BUDGET_EMAIL: ${{ vars.BUDGET_EMAIL }}
           ALERT_EMAIL: ${{ vars.ALERT_EMAIL }}
+          TAG: ${{ github.sha }}
+        run: bash scripts/aws_deploy.sh ready
+
+      - name: Publish the promoted model and serve it
+        id: publish
+        if: inputs.steps == 'full deploy'
+        timeout-minutes: 20
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          CONFIRM_PROD: ${{ inputs.environment == 'prod' && 'yes' || '' }}
+          AWS_REGION: ${{ steps.target.outputs.region }}
+          BUDGET_EMAIL: ${{ vars.BUDGET_EMAIL }}
+          ALERT_EMAIL: ${{ vars.ALERT_EMAIL }}
+          MODEL_VERSION: ${{ inputs.model_version }}
           MODEL_URI: ${{ inputs.model_uri }}
           TAG: ${{ github.sha }}
         run: |
@@ -172,3 +210,36 @@ jobs:
           TAG: ${{ github.sha }}
           FULL: ${{ inputs.steps == 'full deploy' && '--expect-model' || '' }}
         run: bash scripts/aws_deploy.sh verify $FULL
+
+      # When anything above failed: the stack's failed events, then each service's state, stopped tasks and log tail.
+      - name: Diagnose the failure
+        if: failure() && steps.target.outcome == 'success'
+        continue-on-error: true
+        timeout-minutes: 5
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          CONFIRM_PROD: ${{ inputs.environment == 'prod' && 'yes' || '' }}
+          AWS_REGION: ${{ steps.target.outputs.region }}
+          BUDGET_EMAIL: ${{ vars.BUDGET_EMAIL }}
+          ALERT_EMAIL: ${{ vars.ALERT_EMAIL }}
+          TAG: ${{ github.sha }}
+        run: bash scripts/aws_deploy.sh diagnose 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: What to do next
+        if: always() && steps.target.outcome == 'success'
+        run: |
+          {
+            echo "### Next"
+            if [ "${{ job.status }}" = success ]; then
+              if [ "${{ inputs.steps }}" = "full deploy" ]; then
+                echo "- Show it: run the **demo** workflow. When finished, run **power** with \`stop\` so nothing bills."
+              else
+                echo "- Run **pipeline** (real data), then **promote** and **approve**, then deploy again with \`full deploy\`."
+                echo "- First time on this account: copy PhysioNet to S3 once with the pipeline's prepare step."
+              fi
+            else
+              echo "- Read the **Diagnose the failure** step above. It lists the stack failures and why each ECS task stopped."
+              echo "- A stack left in \`UPDATE_ROLLBACK_FAILED\` or \`DELETE_FAILED\` needs a person: see docs/ecs-runbook.md, section Deploy states."
+              echo "- Fixed it? Run **deploy** again; it cancels any update an earlier run left running."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

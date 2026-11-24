@@ -35,11 +35,15 @@ def stay_key(patient_id: str) -> str:
 
 
 def ledger_events(hours, probabilities, threshold: float, cooldown_hours: float,
-                  delivered_hours: list[float]) -> tuple[np.ndarray, list[int]]:
+                  delivered_hours: list[float], from_row: int = 0) -> tuple[np.ndarray, list[int]]:
     """Alert flags per hour given the alerts already delivered.
 
     Returns (events, new_rows): ``events[i]`` is 1 where an alert was or is now
     raised; ``new_rows`` are the row indexes of alerts not yet in the ledger.
+
+    Rows before ``from_row`` are history the caller does not receive an answer for
+    (``/predict`` returns only the latest hour). They can show an alert only if it was
+    delivered earlier: they never raise or record a new one, and never start a cooldown.
     """
     hours = np.asarray(hours, dtype=float)
     events = np.zeros(len(hours), dtype=int)
@@ -50,6 +54,8 @@ def ledger_events(hours, probabilities, threshold: float, cooldown_hours: float,
     for i, (hour, probability) in enumerate(zip(hours, probabilities, strict=True)):
         if hour <= last_alert and delivered:
             events[i] = int(hour in recorded)   # history is what was delivered, not a replay
+        elif i < from_row:
+            continue
         elif probability >= threshold and hour - last_alert >= cooldown_hours:
             events[i] = 1
             last_alert = hour

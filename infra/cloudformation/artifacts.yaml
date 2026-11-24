@@ -276,6 +276,27 @@ Resources:
         - Key: Name
           Value: !Sub "${EnvironmentName}-training"
 
+  # Image for the hosted tools on ECS: MLflow server and Evidently (Dockerfile target "tools").
+  ToolsRepository:
+    Type: AWS::ECR::Repository
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      ImageTagMutability: IMMUTABLE
+      EncryptionConfiguration:
+        EncryptionType: KMS
+        KmsKey: !GetAtt ArtifactKey.Arn
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {"rules": [{"rulePriority": 1, "description": "Keep the 10 newest images",
+                      "selection": {"tagStatus": "any", "countType": "imageCountMoreThan", "countNumber": 10},
+                      "action": {"type": "expire"}}]}
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-tools"
+
   StateTable:
     Type: AWS::DynamoDB::Table
     DeletionPolicy: Retain
@@ -320,6 +341,10 @@ Outputs:
     Value: !GetAtt TrainingRepository.Arn
   TrainingRepositoryUri:
     Value: !GetAtt TrainingRepository.RepositoryUri
+  ToolsRepositoryArn:
+    Value: !GetAtt ToolsRepository.Arn
+  ToolsRepositoryUri:
+    Value: !GetAtt ToolsRepository.RepositoryUri
   StateTableName:
     Value: !Ref StateTable
   StateTableArn:

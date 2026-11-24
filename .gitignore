@@ -64,3 +64,7 @@ Thumbs.db
 /whatsapp/
 whatsapp.zip
 whatsapp*
+
+# A stray MLflow store a test may create in the working directory.
+/x.db
+/mlruns/

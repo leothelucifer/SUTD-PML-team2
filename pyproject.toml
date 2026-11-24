@@ -19,7 +19,7 @@ dependencies = [
 
 [project.optional-dependencies]
 # L01, approved by the team owner on 2026-11-09. Local stores only by default.
-tracking = ["mlflow>=2.17,<4"]
+tracking = ["mlflow>=3.0,<4"]
 # L02 research API. FastAPI pulls in pydantic and starlette.
 serve = ["fastapi>=0.115,<1", "uvicorn>=0.30,<1"]
 # Only needed to run the API tests (FastAPI's TestClient).
@@ -30,6 +30,8 @@ aws = ["boto3>=1.34,<2"]
 lambda = ["mangum>=0.17,<1", "boto3>=1.34,<2", "awslambdaric>=3,<5"]
 # SageMaker AI serverless MLflow App as the tracking store (its ARN is the tracking URI).
 sagemaker = ["sagemaker-mlflow>=0.5,<1", "boto3>=1.34,<2"]
+# Hosted tools on ECS: the MLflow tracking server (PostgreSQL backend, S3 artifacts) and Evidently monitoring.
+tools = ["mlflow>=3.0,<4", "psycopg2-binary>=2.9,<3", "boto3>=1.34,<2", "evidently>=0.7,<0.8"]
 notebook = ["ipykernel>=7,<8"]
 checks = ["pandera==0.35.0"]
 dvc = ["dvc==3.67.1"]
