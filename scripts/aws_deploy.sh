@@ -18,6 +18,7 @@
 #   bash scripts/aws_deploy.sh pipeline-wait [ARN]   follow an execution until it needs approval, finishes or fails
 #   bash scripts/aws_deploy.sh approve TOKEN         approve a waiting pipeline (the token is in the notification email)
 #   bash scripts/aws_deploy.sh reference FILE        upload a monitor-setup reference and switch on the daily drift job
+#   bash scripts/aws_deploy.sh power status|start|stop   show, start or stop what bills while on (MLflow, Evidently UI, database)
 #   bash scripts/aws_deploy.sh outputs
 #   bash scripts/aws_deploy.sh down                  delete the stack only (data, keys and images are kept)
 #   bash scripts/aws_deploy.sh destroy               plan a full teardown; CONFIRM_DESTROY=<stack> performs it
@@ -247,8 +248,18 @@ cmd_call() {
   "$PYTHON" "$ROOT/scripts/call_scoring_url.py" --url "$(output ApiBaseUrl)" --region "$AWS_REGION" "$@"
 }
 
+# power status | start | stop [--component all|mlflow|evidently|database] [--allow-cidr x.x.x.x/32]
+# Shows, starts or stops everything that bills while on (MLflow server, Evidently UI, the database).
+cmd_power() {
+  "$PYTHON" "$ROOT/scripts/aws_power.py" --stack "$STACK" --region "$AWS_REGION" "$@"
+}
+
 cmd_pipeline() {
   local arn; arn="$(output PipelineArn)"; [ -n "$arn" ] || fail "stack has no pipeline (EnablePipeline=true)"
+  # With MLflow on ECS the server and its database must be running; they are off unless someone started them.
+  if [ "$(output MlflowBackend)" = ecs ]; then
+    cmd_power require-on --component mlflow || fail "start MLflow first: the power workflow with action start (or: $0 power start)"
+  fi
   # DATA_SOURCE=synthetic|physionet|physionet-web  (physionet reads the copy made by `fetch-data`; physionet-web downloads over HTTPS)
   # PREPARE=true|false (false reuses the data already in S3)
   # LIMIT=stays per hospital to download (0 = all)  TRIALS=hyperparameter trials per model (0 = defaults)
@@ -355,6 +366,7 @@ case "${1:-}" in
   publish) cmd_publish ;;
   serve) cmd_serve ;;
   call) shift; cmd_call "$@" ;;
+  power) shift; cmd_power "$@" ;;
   pipeline) cmd_pipeline ;;
   pipeline-wait) shift; cmd_pipeline_wait "$@" ;;
   approve) shift; cmd_approve "$@" ;;
@@ -362,5 +374,5 @@ case "${1:-}" in
   down) cmd_down ;;
   github-oidc) shift; cmd_github_oidc "$@" ;;
   destroy) cmd_destroy ;;
-  *) sed -n '2,35p' "$0"; exit 2 ;;
+  *) sed -n '2,36p' "$0"; exit 2 ;;
 esac
