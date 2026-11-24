@@ -1,4 +1,11 @@
-"""Patient-local features: feature[t] depends only on observations up to t."""
+"""Patient-local features: feature[t] depends only on observations up to t.
+
+Training, replay and the scoring service call ``build_features`` with one
+trailing window (default 6 hours). ``features_for_windows`` and the training-
+median fallback below are experimental helpers: they are tested and used by the
+demo script and by signature features, but ``train`` does not call them.
+``train`` still fills leftover blanks with the model imputer.
+"""
 
 import numpy as np
 import pandas as pd
@@ -6,23 +13,37 @@ import pandas as pd
 from .data import DYNAMIC, STATIC, Patient
 
 
+def ordered_stay(frame: pd.DataFrame) -> pd.DataFrame:
+    """Sort one stay by ICULOS and require consecutive hourly rows."""
+    if "ICULOS" not in frame.columns or frame["ICULOS"].isna().any():
+        raise ValueError("ICULOS is required for every row")
+    ordered = frame.sort_values("ICULOS", kind="mergesort").reset_index(drop=True)
+    hours = ordered["ICULOS"].to_numpy(dtype=float)
+    if len(hours) > 1 and not np.allclose(np.diff(hours), 1):
+        raise ValueError("ICULOS must be consecutive hourly after sorting")
+    return ordered
+
+
 def build_features(frame: pd.DataFrame, window: int = 6) -> pd.DataFrame:
     """Features at hour t use this stay only, through hour t.
 
+    The stay is sorted by ICULOS. Hours must be consecutive after that sort.
     The last observed value is carried forward until the stay ends or a new
     measurement arrives. There is no expiry. A missing value is never filled
-    from a later hour. Hours since a measurement are ICU hours from ICULOS,
-    so a stay that starts after hour 1, or skips an hour, still counts the
-    ICU-hour gap.
+    from a later hour.
+
+    ``hours_since_seen`` is an ICU-hour difference from ICULOS. The trailing
+    mean, std, observation count and change use the last ``window`` rows after
+    sorting, not a wall-clock ICU-hour window. ``change`` is blank for the first
+    ``window`` rows of every stay.
     """
     if window < 1:
         raise ValueError("window must be positive")
-    if "ICULOS" not in frame.columns or frame["ICULOS"].isna().any():
-        raise ValueError("ICULOS is required for every row")
+    ordered = ordered_stay(frame)
     columns = {}
-    hour = frame["ICULOS"].to_numpy(dtype=float)
+    hour = ordered["ICULOS"].to_numpy(dtype=float)
     for name in DYNAMIC:
-        raw = frame[name]
+        raw = ordered[name]
         observed = raw.notna().to_numpy()
         # No backfill or interpolation across future measurements.
         last = raw.ffill()
@@ -37,19 +58,20 @@ def build_features(frame: pd.DataFrame, window: int = 6) -> pd.DataFrame:
         columns[f"{name}__change_{window}h"] = last - last.shift(window)
         columns[f"{name}__observations_{window}h"] = roll.count()
     for name in STATIC:
-        columns[name] = frame[name].ffill()
+        columns[name] = ordered[name].ffill()
     return pd.DataFrame(columns).astype(np.float32)
 
 
 def feature_table(patients: list[Patient], window: int) -> pd.DataFrame:
     chunks = []
     for patient in patients:
-        features = build_features(patient.frame, window)
+        ordered = ordered_stay(patient.frame)
+        features = build_features(ordered, window)
         features["patient_id"] = patient.patient_id
         features["hospital"] = patient.hospital
-        features["hour"] = patient.frame["ICULOS"].to_numpy()
+        features["hour"] = ordered["ICULOS"].to_numpy()
         # The challenge has ALREADY shifted its labels six hours earlier.
-        features["label"] = patient.frame["SepsisLabel"].to_numpy(dtype=int)
+        features["label"] = ordered["SepsisLabel"].to_numpy(dtype=int)
         chunks.append(features)
     return pd.concat(chunks, ignore_index=True)
 
@@ -74,7 +96,7 @@ def _window_column(name: str) -> bool:
 
 
 def features_for_windows(frame: pd.DataFrame, windows: tuple[int, ...] = (3, 6, 12)) -> pd.DataFrame:
-    """One shared builder, called once per window. Column order is stable."""
+    """Experimental multi-window builder. ``train`` and serve use one window only."""
     if not windows:
         raise ValueError("windows must be positive")
     built = [build_features(frame, window) for window in windows]
@@ -87,11 +109,13 @@ def features_for_windows(frame: pd.DataFrame, windows: tuple[int, ...] = (3, 6, 
 
 
 def fit_training_fallback(frames: list[pd.DataFrame]) -> pd.Series:
-    """Median of observed measurements. Pass training tables only.
+    """Experimental: median of observed measurements. Pass training tables only.
 
-    A column that is blank in every training row stays blank. Rows that are
-    not included here cannot change the medians. Carry-forward still has no
-    expiry; this function only supplies a value before the first observation.
+    ``train`` does not call this. It fills leftover blanks with the model
+    imputer after ``build_features``. A column that is blank in every training
+    row stays blank. Rows that are not included here cannot change the medians.
+    Carry-forward still has no expiry; this function only supplies a value
+    before the first observation.
     """
     if not frames:
         raise ValueError("training fallback needs at least one table")
@@ -103,22 +127,36 @@ def fit_training_fallback(frames: list[pd.DataFrame]) -> pd.Series:
 
 
 def apply_training_fallback(frame: pd.DataFrame, fallback: pd.Series) -> pd.DataFrame:
-    """Forward-fill inside each stay, then fill what is still missing.
+    """Experimental: forward-fill inside each stay, then fill what is still missing.
 
-    Does not refit the medians and does not modify `frame`. A later hour never
-    fills an earlier blank. A value from one stay never fills another stay.
+    Does not refit the medians and does not modify ``frame``. A later hour never
+    fills an earlier blank. Stays are split by hospital and patient_id when both
+    are present, otherwise by patient_id alone. Row order is preserved.
     """
     columns = [name for name in DYNAMIC if name in frame.columns]
-
-    def fill_stay(stay: pd.DataFrame) -> pd.DataFrame:
-        filled = stay.copy()
-        for name in columns:
-            filled[name] = filled[name].ffill()
-            if name in fallback.index:
-                filled[name] = filled[name].fillna(fallback[name])
+    filled = frame.copy()
+    if not columns:
         return filled
 
-    if "patient_id" in frame.columns and frame["patient_id"].nunique() > 1:
-        stays = [fill_stay(stay) for _, stay in frame.groupby("patient_id", sort=False)]
-        return pd.concat(stays)
-    return fill_stay(frame)
+    def fill_columns(stay: pd.DataFrame) -> pd.DataFrame:
+        out = stay.copy()
+        for name in columns:
+            out[name] = out[name].ffill()
+            if name in fallback.index:
+                out[name] = out[name].fillna(fallback[name])
+        return out
+
+    if {"hospital", "patient_id"} <= set(filled.columns):
+        keys = ["hospital", "patient_id"]
+    elif "patient_id" in filled.columns:
+        keys = ["patient_id"]
+    else:
+        return fill_columns(filled)
+
+    if filled.groupby(keys, sort=False).ngroups <= 1:
+        return fill_columns(filled)
+
+    order = np.arange(len(filled))
+    filled["_row_order"] = order
+    pieces = [fill_columns(stay) for _, stay in filled.groupby(keys, sort=False)]
+    return pd.concat(pieces).sort_values("_row_order").drop(columns="_row_order")

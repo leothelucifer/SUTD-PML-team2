@@ -125,6 +125,7 @@ jobs:
 
       # Report only for now: base-image findings need a first triage before this can block merges.
       - name: Image vulnerability scan (report)
+        continue-on-error: true
         run: |
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.57.1 \
             image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 0 sepsis-warning:ci
