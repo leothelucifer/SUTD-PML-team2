@@ -121,6 +121,60 @@ Parameters:
       - "false"
       - "true"
     Description: Step Functions training pipeline with gates and a human approval. No standing cost.
+  MlflowBackend:
+    Type: String
+    Default: sagemaker
+    AllowedValues:
+      - sagemaker
+      - ecs
+    Description: >-
+      sagemaker (default) - the serverless SageMaker MLflow App. ecs - an MLflow server on ECS Fargate with an
+      RDS PostgreSQL database and S3 artifacts (needs TrainingBackend=ecs, because only tasks in the VPC can reach it).
+  EnableSageMakerMlflowApp:
+    Type: String
+    Default: "true"
+    AllowedValues: ["false", "true"]
+    Description: Feature flag. Create the serverless SageMaker MLflow App. Switch off when MlflowBackend=ecs to remove it.
+  ToolsImageUri:
+    Type: String
+    Default: ""
+    Description: Image (Dockerfile target "tools") with its tag for the MLflow server. Empty creates only the database; `aws_deploy.sh stack` fills it in once the image exists.
+  EnableEvidently:
+    Type: String
+    Default: "false"
+    AllowedValues: ["false", "true"]
+    Description: >-
+      Feature flag. Evidently monitoring on ECS: a live UI service (started and stopped by the power workflow), a
+      drift report task run by the monitor workflow, and an alarm. Needs the ECS platform (TrainingBackend=ecs or
+      MlflowBackend=ecs) and the tools image.
+  EvidentlyDriftedShareAlarm:
+    Type: String
+    Default: "0.5"
+    Description: Alarm when this share of the monitored columns (or more) drifted in a report.
+  TrainingBackend:
+    Type: String
+    Default: sagemaker
+    AllowedValues:
+      - sagemaker
+      - ecs
+    Description: >-
+      Where the pipeline's steps run. sagemaker (default) - SageMaker AI training jobs (needs a training
+      instance quota, which is 0 in a new account). ecs - ECS Fargate tasks in a small public-subnet VPC
+      (no NAT gateway or interface endpoints), billed per second while a step runs.
+  EcsTrainingCpu:
+    Type: String
+    Default: "4096"
+    AllowedValues: ["1024", "2048", "4096", "8192", "16384"]
+    Description: Fargate vCPU units per step when TrainingBackend=ecs (1024 = 1 vCPU); must fit the Fargate vCPU quota.
+  EcsTrainingMemory:
+    Type: String
+    Default: "16384"
+    Description: Memory in MiB per step when TrainingBackend=ecs (2-8 GB per vCPU).
+  EcsUseSpot:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: Run the tune and train steps on Fargate Spot when TrainingBackend=ecs.
   EnableObservability:
     Type: String
     Default: "true"
@@ -168,6 +222,48 @@ Parameters:
     Description: Email recipient required to create the optional budget.
 
 Rules:
+  EcsTaskSize1024:
+    RuleCondition: !Equals [!Ref EcsTrainingCpu, "1024"]
+    Assertions:
+      - Assert: !Contains [["2048", "3072", "4096", "5120", "6144", "7168", "8192"], !Ref EcsTrainingMemory]
+        AssertDescription: With EcsTrainingCpu 1024, Fargate accepts EcsTrainingMemory of 2048 to 8192 MiB (the ECS task-size table).
+  EcsTaskSize2048:
+    RuleCondition: !Equals [!Ref EcsTrainingCpu, "2048"]
+    Assertions:
+      - Assert: !Contains [["4096", "5120", "6144", "7168", "8192", "9216", "10240", "11264", "12288", "13312", "14336", "15360", "16384"], !Ref EcsTrainingMemory]
+        AssertDescription: With EcsTrainingCpu 2048, Fargate accepts EcsTrainingMemory of 4096 to 16384 MiB (the ECS task-size table).
+  EcsTaskSize4096:
+    RuleCondition: !Equals [!Ref EcsTrainingCpu, "4096"]
+    Assertions:
+      - Assert: !Contains [["8192", "9216", "10240", "11264", "12288", "13312", "14336", "15360", "16384", "17408", "18432", "19456", "20480", "21504", "22528", "23552", "24576", "25600", "26624", "27648", "28672", "29696", "30720"], !Ref EcsTrainingMemory]
+        AssertDescription: With EcsTrainingCpu 4096, Fargate accepts EcsTrainingMemory of 8192 to 30720 MiB (the ECS task-size table).
+  EcsTaskSize8192:
+    RuleCondition: !Equals [!Ref EcsTrainingCpu, "8192"]
+    Assertions:
+      - Assert: !Contains [["16384", "20480", "24576", "28672", "32768", "36864", "40960", "45056", "49152", "53248", "57344", "61440"], !Ref EcsTrainingMemory]
+        AssertDescription: With EcsTrainingCpu 8192, Fargate accepts EcsTrainingMemory of 16384 to 61440 MiB (the ECS task-size table).
+  EcsTaskSize16384:
+    RuleCondition: !Equals [!Ref EcsTrainingCpu, "16384"]
+    Assertions:
+      - Assert: !Contains [["32768", "40960", "49152", "57344", "65536", "73728", "81920", "90112", "98304", "106496", "114688", "122880"], !Ref EcsTrainingMemory]
+        AssertDescription: With EcsTrainingCpu 16384, Fargate accepts EcsTrainingMemory of 32768 to 122880 MiB (the ECS task-size table).
+  EcsMlflowNeedsEcsTraining:
+    RuleCondition: !Equals [!Ref MlflowBackend, ecs]
+    Assertions:
+      - Assert: !Equals [!Ref TrainingBackend, ecs]
+        AssertDescription: MlflowBackend=ecs needs TrainingBackend=ecs; SageMaker training jobs cannot reach an MLflow server inside the VPC.
+  SageMakerMlflowNeedsTheApp:
+    RuleCondition: !Equals [!Ref MlflowBackend, sagemaker]
+    Assertions:
+      - Assert: !Equals [!Ref EnableSageMakerMlflowApp, "true"]
+        AssertDescription: MlflowBackend=sagemaker needs EnableSageMakerMlflowApp=true.
+  EvidentlyNeedsTheEcsPlatform:
+    RuleCondition: !Equals [!Ref EnableEvidently, "true"]
+    Assertions:
+      - Assert: !Or
+          - !Equals [!Ref TrainingBackend, ecs]
+          - !Equals [!Ref MlflowBackend, ecs]
+        AssertDescription: EnableEvidently needs the ECS platform; set TrainingBackend=ecs or MlflowBackend=ecs.
   ModelRequiredWhenEnabled:
     RuleCondition: !Equals [!Ref DeployScoringService, "true"]
     Assertions:
@@ -207,6 +303,22 @@ Conditions:
   CreatePipeline: !And
     - !Condition CreateMlops
     - !Equals [!Ref EnablePipeline, "true"]
+  UseEcsTraining: !And
+    - !Condition CreatePipeline
+    - !Equals [!Ref TrainingBackend, ecs]
+  UseEcsMlflow: !Equals [!Ref MlflowBackend, ecs]
+  UseEvidently: !And
+    - !Condition NeedsEcsPlatform
+    - !Equals [!Ref EnableEvidently, "true"]
+  NeedsEcsPlatform: !Or
+    - !Condition UseEcsTraining
+    - !Condition UseEcsMlflow
+  HasSageMakerMlflowApp: !And
+    - !Condition CreateMlops
+    - !Equals [!Ref EnableSageMakerMlflowApp, "true"]
+  UseSageMakerTraining: !And
+    - !Condition CreatePipeline
+    - !Equals [!Ref TrainingBackend, sagemaker]
   CreateObservability: !And
     - !Condition UseLambda
     - !Equals [!Ref EnableObservability, "true"]
@@ -257,6 +369,7 @@ Resources:
         TrainingRepositoryArn: !GetAtt Artifacts.Outputs.TrainingRepositoryArn
         LambdaRepositoryArn: !GetAtt Artifacts.Outputs.LambdaRepositoryArn
         ScoringRepositoryArn: !GetAtt Artifacts.Outputs.EcrRepositoryArn
+        EnableMlflowApp: !Ref EnableSageMakerMlflowApp
       Tags:
         - Key: Project
           Value: sepsis-warning-research
@@ -284,9 +397,97 @@ Resources:
         - Key: Project
           Value: sepsis-warning-research
 
+  # Only with TrainingBackend=ecs: a minimal VPC, the cluster, the task roles and the log group.
+  EcsPlatform:
+    Type: AWS::CloudFormation::Stack
+    Condition: NeedsEcsPlatform
+    Properties:
+      TemplateURL: ecs-platform.yaml
+      Parameters:
+        EnvironmentName: !Ref EnvironmentName
+        ArtifactBucketArn: !GetAtt Artifacts.Outputs.ArtifactBucketArn
+        ArtifactKeyArn: !GetAtt Artifacts.Outputs.ArtifactKeyArn
+        TrainingRepositoryArn: !GetAtt Artifacts.Outputs.TrainingRepositoryArn
+        MlflowAppArn: !If [HasSageMakerMlflowApp, !GetAtt Mlops.Outputs.MlflowAppArn, ""]
+        TrainingCpu: !Ref EcsTrainingCpu
+        TrainingMemory: !Ref EcsTrainingMemory
+      Tags:
+        - Key: Project
+          Value: sepsis-warning-research
+
+  # Only with MlflowBackend=ecs: the MLflow server, its RDS PostgreSQL database and the Cloud Map name.
+  MlflowEcs:
+    Type: AWS::CloudFormation::Stack
+    Condition: UseEcsMlflow
+    Properties:
+      TemplateURL: mlflow-ecs.yaml
+      Parameters:
+        EnvironmentName: !Ref EnvironmentName
+        VpcId: !GetAtt EcsPlatform.Outputs.VpcId
+        SubnetAId: !GetAtt EcsPlatform.Outputs.SubnetAId
+        SubnetBId: !GetAtt EcsPlatform.Outputs.SubnetBId
+        ClusterArn: !GetAtt EcsPlatform.Outputs.ClusterArn
+        TrainingTaskSecurityGroupId: !GetAtt EcsPlatform.Outputs.SecurityGroupId
+        ArtifactBucketName: !GetAtt Artifacts.Outputs.ArtifactBucketName
+        ArtifactBucketArn: !GetAtt Artifacts.Outputs.ArtifactBucketArn
+        ArtifactKeyArn: !GetAtt Artifacts.Outputs.ArtifactKeyArn
+        ToolsRepositoryArn: !GetAtt Artifacts.Outputs.ToolsRepositoryArn
+        ToolsImageUri: !Ref ToolsImageUri
+      Tags:
+        - Key: Project
+          Value: sepsis-warning-research
+
+  # Only with EnableEvidently: the live UI, the drift report task definition and the alarm.
+  EvidentlyEcs:
+    Type: AWS::CloudFormation::Stack
+    Condition: UseEvidently
+    Properties:
+      TemplateURL: evidently-ecs.yaml
+      Parameters:
+        EnvironmentName: !Ref EnvironmentName
+        VpcId: !GetAtt EcsPlatform.Outputs.VpcId
+        SubnetAId: !GetAtt EcsPlatform.Outputs.SubnetAId
+        SubnetBId: !GetAtt EcsPlatform.Outputs.SubnetBId
+        ClusterArn: !GetAtt EcsPlatform.Outputs.ClusterArn
+        ArtifactBucketName: !GetAtt Artifacts.Outputs.ArtifactBucketName
+        ArtifactBucketArn: !GetAtt Artifacts.Outputs.ArtifactBucketArn
+        ArtifactKeyArn: !GetAtt Artifacts.Outputs.ArtifactKeyArn
+        ToolsRepositoryArn: !GetAtt Artifacts.Outputs.ToolsRepositoryArn
+        ToolsImageUri: !Ref ToolsImageUri
+        AlarmTopicArn: !GetAtt Monitoring.Outputs.AlarmTopicArn
+        DriftedShareAlarm: !Ref EvidentlyDriftedShareAlarm
+      Tags:
+        - Key: Project
+          Value: sepsis-warning-research
+
+  PipelineEcs:
+    Type: AWS::CloudFormation::Stack
+    Condition: UseEcsTraining
+    Properties:
+      TemplateURL: pipeline-ecs.yaml
+      Parameters:
+        EnvironmentName: !Ref EnvironmentName
+        ArtifactBucketName: !GetAtt Artifacts.Outputs.ArtifactBucketName
+        TrainingRepositoryUri: !GetAtt Artifacts.Outputs.TrainingRepositoryUri
+        ClusterArn: !GetAtt EcsPlatform.Outputs.ClusterArn
+        SubnetAId: !GetAtt EcsPlatform.Outputs.SubnetAId
+        SubnetBId: !GetAtt EcsPlatform.Outputs.SubnetBId
+        SecurityGroupId: !GetAtt EcsPlatform.Outputs.SecurityGroupId
+        ExecutionRoleArn: !GetAtt EcsPlatform.Outputs.ExecutionRoleArn
+        TaskRoleArn: !GetAtt EcsPlatform.Outputs.TaskRoleArn
+        LogGroupName: !GetAtt EcsPlatform.Outputs.LogGroupName
+        TrainingCpu: !Ref EcsTrainingCpu
+        TrainingMemory: !Ref EcsTrainingMemory
+        MlflowTrackingUri: !If [UseEcsMlflow, !GetAtt MlflowEcs.Outputs.TrackingUri, !GetAtt Mlops.Outputs.MlflowAppArn]
+        NotificationTopicArn: !GetAtt Monitoring.Outputs.AlarmTopicArn
+        UseSpot: !Ref EcsUseSpot
+      Tags:
+        - Key: Project
+          Value: sepsis-warning-research
+
   Pipeline:
     Type: AWS::CloudFormation::Stack
-    Condition: CreatePipeline
+    Condition: UseSageMakerTraining
     Properties:
       TemplateURL: pipeline.yaml
       Parameters:
@@ -315,7 +516,7 @@ Resources:
         LambdaImageUri: !Ref LambdaImageUri
         AlarmTopicArn: !GetAtt Monitoring.Outputs.AlarmTopicArn
         DriftReferenceS3Uri: !Ref DriftReferenceS3Uri
-        PipelineArn: !If [CreatePipeline, !GetAtt Pipeline.Outputs.PipelineArn, ""]
+        PipelineArn: !If [UseEcsTraining, !GetAtt PipelineEcs.Outputs.PipelineArn, !If [UseSageMakerTraining, !GetAtt Pipeline.Outputs.PipelineArn, ""]]
         RetrainImageTag: !Ref RetrainImageTag
       Tags:
         - Key: Project
@@ -399,12 +600,46 @@ Outputs:
   TrainingRepositoryUri:
     Description: Image repository for SageMaker training jobs (Dockerfile target "training").
     Value: !GetAtt Artifacts.Outputs.TrainingRepositoryUri
+  ToolsRepositoryUri:
+    Description: Image repository for the hosted tools on ECS (Dockerfile target "tools").
+    Value: !GetAtt Artifacts.Outputs.ToolsRepositoryUri
   StateTableName:
     Value: !GetAtt Artifacts.Outputs.StateTableName
   MlflowAppArn:
-    Condition: CreateMlops
+    Condition: HasSageMakerMlflowApp
     Description: MLflow tracking URI (needs the sagemaker-mlflow plugin; `pip install -e .[sagemaker]`).
     Value: !GetAtt Mlops.Outputs.MlflowAppArn
+  MlflowTrackingUri:
+    Condition: UseEcsMlflow
+    Description: MLflow server on ECS. Private name, reachable only from inside the VPC; the power workflow can open a browser address.
+    Value: !GetAtt MlflowEcs.Outputs.TrackingUri
+  MlflowBackend:
+    Value: !Ref MlflowBackend
+  EvidentlyReportFamily:
+    Condition: UseEvidently
+    Description: Task definition family of the drift report (run it with the monitor workflow).
+    Value: !GetAtt EvidentlyEcs.Outputs.ReportTaskDefinitionFamily
+  EcsClusterArn:
+    Condition: NeedsEcsPlatform
+    Value: !GetAtt EcsPlatform.Outputs.ClusterArn
+  EcsSubnetIds:
+    Condition: NeedsEcsPlatform
+    Value: !Join [",", [!GetAtt EcsPlatform.Outputs.SubnetAId, !GetAtt EcsPlatform.Outputs.SubnetBId]]
+  EcsTaskSecurityGroupId:
+    Condition: NeedsEcsPlatform
+    Value: !GetAtt EcsPlatform.Outputs.SecurityGroupId
+  EcsExecutionRoleArn:
+    Condition: NeedsEcsPlatform
+    Value: !GetAtt EcsPlatform.Outputs.ExecutionRoleArn
+  EcsTaskRoleArn:
+    Condition: NeedsEcsPlatform
+    Value: !GetAtt EcsPlatform.Outputs.TaskRoleArn
+  EcsApproverTaskRoleArn:
+    Condition: NeedsEcsPlatform
+    Value: !GetAtt EcsPlatform.Outputs.ApproverTaskRoleArn
+  EcsLogGroupName:
+    Condition: NeedsEcsPlatform
+    Value: !GetAtt EcsPlatform.Outputs.LogGroupName
   SageMakerExecutionRoleArn:
     Condition: CreateMlops
     Value: !GetAtt Mlops.Outputs.SageMakerExecutionRoleArn
@@ -423,7 +658,9 @@ Outputs:
   PipelineArn:
     Condition: CreatePipeline
     Description: Start with {"image_tag", "git_commit", "require_real_data"}; it waits for an approval.
-    Value: !GetAtt Pipeline.Outputs.PipelineArn
+    Value: !If [UseEcsTraining, !GetAtt PipelineEcs.Outputs.PipelineArn, !GetAtt Pipeline.Outputs.PipelineArn]
+  TrainingBackend:
+    Value: !Ref TrainingBackend
   PredictionLogPrefix:
     Condition: CreateObservability
     Value: !GetAtt Observability.Outputs.PredictionLogPrefix

@@ -264,6 +264,7 @@ class SageMakerEntryTests(unittest.TestCase):
                           model_uri="models:/sepsis-warning/4")
         published = {"model_s3_uri": "s3://bucket/models/v4/model.joblib", "sha256": "a" * 64, "version": "4"}
         with mock.patch.object(evaluation, "run_frozen_evaluation") as evaluate, \
+                mock.patch.object(model_source, "check_promoted", return_value="4"), \
                 mock.patch.object(model_source, "publish_model", return_value=published) as publish:
             self.assertEqual(self.run_entry(), 0)
             self.assertEqual(evaluate.call_args.kwargs["model_uri"], "models:/sepsis-warning/4")
@@ -292,12 +293,26 @@ class SageMakerEntryTests(unittest.TestCase):
 
         published = {"model_s3_uri": "s3://bucket/models/v1/model.joblib", "sha256": "a" * 64, "version": "1"}
         with mock.patch.object(evaluation, "run_frozen_evaluation", side_effect=fake_evaluation), \
+                mock.patch.object(model_source, "check_promoted", return_value="1"), \
                 mock.patch.object(model_source, "publish_model", return_value=published):
             self.assertEqual(self.run_entry(), 0)
         kept = sorted(p.name for p in (self.root / "model").rglob("*") if p.is_file())
         self.assertIn("evaluation_metrics.json", kept)
         self.assertNotIn("held_out_predictions.csv", kept)
         self.assertNotIn("replay.html", kept)
+
+    def test_an_unpromoted_model_is_refused_before_the_test_split_is_scored(self):
+        from sepsis_warning import evaluation, model_source
+
+        self.write_params(mode="evaluate_publish", mlflow_tracking_uri="sqlite:///x.db", publish_bucket="bucket")
+        refusal = model_source.PublishRefused("version 4 was not promoted to @production")
+        with mock.patch.object(evaluation, "run_frozen_evaluation") as evaluate, \
+                mock.patch.object(model_source, "check_promoted", side_effect=refusal), \
+                mock.patch.object(model_source, "publish_model") as publish:
+            self.assertEqual(self.run_entry(), 1)
+            evaluate.assert_not_called()      # the one-time evaluation must not be spent on an unapproved model
+            publish.assert_not_called()
+        self.assertIn("not promoted", (self.root / "output" / "failure").read_text())
 
     def test_require_gates_stops_registration_of_a_failing_model(self):
         from sepsis_warning.sagemaker_train import build_args

@@ -35,7 +35,7 @@ on:
         description: Hyperparameter trials per model, 0 = keep the default settings
         default: "6"
       instance_type:
-        description: SageMaker training instance type
+        description: SageMaker training instance type (ignored when the environment trains on ECS Fargate)
         default: "ml.m5.large"
 
 permissions:

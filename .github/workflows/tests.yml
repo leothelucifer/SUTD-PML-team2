@@ -65,7 +65,7 @@ jobs:
 
       - name: Known vulnerabilities in the locked dependencies
         run: |
-          for target in scoring lambda training; do
+          for target in scoring lambda training tools; do
             pip-audit -r "requirements/$target.txt" --require-hashes --disable-pip
           done
 
@@ -117,13 +117,15 @@ jobs:
             --requests 60 --max-p95-ms 1500
           docker rm -f latency >/dev/null
 
-      - name: Build the Lambda and SageMaker training images
+      - name: Build the Lambda, SageMaker training and tools images
         run: |
           docker build --target lambda --provenance=false -t sepsis-warning:lambda-ci .
           docker build --target training --provenance=false -t sepsis-warning:training-ci .
+          docker build --target tools --provenance=false -t sepsis-warning:tools-ci .
 
       # Report only for now: base-image findings need a first triage before this can block merges.
       - name: Image vulnerability scan (report)
+        continue-on-error: true
         run: |
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.57.1 \
             image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 0 sepsis-warning:ci

@@ -128,6 +128,7 @@ class FetchDataTests(unittest.TestCase):
                 "#!/usr/bin/env bash\n"
                 "echo \"$@\" >> \"$CALLS\"\n"
                 "if [ \"$1\" = cloudformation ]; then echo my-artifact-bucket; exit 0; fi\n"
+                "if [ \"$1\" = s3api ]; then [ -n \"$MARKER\" ] && exit 0 || exit 1; fi\n"
                 "if [ \"$1\" = s3 ] && [ \"$2\" = ls ]; then\n"
                 "  case \"$3\" in *training_setA/) echo 'Total Objects: 20336';; *) echo 'Total Objects: ' $COUNT_B;; esac; exit 0; fi\n"
                 "exit 0\n")
@@ -141,6 +142,18 @@ class FetchDataTests(unittest.TestCase):
             self.assertIn("s3 sync s3://physionet-open/challenge-2019/1.0.0/training/training_setA/ "
                           "s3://my-artifact-bucket/raw/physionet/training/training_setA/ --source-region us-east-1", calls)
             self.assertNotIn("no-sign-request", calls)  # our credentials write to our bucket
+            self.assertIn("s3 cp - s3://my-artifact-bucket/raw/physionet/_SUCCESS", calls)   # the marker of a finished copy
+            # Done once: with the marker present nothing is copied, unless FORCE=1.
+            log.write_text("")
+            marked = subprocess.run(["bash", str(ROOT / "scripts" / "aws_deploy.sh"), "fetch-data"], env={**env, "MARKER": "1"},
+                                    capture_output=True, text=True, cwd=ROOT)
+            self.assertEqual(marked.returncode, 0, marked.stderr)
+            self.assertIn("already complete", marked.stdout)
+            self.assertNotIn("s3 sync", log.read_text())
+            forced = subprocess.run(["bash", str(ROOT / "scripts" / "aws_deploy.sh"), "fetch-data"],
+                                    env={**env, "MARKER": "1", "FORCE": "1"}, capture_output=True, text=True, cwd=ROOT)
+            self.assertEqual(forced.returncode, 0, forced.stderr)
+            self.assertIn("s3 sync", log.read_text())
             env["COUNT_B"] = "19999"
             short = subprocess.run(["bash", str(ROOT / "scripts" / "aws_deploy.sh"), "fetch-data"], env=env,
                                    capture_output=True, text=True, cwd=ROOT)

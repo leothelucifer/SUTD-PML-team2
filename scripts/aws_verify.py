@@ -164,13 +164,59 @@ def check_table(result: Result, dynamodb, items: list[dict]) -> None:
 def check_mlflow(result: Result, sagemaker, items: list[dict]) -> None:
     apps = of_type(items, "AWS::SageMaker::MlflowApp")
     if not apps:
-        result.add("WARN", "SageMaker MLflow App", "not in this stack (EnableMlops is off)")
+        result.add("WARN", "SageMaker MLflow App", "not in this stack (MlflowBackend=ecs, or EnableMlops is off)")
     for app in apps:
         def check(app=app):
             status = sagemaker.describe_mlflow_app(Arn=app["physical"])["Status"]
             result.add("PASS" if status in ("Created", "Updated") else "FAIL", "SageMaker MLflow App", status)
 
         guarded(result, "SageMaker MLflow App", check)
+
+
+def check_ecs(result: Result, ecs, items: list[dict]) -> None:
+    """With TrainingBackend=ecs the pipeline steps run on this cluster (Fargate and Fargate Spot)."""
+    clusters = of_type(items, "AWS::ECS::Cluster")
+    if not clusters:
+        return    # TrainingBackend=sagemaker (or Fargate serving, whose cluster check lives with the service)
+    for cluster in clusters:
+        def check(cluster=cluster):
+            described = ecs.describe_clusters(clusters=[cluster["physical"]])["clusters"]
+            if not described:
+                result.add("FAIL", f"ECS cluster {cluster['physical']}", "not found")
+                return
+            status = described[0]["status"]
+            providers = set(described[0].get("capacityProviders", []))
+            # The Fargate serving cluster has no capacity providers of its own; only the training one needs them.
+            missing = ({"FARGATE", "FARGATE_SPOT"} - providers) if "training" in cluster["physical"] else set()
+            ok = status == "ACTIVE" and not missing
+            result.add("PASS" if ok else "FAIL", f"ECS cluster {cluster['physical']}",
+                       f"{status}, capacity providers {sorted(providers)}" + (f", missing {sorted(missing)}" if missing else ""))
+
+        guarded(result, f"ECS cluster {cluster['physical']}", check)
+
+
+def check_tools(result: Result, ecs, rds, items: list[dict]) -> None:
+    """The hosted tools (MLflow server, Evidently UI) and the database. Stopped is a normal, cheap state: a WARN."""
+    for item in of_type(items, "AWS::ECS::Service"):
+        def check(item=item):
+            cluster, _, name = item["physical"].split("service/", 1)[-1].partition("/")
+            service = ecs.describe_services(cluster=cluster, services=[name])["services"][0]
+            running, desired = service["runningCount"], service["desiredCount"]
+            if running >= 1 and running >= desired:
+                result.add("PASS", f"ECS service {name}", f"running {running}/{desired}")
+            elif desired == 0:
+                result.add("WARN", f"ECS service {name}", "stopped (start it with the power workflow when you need it)")
+            else:
+                result.add("FAIL", f"ECS service {name}", f"running {running} of {desired}: {service.get('events', [{}])[0].get('message', 'see the service events')[:120]}")
+
+        guarded(result, f"ECS service {item['logical']}", check)
+    for item in of_type(items, "AWS::RDS::DBInstance"):
+        def check(item=item):
+            status = rds.describe_db_instances(DBInstanceIdentifier=item["physical"])["DBInstances"][0]["DBInstanceStatus"]
+            result.add("PASS" if status == "available" else "WARN", f"RDS {item['physical']}",
+                       status if status == "available" else f"{status} (start it with the power workflow when you need it)")
+
+        guarded(result, f"RDS {item['logical']}", check)
 
 
 def check_pipeline(result: Result, stepfunctions, items: list[dict]) -> None:
@@ -228,6 +274,54 @@ def check_alerts(result: Result, sns, cloudwatch, items: list[dict]) -> None:
                 result.add("PASS", "CloudWatch alarms", f"{len(states)} alarm(s), none firing")
 
         guarded(result, "CloudWatch alarms", alarms)
+
+
+def check_quotas(result: Result, service_quotas, instance_type: str = "ml.m5.xlarge") -> None:
+    """SageMaker training instances start at 0 in a new account; the pipeline cannot run until they are raised."""
+    wanted = {f"{instance_type} for training job usage": "on demand (the data download)",
+              f"{instance_type} for spot training job usage": "spot (tune, train, evaluate)"}
+
+    def check():
+        found = {}
+        for page in service_quotas.get_paginator("list_service_quotas").paginate(ServiceCode="sagemaker"):
+            for quota in page["Quotas"]:
+                if quota["QuotaName"] in wanted:
+                    found[quota["QuotaName"]] = quota["Value"]
+        for name, purpose in wanted.items():
+            value = found.get(name)
+            if value is None:
+                result.add("WARN", f"SageMaker quota {name}", "not found; check Service Quotas")
+            elif value < 1:
+                result.add("WARN", f"SageMaker quota {name}", f"{value:g}: request an increase to 1 or more in Service Quotas ({purpose})")
+            else:
+                result.add("PASS", f"SageMaker quota {name}", f"{value:g} ({purpose})")
+
+    guarded(result, "SageMaker quotas", check)
+
+
+def check_fargate_quota(result: Result, service_quotas, needed_vcpu: float = 5.0) -> None:
+    """ECS training runs on Fargate. The default quota is 6 vCPU per Region for On-Demand and for Spot (the ECS quotas page);
+    one training task (4) plus the MLflow server (0.5) and the Evidently UI (0.5) need 5 of them at the same time."""
+    def check():
+        found = {}
+        for page in service_quotas.get_paginator("list_service_quotas").paginate(ServiceCode="fargate"):
+            for quota in page["Quotas"]:
+                name = quota["QuotaName"]
+                if "vCPU" in name and "On-Demand" in name:
+                    found["on demand"] = (name, quota["Value"])
+                elif "vCPU" in name and "Spot" in name:
+                    found["spot"] = (name, quota["Value"])
+        if not found:
+            result.add("WARN", "Fargate vCPU quota", "not found; check Service Quotas (service code fargate)")
+        for kind, (name, value) in sorted(found.items()):
+            if value < needed_vcpu:
+                result.add("WARN", f"Fargate quota ({kind})",
+                           f"{value:g} vCPU; a training task plus the tools needs {needed_vcpu:g}. Raise it in Service Quotas ({name}) "
+                           "or lower EcsTrainingCpu")
+            else:
+                result.add("PASS", f"Fargate quota ({kind})", f"{value:g} vCPU (a training task plus the tools needs {needed_vcpu:g})")
+
+    guarded(result, "Fargate quotas", check)
 
 
 def check_budget(result: Result, budgets, account: str, items: list[dict]) -> None:
@@ -323,10 +417,14 @@ def verify(session, stack: str, region: str, *, expect_model: bool = False, tag:
     check_repositories(result, session.client("ecr"), items, tag)
     check_table(result, session.client("dynamodb"), items)
     check_mlflow(result, session.client("sagemaker"), items)
+    check_ecs(result, session.client("ecs"), items)
+    check_tools(result, session.client("ecs"), session.client("rds"), items)
     check_pipeline(result, session.client("stepfunctions"), items)
     check_alerts(result, session.client("sns"), session.client("cloudwatch"), items)
     account = session.client("sts").get_caller_identity()["Account"]
     check_budget(result, session.client("budgets", region_name="us-east-1"), account, items)
+    check_quotas(result, session.client("service-quotas"))
+    check_fargate_quota(result, session.client("service-quotas"))
     check_iam(result, session.client("iam"), outputs)
     check_function(result, session.client("lambda"), items, outputs, expect_model, signed_health(session, region) if call_api else None)
     return result

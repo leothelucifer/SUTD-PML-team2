@@ -18,7 +18,6 @@ being compared. An alarm asks a person to look; nothing here retrains or
 changes a threshold.
 """
 
-import gzip
 import json
 import math
 from pathlib import Path
@@ -28,6 +27,7 @@ import pandas as pd
 
 from .data import DYNAMIC
 from .monitoring import RATE_EPSILON, bin_shares, psi
+from .prediction_log import read_prediction_log  # noqa: F401  (re-exported: the drift job and the tests import it from here)
 
 MIN_ROWS = 200
 THRESHOLDS: dict[str, dict] = {
@@ -39,51 +39,6 @@ THRESHOLDS: dict[str, dict] = {
 # 0 ok, 1 warn, 2 alarm. A log from another model than the reference cannot be judged at all, which
 # is worse than a drifting score, so it also reaches the alarm line (level 3). Too little data is -1.
 LEVEL = {"ok": 0, "warn": 1, "alarm": 2, "reference_mismatch": 3, "insufficient_data": -1}
-
-
-def _json_objects(text: str):
-    """Yield JSON objects from JSONL or from objects written back to back (Firehose)."""
-    decoder, index = json.JSONDecoder(), 0
-    while index < len(text):
-        while index < len(text) and text[index].isspace():
-            index += 1
-        if index >= len(text):
-            return
-        value, index = decoder.raw_decode(text, index)
-        yield value
-
-
-def _lines(data: bytes):
-    if data[:2] == b"\x1f\x8b":
-        data = gzip.decompress(data)
-    for value in _json_objects(data.decode("utf-8")):
-        if isinstance(value, dict) and "logEvents" in value:          # CloudWatch Logs -> Firehose batch
-            for event in value["logEvents"]:
-                try:
-                    yield json.loads(event["message"])
-                except (ValueError, KeyError):
-                    continue
-        elif isinstance(value, dict):
-            yield value
-
-
-def read_prediction_log(sources) -> pd.DataFrame:
-    """Prediction records from files (``.jsonl``, ``.gz``, Firehose objects), folders, or raw bytes."""
-    records: list[dict] = []
-    for source in sources:
-        if isinstance(source, bytes):
-            chunks = [source]
-        else:
-            path = Path(source)
-            files = sorted(p for p in path.rglob("*") if p.is_file()) if path.is_dir() else [path]
-            chunks = [file.read_bytes() for file in files]
-        for chunk in chunks:
-            records.extend(r for r in _lines(chunk) if r.get("record_type") == "prediction")
-    frame = pd.DataFrame.from_records(records)
-    if frame.empty:
-        return frame
-    # A retried request logs the same prediction twice; count it once.
-    return frame.drop_duplicates("prediction_id", keep="last").reset_index(drop=True)
 
 
 def _level(value, warn, alarm) -> str:

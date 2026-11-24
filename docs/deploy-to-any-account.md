@@ -134,6 +134,31 @@ takes longer. Start with a small `limit` (for example 2000 stays per hospital) t
 approval email needs the `ALERT_EMAIL` subscription to be confirmed. From a shell the same run is
 `DATA_SOURCE=synthetic TRIALS=6 WAIT=1 bash scripts/aws_deploy.sh pipeline`.
 
+### No SageMaker quota? Train on ECS Fargate instead
+
+If AWS does not raise the SageMaker training quota (a new or free-plan account often cannot get it), set
+`TrainingBackend=ecs` (already the default in `infra/params/dev.json`) and run the **deploy** workflow again.
+The pipeline then runs each step as an ECS Fargate task. See [ecs-training.md](ecs-training.md) for the quota
+to check, the cost and the security notes, and [ecs-runbook.md](ecs-runbook.md) for the whole ECS demo (MLflow and
+Evidently on ECS, the power workflow that stops what bills, approval from GitHub, the predict demo).
+
+### First pipeline run: SageMaker quotas
+
+A new AWS account has `0` as its limit for training instances, and the first job then fails at once with
+`ResourceLimitExceeded: ... 'ml.m5.xlarge for training job usage' is 0 Instances`. Before the first run, raise two quotas in
+Service Quotas (in the region you deploy to): SageMaker → **ml.m5.xlarge for training job usage** (the data download)
+and **ml.m5.xlarge for spot training job usage** (tune, train, evaluate), to 1 or 2 each. Small requests are usually
+approved within hours. From CloudShell:
+
+```bash
+aws service-quotas list-service-quotas --service-code sagemaker --region ap-southeast-2 \
+  --query "Quotas[?contains(QuotaName,'ml.m5.xlarge for')].[QuotaName,QuotaCode,Value]" --output table
+aws service-quotas request-service-quota-increase --service-code sagemaker --region ap-southeast-2 \
+  --quota-code <code from the table> --desired-value 2
+```
+
+**verify** shows a warning for each quota that is still 0.
+
 ## Checking that everything is deployed
 
 Run **verify**: Actions → **verify** → Run workflow (environment, region; tick "expect_model" after a full deploy).

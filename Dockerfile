@@ -42,10 +42,9 @@ COPY src/sepsis_warning ./src/sepsis_warning
 # SageMaker AI training job. SageMaker runs the image with the argument
 # "train"; inputs and outputs use the /opt/ml layout (see sagemaker_train.py).
 FROM base AS training
-# requirements/training.txt pins MLflow close to the SageMaker MLflow App's version (3.16 on
-# 2026-11-15; the App updates itself, so re-lock with MLFLOW_VERSION when it changes). 3.17.2 is
-# the first release without the three CVEs that pip-audit reported for 3.16.1; confirm the App
-# still accepts this client with `aws_deploy.sh verify` and a synthetic pipeline run.
+# requirements/training.txt pins MLflow to the SageMaker MLflow App's version (3.17 on 2026-11-15; the App
+# updates itself, so re-lock with MLFLOW_VERSION when it changes). 3.17.2 is the first release without the three
+# CVEs that pip-audit reported for 3.16.1. With MlflowBackend=ecs the server in the tools image uses the same version.
 RUN --mount=type=secret,id=extra_ca,required=false \
     if [ -f /run/secrets/extra_ca ]; then export PIP_CERT=/run/secrets/extra_ca; fi; \
     python -m pip install --require-hashes -r requirements/training.txt && \
@@ -54,6 +53,25 @@ ENV MLFLOW_DISABLE_TELEMETRY=true \
     MLFLOW_DISABLE_AGENT_HINT=1 \
     GIT_PYTHON_REFRESH=quiet
 ENTRYPOINT ["python", "-m", "sepsis_warning.sagemaker_train"]
+
+# Hosted tools on ECS Fargate: the MLflow tracking server and the Evidently monitoring job and UI.
+# One image, three entry points chosen by the task's command:
+#   python -m sepsis_warning.mlflow_server                (default)  MLflow on PostgreSQL + S3
+#   python -m sepsis_warning.evidently_job ...                       scheduled monitoring report
+#   evidently ui --workspace ... --host 0.0.0.0 --port 8000          live Evidently UI
+FROM base AS tools
+RUN --mount=type=secret,id=extra_ca,required=false \
+    if [ -f /run/secrets/extra_ca ]; then export PIP_CERT=/run/secrets/extra_ca; fi; \
+    python -m pip install --require-hashes -r requirements/tools.txt && \
+    python -m pip install --no-deps . && rm -rf /app/src /app/requirements
+ENV MLFLOW_DISABLE_TELEMETRY=true \
+    MLFLOW_DISABLE_AGENT_HINT=1
+RUN useradd --system --uid 10001 --create-home --shell /usr/sbin/nologin tools
+USER 10001:10001
+WORKDIR /home/tools
+EXPOSE 5000 8000
+ENTRYPOINT ["python", "-m"]
+CMD ["sepsis_warning.mlflow_server"]
 
 # AWS Lambda (container image). awslambdaric talks to the Lambda runtime API;
 # the handler downloads the pinned bundle from S3 into /tmp on first use.

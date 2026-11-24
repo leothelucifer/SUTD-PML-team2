@@ -18,6 +18,7 @@
 #   bash scripts/aws_deploy.sh pipeline-wait [ARN]   follow an execution until it needs approval, finishes or fails
 #   bash scripts/aws_deploy.sh approve TOKEN         approve a waiting pipeline (the token is in the notification email)
 #   bash scripts/aws_deploy.sh reference FILE        upload a monitor-setup reference and switch on the daily drift job
+#   bash scripts/aws_deploy.sh power status|start|stop   show, start or stop what bills while on (MLflow, Evidently UI, database)
 #   bash scripts/aws_deploy.sh outputs
 #   bash scripts/aws_deploy.sh down                  delete the stack only (data, keys and images are kept)
 #   bash scripts/aws_deploy.sh destroy               plan a full teardown; CONFIRM_DESTROY=<stack> performs it
@@ -28,7 +29,7 @@
 # promote refuses synthetic models unless ALLOW_SYNTHETIC=1 (dev rehearsals).
 #
 # Settings (environment variables): STACK (sepsis-research), AWS_REGION (required, no default),
-# SERVING_MODE (lambda | fargate), BUDGET_USD and BUDGET_EMAIL
+# SERVING_MODE (lambda | fargate), TRAINING_BACKEND (sagemaker | ecs; overrides the params file), BUDGET_USD and BUDGET_EMAIL
 # (monthly budget alert), ALERT_EMAIL, PLATFORM (linux/amd64), TAG (git short sha),
 # PYTHON (python). Needs the AWS CLI v2, Docker, and `pip install -e ".[aws,tracking,sagemaker]"`.
 #
@@ -90,6 +91,16 @@ import json, sys
 for key, value in json.load(open(sys.argv[1])).items():
     if not key.startswith("_"):
         print(f"{key}={value}")' "$ROOT/infra/params/$ENVIRONMENT.json")
+  fi
+  [ -n "${TRAINING_BACKEND:-}" ] && params+=("TrainingBackend=$TRAINING_BACKEND")
+  # The MLflow server needs its image (target "tools"), which can only be pushed once the stack and its ECR
+  # repository exist. Once the image for this commit is there, every stack update passes it, so the service
+  # is created by the second `stack` run and is not removed by later ones.
+  local tools_repo tools_tag="tools-$TAG"
+  tools_repo="$(output ToolsRepositoryUri 2>/dev/null || true)"
+  if [ -n "$tools_repo" ] && aws ecr describe-images --repository-name "${tools_repo##*/}" \
+      --image-ids "imageTag=$tools_tag" --query 'imageDetails[0].imageDigest' --output text >/dev/null 2>&1; then
+    params+=("ToolsImageUri=$tools_repo:$tools_tag")
   fi
   [ -n "${BUDGET_USD:-}" ] && params+=("MonthlyBudgetUsd=$BUDGET_USD")
   # A budget alert needs an email address; the template refuses a budget without one.
@@ -154,7 +165,7 @@ cmd_images() {
   local build=(docker build --provenance=false --platform "$PLATFORM" --build-arg "BASE_IMAGE=${BASE_IMAGE:-python:3.12-slim}")
   [ -n "${EXTRA_CA_CERT:-}" ] && build+=(--secret "id=extra_ca,src=$EXTRA_CA_CERT")
   local target repo
-  for pair in "lambda:LambdaRepositoryUri" "training:TrainingRepositoryUri" "scoring:EcrRepositoryUri"; do
+  for pair in "lambda:LambdaRepositoryUri" "training:TrainingRepositoryUri" "tools:ToolsRepositoryUri" "scoring:EcrRepositoryUri"; do
     target="${pair%%:*}"; repo="$(output "${pair#*:}")"
     [ -n "$repo" ] || fail "stack output ${pair#*:} missing; run '$0 stack' first"
     local image_tag="$target-$TAG"
@@ -186,6 +197,11 @@ cmd_data() {
 cmd_fetch_data() {
   local bucket source="s3://physionet-open/challenge-2019/1.0.0/training" set count
   bucket="$(output ArtifactBucketName)"; [ -n "$bucket" ] || fail "no ArtifactBucketName output; deploy the stack first"
+  # The data never changes, so this is done once: a marker records the finished copy (FORCE=1 copies again).
+  if [ "${FORCE:-}" != 1 ] && aws s3api head-object --bucket "$bucket" --key raw/physionet/_SUCCESS >/dev/null 2>&1; then
+    echo "The PhysioNet copy in s3://$bucket/raw/physionet/ is already complete (marker _SUCCESS); nothing to do. FORCE=1 copies again."
+    return 0
+  fi
   for set in A B; do
     echo "Copying $source/training_set$set/ to s3://$bucket/raw/physionet/training/training_set$set/"
     aws s3 sync "$source/training_set$set/" "s3://$bucket/raw/physionet/training/training_set$set/" \
@@ -195,6 +211,9 @@ cmd_fetch_data() {
     echo "training_set$set: $count records (expected $expected)"
     [ "$count" = "$expected" ] || fail "training_set$set has $count records, expected $expected; run fetch-data again"
   done
+  printf '{"source": "%s", "training_setA": 20336, "training_setB": 20000, "copied_at": "%s"}\n' \
+    "$source" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" | aws s3 cp - "s3://$bucket/raw/physionet/_SUCCESS" --only-show-errors
+  echo "Copy complete; marker written to s3://$bucket/raw/physionet/_SUCCESS"
 }
 
 cmd_train() {
@@ -237,8 +256,25 @@ cmd_call() {
   "$PYTHON" "$ROOT/scripts/call_scoring_url.py" --url "$(output ApiBaseUrl)" --region "$AWS_REGION" "$@"
 }
 
+# demo: replay real stays through the deployed endpoint and keep the ward page in the private bucket.
+# SPLIT=validation|internal_test|external_test (held-out splits need the model's recorded frozen evaluation), BEDS, SEED.
+cmd_demo() {
+  "$PYTHON" "$ROOT/scripts/aws_demo.py" --stack "$STACK" --region "$AWS_REGION" \
+    --split "${SPLIT:-validation}" --beds "${BEDS:-12}" --seed "${SEED:-42}"
+}
+
+# power status | start | stop [--component all|mlflow|evidently|database] [--allow-cidr x.x.x.x/32]
+# Shows, starts or stops everything that bills while on (MLflow server, Evidently UI, the database).
+cmd_power() {
+  "$PYTHON" "$ROOT/scripts/aws_power.py" --stack "$STACK" --region "$AWS_REGION" "$@"
+}
+
 cmd_pipeline() {
   local arn; arn="$(output PipelineArn)"; [ -n "$arn" ] || fail "stack has no pipeline (EnablePipeline=true)"
+  # With MLflow on ECS the server and its database must be running; they are off unless someone started them.
+  if [ "$(output MlflowBackend)" = ecs ]; then
+    cmd_power require-on --component mlflow || fail "start MLflow first: the power workflow with action start (or: $0 power start)"
+  fi
   # DATA_SOURCE=synthetic|physionet|physionet-web  (physionet reads the copy made by `fetch-data`; physionet-web downloads over HTTPS)
   # PREPARE=true|false (false reuses the data already in S3)
   # LIMIT=stays per hospital to download (0 = all)  TRIALS=hyperparameter trials per model (0 = defaults)
@@ -282,6 +318,49 @@ cmd_pipeline_wait() {
       --query "events[?type=='TaskFailed' || type=='ExecutionFailed'].[type, taskFailedEventDetails.resource, taskFailedEventDetails.error, taskFailedEventDetails.cause, executionFailedEventDetails.cause]" --output text | head -20
     return 1
   fi
+}
+
+# promote-task: promote a model version as a one-off ECS task under the approver role (MLflow is private).
+# MODEL_VERSION, REQUIRE_REAL_DATA (true|false), REVIEWED_BY and TAG are read from the environment.
+cmd_promote_task() {
+  local tracking; tracking="$(output MlflowTrackingUri)"
+  [ -n "$tracking" ] || fail "the stack has no MLflow server on ECS (MlflowBackend=ecs); use '$0 promote' for the SageMaker MLflow App"
+  cmd_power require-on --component mlflow || fail "start MLflow first: the power workflow with action start"
+  case "${MODEL_VERSION:-}" in ''|*[!0-9]*) fail "MODEL_VERSION must be a whole number" ;; esac
+  [ -n "${REVIEWED_BY:-}" ] || fail "REVIEWED_BY is required (the workflow passes the GitHub user)"
+  "$PYTHON" "$ROOT/scripts/aws_run_task.py" --stack "$STACK" --region "$AWS_REGION" --role approver \
+    --image-tag "training-$TAG" --family approver \
+    --env HP_mode=promote --env "HP_mlflow_tracking_uri=$tracking" --env "HP_model_version=$MODEL_VERSION" \
+    --env "HP_reviewed_by=$REVIEWED_BY" --env "HP_require_real_data=${REQUIRE_REAL_DATA:-true}" \
+    --env "JOB_OUTPUT=s3://$(output ArtifactBucketName)/training-output/promote-$MODEL_VERSION-$(date +%s)/"
+}
+
+# monitor-reference: build the Evidently reference (hospital A validation, frozen model) as a one-off task in the VPC.
+cmd_monitor_reference() {
+  local tracking bucket; tracking="$(output MlflowTrackingUri)"; bucket="$(output ArtifactBucketName)"
+  [ -n "$tracking" ] || tracking="$(output MlflowAppArn)"
+  [ -n "$tracking" ] || fail "the stack has no MLflow output; deploy it first"
+  [ "$(output MlflowBackend)" != ecs ] || cmd_power require-on --component mlflow || fail "start MLflow first: the power workflow with action start"
+  "$PYTHON" "$ROOT/scripts/aws_run_task.py" --stack "$STACK" --region "$AWS_REGION" --role task \
+    --image-tag "training-$TAG" --family monitor-reference \
+    --env HP_mode=monitor_reference --env "HP_mlflow_tracking_uri=$tracking" --env "HP_publish_bucket=$bucket" \
+    --env "CH_data=s3://$bucket/data/${DATA_FOLDER:-physionet}/" \
+    --env "JOB_OUTPUT=s3://$bucket/training-output/monitor-reference-$(date +%s)/"
+}
+
+# monitor-report: run the Evidently drift report over the last DAYS days of the prediction log.
+cmd_monitor_report() {
+  local family; family="$(output EvidentlyReportFamily)"
+  [ -n "$family" ] || fail "Evidently is not deployed (EnableEvidently=true, then 'stack' once the tools image exists)"
+  "$PYTHON" "$ROOT/scripts/aws_run_task.py" --stack "$STACK" --region "$AWS_REGION" \
+    --existing-family "$family" --container report --env "REPORT_DAYS=${DAYS:-1}"
+}
+
+# approve-run: answer the waiting pipeline from a workflow (DECISION approve|reject, EXECUTION, REASON, DECIDED_BY).
+cmd_approve_run() {
+  "$PYTHON" "$ROOT/scripts/aws_approval.py" --stack "$STACK" --region "$AWS_REGION" \
+    --decision "${DECISION:?set DECISION to approve or reject}" --by "${DECIDED_BY:?set DECIDED_BY}" \
+    ${EXECUTION:+--execution "$EXECUTION"} ${REASON:+--reason "$REASON"}
 }
 
 cmd_approve() {
@@ -345,12 +424,18 @@ case "${1:-}" in
   publish) cmd_publish ;;
   serve) cmd_serve ;;
   call) shift; cmd_call "$@" ;;
+  power) shift; cmd_power "$@" ;;
+  demo) cmd_demo ;;
+  monitor-reference) cmd_monitor_reference ;;
+  monitor-report) cmd_monitor_report ;;
   pipeline) cmd_pipeline ;;
   pipeline-wait) shift; cmd_pipeline_wait "$@" ;;
   approve) shift; cmd_approve "$@" ;;
+  approve-run) cmd_approve_run ;;
+  promote-task) cmd_promote_task ;;
   reference) shift; cmd_reference "$@" ;;
   down) cmd_down ;;
   github-oidc) shift; cmd_github_oidc "$@" ;;
   destroy) cmd_destroy ;;
-  *) sed -n '2,35p' "$0"; exit 2 ;;
+  *) sed -n '2,36p' "$0"; exit 2 ;;
 esac

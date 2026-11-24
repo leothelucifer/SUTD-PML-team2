@@ -1,0 +1,312 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Evidently monitoring on ECS Fargate: a live UI service (stopped and started by the power workflow), a task
+  definition for the drift report (run on demand by the monitor workflow, no schedule), an alarm on the share of
+  drifted columns, and the roles. The UI has no login: it is reachable only from addresses opened with the power
+  workflow, and it holds aggregates (no stay identifiers, no measurement values).
+
+Parameters:
+  EnvironmentName:
+    Type: String
+  VpcId:
+    Type: String
+  SubnetAId:
+    Type: String
+  SubnetBId:
+    Type: String
+  ClusterArn:
+    Type: String
+  ArtifactBucketName:
+    Type: String
+  ArtifactBucketArn:
+    Type: String
+  ArtifactKeyArn:
+    Type: String
+  ToolsRepositoryArn:
+    Type: String
+  ToolsImageUri:
+    Type: String
+    Default: ""
+    Description: Image (target "tools") with its tag. Empty creates only the roles, log group and alarm.
+  AlarmTopicArn:
+    Type: String
+  UiCpu:
+    Type: String
+    Default: "512"
+    AllowedValues: ["256", "512", "1024"]
+  UiMemory:
+    Type: String
+    Default: "1024"
+  DriftedShareAlarm:
+    Type: String
+    Default: "0.5"
+    Description: Alarm when this share of the monitored columns (or more) drifted in a report.
+  LogRetentionDays:
+    Type: Number
+    Default: 30
+    AllowedValues: [1, 3, 5, 7, 14, 30, 60, 90, 180, 365]
+
+Conditions:
+  HasImage: !Not [!Equals [!Ref ToolsImageUri, ""]]
+
+Resources:
+  UiSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Evidently UI - no inbound by default (the power workflow opens port 8000 to one address); outbound HTTPS only.
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: ECR, S3, CloudWatch Logs
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-evidently-ui"
+        - Key: power:ui-port
+          Value: "8000"
+
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/ecs/${EnvironmentName}-evidently"
+      RetentionInDays: !Ref LogRetentionDays
+
+  ExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                "aws:SourceAccount": !Ref AWS::AccountId
+      Policies:
+        - PolicyName: PullImageAndLog
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                Resource: !Ref ToolsRepositoryArn
+              - Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub "${LogGroup.Arn}:*"
+
+  # The UI only reads the workspace the report job keeps in S3.
+  UiTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                "aws:SourceAccount": !Ref AWS::AccountId
+      Policies:
+        - PolicyName: ReadWorkspace
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub "${ArtifactBucketArn}/monitoring/evidently/workspace/*"
+              - Effect: Allow
+                Action: s3:ListBucket
+                Resource: !Ref ArtifactBucketArn
+                Condition:
+                  StringLike:
+                    "s3:prefix": "monitoring/evidently/workspace/*"
+              - Effect: Allow
+                Action: kms:Decrypt
+                Resource: !Ref ArtifactKeyArn
+
+  # The report job reads the prediction log and the reference, writes reports and the workspace, publishes metrics.
+  ReportTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                "aws:SourceAccount": !Ref AWS::AccountId
+      Policies:
+        - PolicyName: ReportJob
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource:
+                  - !Sub "${ArtifactBucketArn}/prediction-log/*"
+                  - !Sub "${ArtifactBucketArn}/monitoring/evidently/*"
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:AbortMultipartUpload
+                Resource:
+                  - !Sub "${ArtifactBucketArn}/reports/monitoring/*"
+                  - !Sub "${ArtifactBucketArn}/monitoring/evidently/workspace/*"
+              - Effect: Allow
+                Action: s3:ListBucket
+                Resource: !Ref ArtifactBucketArn
+              - Effect: Allow
+                Action:
+                  - kms:Decrypt
+                  - kms:GenerateDataKey
+                Resource: !Ref ArtifactKeyArn
+              - Effect: Allow
+                Action: cloudwatch:PutMetricData
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    "cloudwatch:namespace": SepsisWarning/Evidently
+
+  UiTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Condition: HasImage
+    Properties:
+      Family: !Sub "${EnvironmentName}-evidently-ui"
+      Cpu: !Ref UiCpu
+      Memory: !Ref UiMemory
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      ExecutionRoleArn: !GetAtt ExecutionRole.Arn
+      TaskRoleArn: !GetAtt UiTaskRole.Arn
+      RuntimePlatform:
+        CpuArchitecture: X86_64
+        OperatingSystemFamily: LINUX
+      ContainerDefinitions:
+        - Name: evidently-ui
+          Image: !Ref ToolsImageUri
+          Essential: true
+          PortMappings:
+            - ContainerPort: 8000
+          Command:
+            - sepsis_warning.evidently_job
+            - ui
+          Environment:
+            - Name: ARTIFACT_BUCKET
+              Value: !Ref ArtifactBucketName
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ui
+
+  UiService:
+    Type: AWS::ECS::Service
+    Condition: HasImage
+    Properties:
+      ServiceName: !Sub "${EnvironmentName}-evidently-ui"
+      Cluster: !Ref ClusterArn
+      TaskDefinition: !Ref UiTaskDefinition
+      DesiredCount: 1
+      LaunchType: FARGATE
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 0
+        MaximumPercent: 100
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          Subnets:
+            - !Ref SubnetAId
+            - !Ref SubnetBId
+          SecurityGroups:
+            - !Ref UiSecurityGroup
+      Tags:
+        - Key: Project
+          Value: sepsis-warning-research
+        - Key: power:group
+          Value: evidently
+        - Key: power:desired
+          Value: "1"
+
+  # Run on demand (monitor workflow): a task definition only, nothing runs between reports.
+  ReportTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Condition: HasImage
+    Properties:
+      Family: !Sub "${EnvironmentName}-evidently-report"
+      Cpu: "1024"
+      Memory: "4096"
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      ExecutionRoleArn: !GetAtt ExecutionRole.Arn
+      TaskRoleArn: !GetAtt ReportTaskRole.Arn
+      RuntimePlatform:
+        CpuArchitecture: X86_64
+        OperatingSystemFamily: LINUX
+      ContainerDefinitions:
+        - Name: report
+          Image: !Ref ToolsImageUri
+          Essential: true
+          Command:
+            - sepsis_warning.evidently_job
+            - report
+          Environment:
+            - Name: ARTIFACT_BUCKET
+              Value: !Ref ArtifactBucketName
+            - Name: ENVIRONMENT_NAME
+              Value: !Ref EnvironmentName
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: report
+
+  DriftAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${EnvironmentName}-evidently-drift"
+      AlarmDescription: >-
+        The latest Evidently report found that many monitored columns drifted from the frozen reference. A person
+        reviews the report in S3 (reports/monitoring/) or the Evidently UI; a fast drift result is a prompt to
+        investigate, not proof that performance dropped. Nothing is retrained automatically.
+      Namespace: SepsisWarning/Evidently
+      MetricName: DriftedColumnsShare
+      Dimensions:
+        - Name: Environment
+          Value: !Ref EnvironmentName
+      Statistic: Maximum
+      Period: 86400
+      EvaluationPeriods: 1
+      Threshold: !Ref DriftedShareAlarm
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopicArn
+
+Outputs:
+  UiSecurityGroupId:
+    Value: !Ref UiSecurityGroup
+  ReportTaskDefinitionFamily:
+    Value: !Sub "${EnvironmentName}-evidently-report"
+  EvidentlyLogGroupName:
+    Value: !Ref LogGroup

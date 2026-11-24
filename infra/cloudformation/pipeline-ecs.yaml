@@ -1,0 +1,480 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Training pipeline on ECS Fargate (Step Functions): the same steps, gates and human approval as
+  pipeline.yaml, but each step is an ECS task instead of a SageMaker AI training job, for accounts
+  whose SageMaker training quota is 0. Nothing runs or bills between executions.
+
+Parameters:
+  EnvironmentName:
+    Type: String
+  ArtifactBucketName:
+    Type: String
+  TrainingRepositoryUri:
+    Type: String
+  ClusterArn:
+    Type: String
+  SubnetAId:
+    Type: String
+  SubnetBId:
+    Type: String
+  SecurityGroupId:
+    Type: String
+  ExecutionRoleArn:
+    Type: String
+  TaskRoleArn:
+    Type: String
+  LogGroupName:
+    Type: String
+  TrainingCpu:
+    Type: String
+    Default: "4096"
+  TrainingMemory:
+    Type: String
+    Default: "16384"
+  MlflowTrackingUri:
+    Type: String
+    Description: SageMaker MLflow App ARN, or the URL of an MLflow server.
+  NotificationTopicArn:
+    Type: String
+  UseSpot:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: Run the tune and train steps on Fargate Spot (cheaper; a step restarts if AWS reclaims the capacity).
+  ApprovalTimeoutSeconds:
+    Type: Number
+    Default: 604800
+    Description: How long the pipeline waits for an approver (default 7 days) before it stops.
+
+Conditions:
+  SpotForWork: !Equals [!Ref UseSpot, "true"]
+
+Resources:
+  PipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                "aws:SourceAccount": !Ref AWS::AccountId
+      Policies:
+        - PolicyName: RunEcsTasksAndNotify
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: ecs:RegisterTaskDefinition
+                Resource: "*"
+              - Effect: Allow
+                Action: ecs:RunTask
+                Resource: !Sub "arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:task-definition/${EnvironmentName}-training:*"
+                Condition:
+                  ArnEquals:
+                    "ecs:cluster": !Ref ClusterArn
+              - Effect: Allow
+                Action:
+                  - ecs:StopTask
+                  - ecs:DescribeTasks
+                Resource: !Sub "arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:task/${EnvironmentName}-training-cluster/*"
+              - Effect: Allow
+                Action: iam:PassRole
+                Resource:
+                  - !Ref ExecutionRoleArn
+                  - !Ref TaskRoleArn
+                Condition:
+                  StringEquals:
+                    "iam:PassedToService": ecs-tasks.amazonaws.com
+              # Needed for the ".sync" integration, which waits for the task through EventBridge.
+              - Effect: Allow
+                Action:
+                  - events:PutTargets
+                  - events:PutRule
+                  - events:DescribeRule
+                Resource: !Sub "arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:rule/StepFunctionsGetEventsForECSTaskRule"
+              - Effect: Allow
+                Action: sns:Publish
+                Resource: !Ref NotificationTopicArn
+
+  TrainingPipeline:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: !Sub "${EnvironmentName}-training"
+      RoleArn: !GetAtt PipelineRole.Arn
+      DefinitionSubstitutions:
+        Bucket: !Ref ArtifactBucketName
+        Repository: !Ref TrainingRepositoryUri
+        Mlflow: !Ref MlflowTrackingUri
+        Topic: !Ref NotificationTopicArn
+        ClusterArn: !Ref ClusterArn
+        SubnetA: !Ref SubnetAId
+        SubnetB: !Ref SubnetBId
+        SecurityGroup: !Ref SecurityGroupId
+        ExecRole: !Ref ExecutionRoleArn
+        TaskRole: !Ref TaskRoleArn
+        LogGroup: !Ref LogGroupName
+        Family: !Sub "${EnvironmentName}-training"
+        Cpu: !Ref TrainingCpu
+        Memory: !Ref TrainingMemory
+        WorkProvider: !If [SpotForWork, FARGATE_SPOT, FARGATE]
+        Region: !Ref AWS::Region
+      Definition:
+        Comment: >-
+          Same input as pipeline.yaml (all values are strings): {"image_tag": "training-<git sha>", "git_commit": "<sha>",
+          "require_real_data": "true|false", "prepare": "true|false", "data_source": "synthetic|physionet",
+          "limit": "0", "trials": "6"}. Extra keys (instance_type) are ignored. Each data source has its own folder
+          (data/synthetic, data/physionet, data/physionet-web), so a rehearsal can never touch the real data. Each step is an ECS task that runs
+          the image's sepsis_warning.ecs_job entry point; its output goes to s3://<bucket>/training-output/<execution>/<step>/.
+        StartAt: RegisterTaskDefinition
+        States:
+          # The image tag changes with every commit and ECS cannot override an image at run time, so each
+          # execution registers a task definition for the tag it was started with.
+          RegisterTaskDefinition:
+            Type: Task
+            Resource: arn:aws:states:::aws-sdk:ecs:registerTaskDefinition
+            Parameters:
+              Family: ${Family}
+              Cpu: "${Cpu}"
+              Memory: "${Memory}"
+              NetworkMode: awsvpc
+              RequiresCompatibilities:
+                - FARGATE
+              ExecutionRoleArn: ${ExecRole}
+              TaskRoleArn: ${TaskRole}
+              RuntimePlatform:
+                CpuArchitecture: X86_64
+                OperatingSystemFamily: LINUX
+              EphemeralStorage:
+                SizeInGiB: 50
+              ContainerDefinitions:
+                - Name: trainer
+                  Image.$: States.Format('${Repository}:{}', $.image_tag)
+                  Essential: true
+                  EntryPoint:
+                    - python
+                    - -m
+                    - sepsis_warning.ecs_job
+                  LogConfiguration:
+                    LogDriver: awslogs
+                    Options:
+                      awslogs-group: ${LogGroup}
+                      awslogs-region: ${Region}
+                      awslogs-stream-prefix: training
+            ResultSelector:
+              TaskDefinition:
+                TaskDefinitionArn.$: $.TaskDefinition.TaskDefinitionArn
+            ResultPath: $.taskdef
+            Catch:
+              - ErrorEquals: [States.ALL]
+                ResultPath: $.error
+                Next: NotifyFailure
+            Next: CheckPrepare
+          CheckPrepare:
+            Type: Choice
+            Choices:
+              - And:
+                  - Variable: $.prepare
+                    IsPresent: true
+                  - Variable: $.prepare
+                    StringEquals: "true"
+                Next: PrepareData
+            Default: Tune
+          PrepareData:
+            Type: Task
+            Resource: arn:aws:states:::ecs:runTask.sync
+            TimeoutSeconds: 7200
+            Parameters:
+              Cluster: ${ClusterArn}
+              TaskDefinition.$: $.taskdef.TaskDefinition.TaskDefinitionArn
+              CapacityProviderStrategy:
+                - CapacityProvider: FARGATE
+                  Weight: 1
+              NetworkConfiguration:
+                AwsvpcConfiguration:
+                  Subnets:
+                    - ${SubnetA}
+                    - ${SubnetB}
+                  SecurityGroups:
+                    - ${SecurityGroup}
+                  AssignPublicIp: ENABLED
+              Overrides:
+                ContainerOverrides:
+                  - Name: trainer
+                    Environment:
+                      - Name: JOB_OUTPUT
+                        Value.$: States.Format('s3://${Bucket}/training-output/{}/prepared/', $$.Execution.Name)
+                      - Name: HP_mode
+                        Value: prepare
+                      - Name: HP_data_source
+                        Value.$: $.data_source
+                      - Name: HP_limit
+                        Value.$: $.limit
+                      - Name: HP_seed
+                        Value: "42"
+                      - Name: HP_synthetic_stays
+                        Value: "600"
+                      - Name: HP_publish_bucket
+                        Value: ${Bucket}
+                      - Name: HP_data_prefix
+                        Value.$: States.Format('data/{}', $.data_source)
+            ResultPath: $.prepared
+            Catch:
+              - ErrorEquals: [States.ALL]
+                ResultPath: $.error
+                Next: NotifyFailure
+            Next: PreparedOk
+          PreparedOk:
+            Type: Choice
+            # The Step Functions page for this integration does not say what happens to the state when a container exits
+            # non-zero, so both are handled: a failure raised by the integration goes to Catch, and a finished task whose
+            # container reports a non-zero exit code goes to NotifyFailure. A result without that field continues.
+            Choices:
+              - And:
+                  - Variable: $.prepared.Containers[0].ExitCode
+                    IsPresent: true
+                  - Not:
+                      Variable: $.prepared.Containers[0].ExitCode
+                      NumericEquals: 0
+                Next: NotifyFailure
+            Default: Tune
+          Tune:
+            Type: Task
+            Resource: arn:aws:states:::ecs:runTask.sync
+            TimeoutSeconds: 10800
+            Parameters:
+              Cluster: ${ClusterArn}
+              TaskDefinition.$: $.taskdef.TaskDefinition.TaskDefinitionArn
+              CapacityProviderStrategy:
+                - CapacityProvider: ${WorkProvider}
+                  Weight: 1
+              NetworkConfiguration:
+                AwsvpcConfiguration:
+                  Subnets:
+                    - ${SubnetA}
+                    - ${SubnetB}
+                  SecurityGroups:
+                    - ${SecurityGroup}
+                  AssignPublicIp: ENABLED
+              Overrides:
+                ContainerOverrides:
+                  - Name: trainer
+                    Environment:
+                      - Name: JOB_OUTPUT
+                        Value.$: States.Format('s3://${Bucket}/training-output/{}/tuning/', $$.Execution.Name)
+                      - Name: HP_mode
+                        Value: tune
+                      - Name: HP_trials
+                        Value.$: $.trials
+                      - Name: HP_folds
+                        Value: "3"
+                      - Name: HP_seed
+                        Value: "42"
+                      - Name: HP_mlflow_tracking_uri
+                        Value: ${Mlflow}
+                      - Name: HP_publish_bucket
+                        Value: ${Bucket}
+                      - Name: HP_run_id
+                        Value.$: $$.Execution.Name
+                      - Name: CH_data
+                        Value.$: States.Format('s3://${Bucket}/data/{}/', $.data_source)
+            ResultPath: $.tuning
+            Catch:
+              - ErrorEquals: [States.ALL]
+                ResultPath: $.error
+                Next: NotifyFailure
+            Next: TunedOk
+          TunedOk:
+            Type: Choice
+            # The Step Functions page for this integration does not say what happens to the state when a container exits
+            # non-zero, so both are handled: a failure raised by the integration goes to Catch, and a finished task whose
+            # container reports a non-zero exit code goes to NotifyFailure. A result without that field continues.
+            Choices:
+              - And:
+                  - Variable: $.tuning.Containers[0].ExitCode
+                    IsPresent: true
+                  - Not:
+                      Variable: $.tuning.Containers[0].ExitCode
+                      NumericEquals: 0
+                Next: NotifyFailure
+            Default: Train
+          Train:
+            Type: Task
+            Resource: arn:aws:states:::ecs:runTask.sync
+            TimeoutSeconds: 3600
+            Parameters:
+              Cluster: ${ClusterArn}
+              TaskDefinition.$: $.taskdef.TaskDefinition.TaskDefinitionArn
+              CapacityProviderStrategy:
+                - CapacityProvider: ${WorkProvider}
+                  Weight: 1
+              NetworkConfiguration:
+                AwsvpcConfiguration:
+                  Subnets:
+                    - ${SubnetA}
+                    - ${SubnetB}
+                  SecurityGroups:
+                    - ${SecurityGroup}
+                  AssignPublicIp: ENABLED
+              Overrides:
+                ContainerOverrides:
+                  - Name: trainer
+                    Environment:
+                      - Name: JOB_OUTPUT
+                        Value.$: States.Format('s3://${Bucket}/training-output/{}/training/', $$.Execution.Name)
+                      - Name: HP_seed
+                        Value: "42"
+                      - Name: HP_register_model
+                        Value: "true"
+                      - Name: HP_require_gates
+                        Value: "true"
+                      - Name: HP_require_real_data
+                        Value.$: $.require_real_data
+                      - Name: HP_mlflow_tracking_uri
+                        Value: ${Mlflow}
+                      - Name: HP_git_commit
+                        Value.$: $.git_commit
+                      - Name: HP_publish_bucket
+                        Value: ${Bucket}
+                      - Name: HP_run_id
+                        Value.$: $$.Execution.Name
+                      - Name: CH_data
+                        Value.$: States.Format('s3://${Bucket}/data/{}/', $.data_source)
+                      - Name: CH_config
+                        Value.$: States.Format('s3://${Bucket}/tuning/{}/', $$.Execution.Name)
+            ResultPath: $.training
+            Catch:
+              - ErrorEquals: [States.ALL]
+                ResultPath: $.error
+                Next: NotifyFailure
+            Next: TrainedOk
+          TrainedOk:
+            Type: Choice
+            # The Step Functions page for this integration does not say what happens to the state when a container exits
+            # non-zero, so both are handled: a failure raised by the integration goes to Catch, and a finished task whose
+            # container reports a non-zero exit code goes to NotifyFailure. A result without that field continues.
+            Choices:
+              - And:
+                  - Variable: $.training.Containers[0].ExitCode
+                    IsPresent: true
+                  - Not:
+                      Variable: $.training.Containers[0].ExitCode
+                      NumericEquals: 0
+                Next: NotifyFailure
+            Default: WaitForApproval
+          WaitForApproval:
+            Type: Task
+            Resource: arn:aws:states:::sns:publish.waitForTaskToken
+            TimeoutSeconds: !Ref ApprovalTimeoutSeconds
+            Parameters:
+              TopicArn: ${Topic}
+              Subject: Sepsis model candidate awaiting review
+              # The token also goes in a message attribute so the approve workflow can read it from the history.
+              MessageAttributes:
+                token:
+                  DataType: String
+                  StringValue.$: $$.Task.Token
+              Message.$: >-
+                States.Format('Pipeline run {} trained a candidate that passed the data checks and promotion gates.
+                Metrics table and figures: s3://${Bucket}/reports/{}/ . Review the run in MLflow,
+                run "promote" (a different person from the trainer), then approve with:
+                bash scripts/aws_deploy.sh approve {}
+                To reject, run: aws stepfunctions send-task-failure --task-token (the same token)',
+                $$.Execution.Name, $$.Execution.Name, $$.Task.Token)
+            ResultPath: $.approval
+            Catch:
+              - ErrorEquals: [States.ALL]
+                ResultPath: $.error
+                Next: NotifyFailure
+            Next: EvaluateAndPublish
+          EvaluateAndPublish:
+            Type: Task
+            Resource: arn:aws:states:::ecs:runTask.sync
+            TimeoutSeconds: 1800
+            Parameters:
+              Cluster: ${ClusterArn}
+              TaskDefinition.$: $.taskdef.TaskDefinition.TaskDefinitionArn
+              CapacityProviderStrategy:
+                - CapacityProvider: FARGATE
+                  Weight: 1
+              NetworkConfiguration:
+                AwsvpcConfiguration:
+                  Subnets:
+                    - ${SubnetA}
+                    - ${SubnetB}
+                  SecurityGroups:
+                    - ${SecurityGroup}
+                  AssignPublicIp: ENABLED
+              Overrides:
+                ContainerOverrides:
+                  - Name: trainer
+                    Environment:
+                      - Name: JOB_OUTPUT
+                        Value.$: States.Format('s3://${Bucket}/training-output/{}/publish/', $$.Execution.Name)
+                      - Name: HP_mode
+                        Value: evaluate_publish
+                      - Name: HP_mlflow_tracking_uri
+                        Value: ${Mlflow}
+                      - Name: HP_publish_bucket
+                        Value: ${Bucket}
+                      - Name: CH_data
+                        Value.$: States.Format('s3://${Bucket}/data/{}/', $.data_source)
+            ResultPath: $.publish
+            Catch:
+              - ErrorEquals: [States.ALL]
+                ResultPath: $.error
+                Next: NotifyFailure
+            Next: PublishedOk
+          PublishedOk:
+            Type: Choice
+            # The Step Functions page for this integration does not say what happens to the state when a container exits
+            # non-zero, so both are handled: a failure raised by the integration goes to Catch, and a finished task whose
+            # container reports a non-zero exit code goes to NotifyFailure. A result without that field continues.
+            Choices:
+              - And:
+                  - Variable: $.publish.Containers[0].ExitCode
+                    IsPresent: true
+                  - Not:
+                      Variable: $.publish.Containers[0].ExitCode
+                      NumericEquals: 0
+                Next: NotifyFailure
+            Default: NotifyPublished
+          NotifyPublished:
+            Type: Task
+            Resource: arn:aws:states:::sns:publish
+            Parameters:
+              TopicArn: ${Topic}
+              Subject: Sepsis model published
+              Message.$: >-
+                States.Format('The approved model was evaluated once on the test splits and published.
+                publish.json (S3 URI and SHA-256 to deploy) is in s3://${Bucket}/training-output/{}/publish/model/ .
+                Deploy it with the deploy workflow or "aws_deploy.sh serve".', $$.Execution.Name)
+            ResultPath: $.notified   # CloudFormation rejects null values in templates, so keep the SNS reply here
+            End: true
+          NotifyFailure:
+            Type: Task
+            Resource: arn:aws:states:::sns:publish
+            Parameters:
+              TopicArn: ${Topic}
+              Subject: Sepsis training pipeline stopped
+              Message.$: >-
+                States.Format('A step failed, a gate was not met, or the approval was rejected or timed out.
+                The failure reason is in s3://${Bucket}/training-output/{}/<step>/output/failure and the task logs are
+                in the CloudWatch log group ${LogGroup}.', $$.Execution.Name)
+            ResultPath: $.notified   # CloudFormation rejects null values in templates, so keep the SNS reply here
+            Next: Stopped
+          Stopped:
+            Type: Fail
+            Error: PipelineStopped
+            Cause: A step failed, a gate was not met, or the approval was rejected or timed out.
+      Tags:
+        - Key: Project
+          Value: sepsis-warning-research
+
+Outputs:
+  PipelineArn:
+    Value: !Ref TrainingPipeline

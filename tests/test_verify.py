@@ -95,6 +95,48 @@ class VerifyTests(unittest.TestCase):
             verify.check_pipeline(result, sfn, items)
             self.assertEqual(statuses(result)["Pipeline run"], expected, latest)
 
+    def test_a_zero_training_quota_is_flagged_before_the_pipeline_fails(self):
+        quotas = [{"QuotaName": "ml.m5.xlarge for training job usage", "Value": 0.0},
+                  {"QuotaName": "ml.m5.xlarge for spot training job usage", "Value": 2.0}]
+        client = Namespace(get_paginator=lambda _: Namespace(paginate=lambda ServiceCode: [{"Quotas": quotas}]))
+        result = verify.Result()
+        verify.check_quotas(result, client)
+        self.assertEqual(sorted(statuses(result).values()), ["PASS", "WARN"])
+        self.assertIn("request an increase", result.table())
+
+    def test_a_low_fargate_quota_is_flagged_before_a_training_task_fails(self):
+        quotas = [{"QuotaName": "Fargate On-Demand vCPU resource count", "Value": 2.0},
+                  {"QuotaName": "Fargate Spot vCPU resource count", "Value": 6.0}]
+        client = Namespace(get_paginator=lambda _: Namespace(paginate=lambda ServiceCode: [{"Quotas": quotas}]))
+        result = verify.Result()
+        verify.check_fargate_quota(result, client, needed_vcpu=4)
+        self.assertEqual(statuses(result), {"Fargate quota (on demand)": "WARN", "Fargate quota (spot)": "PASS"})
+        self.assertIn("Raise it in Service Quotas", result.table())
+
+    def test_the_ecs_training_cluster_is_checked_only_when_it_exists(self):
+        result = verify.Result()
+        verify.check_ecs(result, Namespace(), [])
+        self.assertEqual(statuses(result), {})
+        items = [{"type": "AWS::ECS::Cluster", "physical": "sepsis-dev-training-cluster"}]
+        for providers, expected in ((["FARGATE", "FARGATE_SPOT"], "PASS"), (["FARGATE"], "FAIL")):
+            ecs = Namespace(describe_clusters=lambda clusters, providers=providers: {
+                "clusters": [{"status": "ACTIVE", "capacityProviders": providers}]})
+            result = verify.Result()
+            verify.check_ecs(result, ecs, items)
+            self.assertEqual(list(statuses(result).values()), [expected])
+
+    def test_the_hosted_tools_are_running_or_stopped_never_silently_missing(self):
+        items = [{"type": "AWS::ECS::Service", "logical": "Service", "physical": "arn:aws:ecs:r:1:service/c/sepsis-dev-mlflow"},
+                 {"type": "AWS::RDS::DBInstance", "logical": "Database", "physical": "db-1"}]
+        for running, desired, db, expected in ((1, 1, "available", ["PASS", "PASS"]), (0, 0, "stopped", ["WARN", "WARN"]),
+                                               (0, 1, "available", ["FAIL", "PASS"])):
+            ecs = Namespace(describe_services=lambda cluster, services, running=running, desired=desired: {"services": [
+                {"runningCount": running, "desiredCount": desired, "events": [{"message": "unable to place a task"}]}]})
+            rds = Namespace(describe_db_instances=lambda DBInstanceIdentifier, db=db: {"DBInstances": [{"DBInstanceStatus": db}]})
+            result = verify.Result()
+            verify.check_tools(result, ecs, rds, items)
+            self.assertEqual(list(statuses(result).values()), expected)
+
     def test_missing_outputs_fail(self):
         result = verify.Result()
         verify.check_outputs(result, {"ArtifactBucketName": "b"}, False)

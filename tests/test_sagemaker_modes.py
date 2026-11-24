@@ -33,6 +33,14 @@ class FakeS3:
 
         return Pages()
 
+    def get_object(self, Bucket, Key):
+        path = self.root / Bucket / Key
+        if not path.is_file():
+            error = Exception("NoSuchKey")
+            error.response = {"Error": {"Code": "NoSuchKey"}}
+            raise error
+        return {"Body": type("Body", (), {"read": lambda self_: path.read_bytes()})()}
+
     def download_file(self, bucket, key, filename):
         shutil.copyfile(self.root / bucket / key, filename)
 
@@ -60,7 +68,7 @@ class ModeTests(unittest.TestCase):
             params = dict(mode="prepare", data_source="synthetic", synthetic_stays=120, publish_bucket="bkt", seed=42)
             job(prepare, **params)
             uris = sagemaker_train.prepare_data(prepare, sagemaker_train._params(prepare), client=s3)
-            self.assertEqual(sorted(Path(u).name for u in uris), ["combined.parquet", "splits.csv", "splits.csv.summary.json"])
+            self.assertEqual(sorted(Path(u).name for u in uris), ["_SUCCESS", "combined.parquet", "splits.csv", "splits.csv.summary.json"])
             data_dir = temp / "s3" / "bkt" / "data" / "physionet"
             self.assertTrue((data_dir / "combined.parquet").is_file())
 
@@ -87,6 +95,35 @@ class ModeTests(unittest.TestCase):
             for name in ("metrics_table.md", "fig_pr_curves.png", "fig_tuning.png", "FIGURES.md"):
                 self.assertTrue((report / name).is_file(), name)
             self.assertTrue(any(u.startswith("bkt/reports/run-1/") for u in s3.uploaded))
+
+    def test_data_is_prepared_once_and_the_real_data_cannot_be_overwritten_by_a_rehearsal(self):
+        with tempfile.TemporaryDirectory() as temp:
+            temp = Path(temp)
+            s3 = FakeS3(temp / "s3")
+            params = dict(data_source="synthetic", synthetic_stays=60, publish_bucket="bkt", seed=42)
+
+            def prepare(name, **extra):
+                folder = temp / name
+                job(folder, mode="prepare", **{**params, **extra})
+                return sagemaker_train.prepare_data(folder, sagemaker_train._params(folder), client=s3)
+
+            self.assertTrue(prepare("first"))
+            marker = json.loads((temp / "s3" / "bkt" / "data" / "physionet" / "_SUCCESS").read_text())
+            self.assertEqual(len(marker["files"]["combined.parquet"]["sha256"]), 64)
+            self.assertEqual(marker["data_source"], "synthetic")
+            uploaded = len(s3.uploaded)
+            self.assertEqual(prepare("again"), [])                         # same settings: nothing is rebuilt
+            self.assertEqual(len(s3.uploaded), uploaded)
+            self.assertTrue(prepare("other-size", limit=5))                # different settings rebuild
+            # Pretend the prefix now holds the real data: a synthetic run must be refused.
+            marker_path = temp / "s3" / "bkt" / "data" / "physionet" / "_SUCCESS"
+            marker_path.write_text(json.dumps({"data_source": "physionet", "limit": 0, "seed": 42, "prepared_at": "t",
+                                               "files": {"combined.parquet": {"sha256": "a" * 64}}}))
+            before = (temp / "s3" / "bkt" / "data" / "physionet" / "combined.parquet").read_bytes()
+            with self.assertRaisesRegex(ValueError, "holds real PhysioNet data"):
+                prepare("rehearsal")
+            self.assertEqual((temp / "s3" / "bkt" / "data" / "physionet" / "combined.parquet").read_bytes(), before)
+            self.assertTrue(prepare("forced", force="true"))               # the deliberate way around it
 
     def test_zero_trials_passes_the_reference_settings_on(self):
         with tempfile.TemporaryDirectory() as temp:
