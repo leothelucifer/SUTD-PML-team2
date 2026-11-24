@@ -124,7 +124,7 @@ Resources:
     DeletionPolicy: Delete
     Properties:
       Engine: postgres
-      EngineVersion: "17.9"
+      EngineVersion: "17.11"
       DBInstanceClass: !Ref DbInstanceClass
       AllocatedStorage: !Ref DbStorageGb
       StorageType: gp3

@@ -299,8 +299,9 @@ def check_quotas(result: Result, service_quotas, instance_type: str = "ml.m5.xla
     guarded(result, "SageMaker quotas", check)
 
 
-def check_fargate_quota(result: Result, service_quotas, needed_vcpu: float = 4.0) -> None:
-    """ECS training runs on Fargate: its vCPU quotas (on demand and spot) must cover one training task."""
+def check_fargate_quota(result: Result, service_quotas, needed_vcpu: float = 5.0) -> None:
+    """ECS training runs on Fargate. The default quota is 6 vCPU per Region for On-Demand and for Spot (the ECS quotas page);
+    one training task (4) plus the MLflow server (0.5) and the Evidently UI (0.5) need 5 of them at the same time."""
     def check():
         found = {}
         for page in service_quotas.get_paginator("list_service_quotas").paginate(ServiceCode="fargate"):
@@ -315,10 +316,10 @@ def check_fargate_quota(result: Result, service_quotas, needed_vcpu: float = 4.0
         for kind, (name, value) in sorted(found.items()):
             if value < needed_vcpu:
                 result.add("WARN", f"Fargate quota ({kind})",
-                           f"{value:g} vCPU; a training task needs {needed_vcpu:g}. Raise it in Service Quotas ({name}) "
-                           "or lower TrainingVcpu")
+                           f"{value:g} vCPU; a training task plus the tools needs {needed_vcpu:g}. Raise it in Service Quotas ({name}) "
+                           "or lower EcsTrainingCpu")
             else:
-                result.add("PASS", f"Fargate quota ({kind})", f"{value:g} vCPU (a training task needs {needed_vcpu:g})")
+                result.add("PASS", f"Fargate quota ({kind})", f"{value:g} vCPU (a training task plus the tools needs {needed_vcpu:g})")
 
     guarded(result, "Fargate quotas", check)
 

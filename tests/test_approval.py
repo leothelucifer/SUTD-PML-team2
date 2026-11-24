@@ -70,6 +70,22 @@ class ApprovalTests(unittest.TestCase):
             approval.decide(FakeStepFunctions(), "arn:sm", "maybe", "alice")
         self.assertEqual(sfn.sent, [])
 
+    def test_the_token_is_found_whatever_the_exact_resource_spelling_and_odd_parameters_are_skipped(self):
+        class Sfn(FakeStepFunctions):
+            def get_execution_history(self, executionArn, reverseOrder, maxResults):
+                params = {"MessageAttributes": {"token": {"StringValue": "tok"}}}
+                return {"events": [{"type": "TaskScheduled", "taskScheduledEventDetails": {
+                    "resource": "sns:publish.waitForTaskToken", "resourceType": "sns", "parameters": json.dumps(params)}}]}
+
+        self.assertEqual(approval.waiting_executions(Sfn(waiting=("run-1",)), "arn:sm")[0]["token"], "tok")
+
+        class Odd(FakeStepFunctions):
+            def get_execution_history(self, executionArn, reverseOrder, maxResults):
+                return {"events": [{"type": "TaskScheduled", "taskScheduledEventDetails": {
+                    "resource": "publish.waitForTaskToken", "parameters": "not json"}}]}
+
+        self.assertEqual(approval.waiting_executions(Odd(waiting=("run-1",)), "arn:sm"), [])
+
     def test_both_pipelines_publish_the_token_as_a_message_attribute(self):
         for name in ("pipeline.yaml", "pipeline-ecs.yaml"):
             text = (ROOT / "infra" / "cloudformation" / name).read_text(encoding="utf-8")

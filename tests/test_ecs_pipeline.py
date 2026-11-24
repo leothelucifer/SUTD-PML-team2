@@ -49,8 +49,14 @@ class EcsPipelineTests(unittest.TestCase):
                  ("Train", "TrainedOk", "WaitForApproval"), ("EvaluateAndPublish", "PublishedOk", "NotifyPublished")]
         for step, check, following in chain:
             self.assertEqual(states[step]["Next"], check, step)
-            self.assertEqual(states[check]["Choices"][0]["Next"], following, check)
-            self.assertEqual(states[check]["Default"], "NotifyFailure", check)
+            # A non-zero exit code stops the pipeline; anything else (including a result without the field, because the
+            # Step Functions page does not document that shape) continues, with failures raised by the integration caught.
+            self.assertEqual(states[check]["Choices"][0]["Next"], "NotifyFailure", check)
+            self.assertEqual(states[check]["Default"], following, check)
+            condition = json.dumps(states[check]["Choices"][0])
+            self.assertIn("ExitCode", condition)
+            self.assertIn("IsPresent", condition)
+            self.assertNotIn("ResultSelector", states[step])        # nothing depends on an undocumented output shape
         self.assertEqual(states["WaitForApproval"]["Next"], "EvaluateAndPublish")
         # Same state names as the SageMaker pipeline for everything a person or a script refers to.
         original = machine("pipeline.yaml")["States"]

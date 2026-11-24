@@ -64,6 +64,7 @@ month it would be about $75, which is why the **power** workflow exists. It neve
 schedule, so remember to stop. The **power** `status` action prints what is on and the estimated hourly cost.
 
 AWS starts a stopped RDS database again after 7 days. If the environment sits idle for a week, run **power** stop again.
+RDS also rotates the database password every 7 days and the MLflow server reads it only when it starts, so stop and start the tools at least weekly (`power status` warns after 6 days). A Fargate Spot interruption of the tune or train step has no automatic retry: start the **pipeline** again with `prepare` off.
 
 ## Access and safety
 
@@ -83,4 +84,6 @@ AWS starts a stopped RDS database again after 7 days. If the environment sits id
 | A step fails | the failure reason is in `s3://<bucket>/training-output/<run>/<step>/output/failure`; logs in `/ecs/<environment>-training` |
 | `stack` cannot create the MLflow service | the tools image must exist first: run **deploy** again |
 | Evidently report has no reference | **monitor** with action `reference` for the deployed model |
-| Task cannot start | Fargate vCPU quota (**verify**), or lower `EcsTrainingCpu` |
+| Task cannot start | Fargate vCPU quota (**verify**; the default is 6 vCPU, the tools and a training task need 5), or lower `EcsTrainingCpu` |
+
+What was checked against AWS documentation, and what still has to be watched on the first run, is in [aws-assumptions.md](aws-assumptions.md).

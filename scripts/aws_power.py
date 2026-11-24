@@ -22,6 +22,7 @@ No schedule and no automation: it runs when a person runs it (the **power** work
 """
 
 import argparse
+import datetime
 import ipaddress
 import os
 import sys
@@ -57,11 +58,18 @@ def wanted(component: str) -> set[str]:
     return {component} | ({"database"} if component == "mlflow" else set())
 
 
+# RDS rotates the managed master password every seven days by default (RDS user guide, "Password management with
+# Amazon RDS and AWS Secrets Manager"). The MLflow task reads the secret once, when it starts.
+ROTATION_DAYS = 7
+WARN_AFTER_DAYS = 6
+
+
 class Power:
-    def __init__(self, session, stack: str, sleep=time.sleep, timeout: int = 900):
+    def __init__(self, session, stack: str, sleep=time.sleep, timeout: int = 900, now=None):
         self.ecs, self.rds, self.ec2 = session.client("ecs"), session.client("rds"), session.client("ec2")
         self.cloudformation = session.client("cloudformation")
         self.stack, self.sleep, self.timeout = stack, sleep, timeout
+        self.now = now or (lambda: datetime.datetime.now(datetime.UTC))
         self.items = resources(self.cloudformation, stack)
         self.result = Result()
 
@@ -79,7 +87,8 @@ class Power:
             found.append({"cluster": cluster, "name": name, "arn": arn, "group": group_of(tags),
                           "desired_tag": int(tags.get("power:desired", "1")), "desired": service["desiredCount"],
                           "running": service["runningCount"], "task_definition": service["taskDefinition"],
-                          "security_groups": service.get("networkConfiguration", {}).get("awsvpcConfiguration", {}).get("securityGroups", [])})
+                          "security_groups": service.get("networkConfiguration", {}).get("awsvpcConfiguration", {}).get("securityGroups", []),
+                          "started": next((d.get("createdAt") for d in service.get("deployments", []) if d.get("status") == "PRIMARY"), None)})
         return found
 
     def databases(self) -> list[dict]:
@@ -118,6 +127,11 @@ class Power:
             self.result.add("WARN" if service["running"] else "PASS",
                             f"ECS service {service['name']} ({service['group'] or 'not managed'})",
                             f"{state}: {service['running']}/{service['desired']} tasks" + (f", about ${cost:.3f}/hour" if cost else ""))
+            age = (self.now() - service["started"]).days if service["running"] and service["started"] else 0
+            if service["group"] == "mlflow" and age >= WARN_AFTER_DAYS:
+                self.result.add("WARN", f"MLflow password rotation ({service['name']})",
+                                f"running for {age} days; RDS rotates the database password every {ROTATION_DAYS} days and the "
+                                "server reads it only when it starts. Stop and start it (the power workflow) before it expires")
         for db in self.databases():
             on = db["status"] in ("available", "starting", "configuring-enhanced-monitoring")
             cost = DB_HOUR.get(db["class"], 0.03) if on else 0.0

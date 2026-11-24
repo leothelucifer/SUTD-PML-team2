@@ -28,8 +28,13 @@ def waiting_executions(stepfunctions, state_machine: str) -> list[dict]:
             if event["type"] == "TaskSucceeded" or event["type"] == "TaskFailed":
                 break
             details = event.get("taskScheduledEventDetails")
-            if details and details.get("resource") == "publish.waitForTaskToken":
-                token = json.loads(details["parameters"]).get("MessageAttributes", {}).get("token", {}).get("StringValue")
+            # The API reference says `resource` is "the action of the resource called" and `resourceType` the service,
+            # and `parameters` the JSON string passed to it; it gives no example value, so match on what it does say.
+            if details and "waitForTaskToken" in str(details.get("resource", "")):
+                try:
+                    token = json.loads(details["parameters"]).get("MessageAttributes", {}).get("token", {}).get("StringValue")
+                except (ValueError, AttributeError):
+                    token = None
                 break
         if token:
             found.append({"name": item["name"], "arn": item["executionArn"], "token": token})

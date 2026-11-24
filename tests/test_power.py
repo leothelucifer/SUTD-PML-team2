@@ -1,5 +1,6 @@
 """The power script: status, stop and start of what bills, against fake AWS clients."""
 
+import datetime
 import sys
 import unittest
 from pathlib import Path
@@ -25,6 +26,7 @@ class World:
         }
         self.one_off = one_off
         self.rules = []            # (group id, cidr)
+        self.started = datetime.datetime(2026, 11, 25, tzinfo=datetime.UTC)
         self.calls = []
         self.sleeps = 0
 
@@ -54,6 +56,7 @@ class World:
                 svc = world.services[services[0]]
                 group = "sg-mlflow" if services[0] == "sepsis-dev-mlflow" else "sg-ui"
                 return {"services": [{"desiredCount": svc["desired"], "runningCount": svc["running"], "taskDefinition": "td:1",
+                                      "deployments": [{"status": "PRIMARY", "createdAt": world.started}],
                                       "networkConfiguration": {"awsvpcConfiguration": {"securityGroups": [group]}}}]}
 
             def describe_task_definition(self, taskDefinition):
@@ -119,12 +122,12 @@ class World:
         clients = {"ecs": Ecs(), "rds": Rds(), "ec2": Ec2(), "cloudformation": Cf()}
         return type("Session", (), {"client": staticmethod(lambda name: clients[name])})()
 
-    def power(self):
+    def power(self, now=None):
         def fake_sleep(_):
             self.sleeps += 1
             if self.db_status in ("starting", "stopping"):
                 self.db_status = "available" if self.db_status == "starting" else "stopped"
-        return power.Power(self.session(), "sepsis-dev", sleep=fake_sleep, timeout=100000)
+        return power.Power(self.session(), "sepsis-dev", sleep=fake_sleep, timeout=100000, now=now)
 
 
 def states(result):
@@ -212,6 +215,16 @@ class PowerTests(unittest.TestCase):
         self.assertIn(("authorize", "sg-ui", 8000), world.calls)
         world.power().stop()
         self.assertEqual(world.rules, [])                        # stop closes every rule it opened, on both tools
+
+    def test_a_server_running_close_to_a_week_is_flagged_because_the_database_password_rotates(self):
+        started = datetime.datetime(2026, 11, 25, tzinfo=datetime.UTC)
+        fresh = World().power(now=lambda: started + datetime.timedelta(days=2)).status()
+        self.assertNotIn("password rotation", fresh.table())
+        old = World().power(now=lambda: started + datetime.timedelta(days=6, hours=3)).status()
+        self.assertIn("MLflow password rotation", old.table())
+        self.assertIn("every 7 days", old.table())
+        stopped = World(running=0, db_status="stopped").power(now=lambda: started + datetime.timedelta(days=30)).status()
+        self.assertNotIn("password rotation", stopped.table())
 
     def test_the_whole_internet_needs_an_explicit_flag(self):
         with self.assertRaisesRegex(ValueError, "whole internet"):

@@ -222,8 +222,6 @@ Resources:
                         Value: ${Bucket}
                       - Name: HP_data_prefix
                         Value.$: States.Format('data/{}', $.data_source)
-            ResultSelector:
-              exit.$: $.Containers[0].ExitCode
             ResultPath: $.prepared
             Catch:
               - ErrorEquals: [States.ALL]
@@ -232,11 +230,18 @@ Resources:
             Next: PreparedOk
           PreparedOk:
             Type: Choice
+            # The Step Functions page for this integration does not say what happens to the state when a container exits
+            # non-zero, so both are handled: a failure raised by the integration goes to Catch, and a finished task whose
+            # container reports a non-zero exit code goes to NotifyFailure. A result without that field continues.
             Choices:
-              - Variable: $.prepared.exit
-                NumericEquals: 0
-                Next: Tune
-            Default: NotifyFailure
+              - And:
+                  - Variable: $.prepared.Containers[0].ExitCode
+                    IsPresent: true
+                  - Not:
+                      Variable: $.prepared.Containers[0].ExitCode
+                      NumericEquals: 0
+                Next: NotifyFailure
+            Default: Tune
           Tune:
             Type: Task
             Resource: arn:aws:states:::ecs:runTask.sync
@@ -277,8 +282,6 @@ Resources:
                         Value.$: $$.Execution.Name
                       - Name: CH_data
                         Value.$: States.Format('s3://${Bucket}/data/{}/', $.data_source)
-            ResultSelector:
-              exit.$: $.Containers[0].ExitCode
             ResultPath: $.tuning
             Catch:
               - ErrorEquals: [States.ALL]
@@ -287,11 +290,18 @@ Resources:
             Next: TunedOk
           TunedOk:
             Type: Choice
+            # The Step Functions page for this integration does not say what happens to the state when a container exits
+            # non-zero, so both are handled: a failure raised by the integration goes to Catch, and a finished task whose
+            # container reports a non-zero exit code goes to NotifyFailure. A result without that field continues.
             Choices:
-              - Variable: $.tuning.exit
-                NumericEquals: 0
-                Next: Train
-            Default: NotifyFailure
+              - And:
+                  - Variable: $.tuning.Containers[0].ExitCode
+                    IsPresent: true
+                  - Not:
+                      Variable: $.tuning.Containers[0].ExitCode
+                      NumericEquals: 0
+                Next: NotifyFailure
+            Default: Train
           Train:
             Type: Task
             Resource: arn:aws:states:::ecs:runTask.sync
@@ -336,8 +346,6 @@ Resources:
                         Value.$: States.Format('s3://${Bucket}/data/{}/', $.data_source)
                       - Name: CH_config
                         Value.$: States.Format('s3://${Bucket}/tuning/{}/', $$.Execution.Name)
-            ResultSelector:
-              exit.$: $.Containers[0].ExitCode
             ResultPath: $.training
             Catch:
               - ErrorEquals: [States.ALL]
@@ -346,11 +354,18 @@ Resources:
             Next: TrainedOk
           TrainedOk:
             Type: Choice
+            # The Step Functions page for this integration does not say what happens to the state when a container exits
+            # non-zero, so both are handled: a failure raised by the integration goes to Catch, and a finished task whose
+            # container reports a non-zero exit code goes to NotifyFailure. A result without that field continues.
             Choices:
-              - Variable: $.training.exit
-                NumericEquals: 0
-                Next: WaitForApproval
-            Default: NotifyFailure
+              - And:
+                  - Variable: $.training.Containers[0].ExitCode
+                    IsPresent: true
+                  - Not:
+                      Variable: $.training.Containers[0].ExitCode
+                      NumericEquals: 0
+                Next: NotifyFailure
+            Default: WaitForApproval
           WaitForApproval:
             Type: Task
             Resource: arn:aws:states:::sns:publish.waitForTaskToken
@@ -408,8 +423,6 @@ Resources:
                         Value: ${Bucket}
                       - Name: CH_data
                         Value.$: States.Format('s3://${Bucket}/data/{}/', $.data_source)
-            ResultSelector:
-              exit.$: $.Containers[0].ExitCode
             ResultPath: $.publish
             Catch:
               - ErrorEquals: [States.ALL]
@@ -418,11 +431,18 @@ Resources:
             Next: PublishedOk
           PublishedOk:
             Type: Choice
+            # The Step Functions page for this integration does not say what happens to the state when a container exits
+            # non-zero, so both are handled: a failure raised by the integration goes to Catch, and a finished task whose
+            # container reports a non-zero exit code goes to NotifyFailure. A result without that field continues.
             Choices:
-              - Variable: $.publish.exit
-                NumericEquals: 0
-                Next: NotifyPublished
-            Default: NotifyFailure
+              - And:
+                  - Variable: $.publish.Containers[0].ExitCode
+                    IsPresent: true
+                  - Not:
+                      Variable: $.publish.Containers[0].ExitCode
+                      NumericEquals: 0
+                Next: NotifyFailure
+            Default: NotifyPublished
           NotifyPublished:
             Type: Task
             Resource: arn:aws:states:::sns:publish

@@ -222,6 +222,31 @@ Parameters:
     Description: Email recipient required to create the optional budget.
 
 Rules:
+  EcsTaskSize1024:
+    RuleCondition: !Equals [!Ref EcsTrainingCpu, "1024"]
+    Assertions:
+      - Assert: !Contains [["2048", "3072", "4096", "5120", "6144", "7168", "8192"], !Ref EcsTrainingMemory]
+        AssertDescription: With EcsTrainingCpu 1024, Fargate accepts EcsTrainingMemory of 2048 to 8192 MiB (the ECS task-size table).
+  EcsTaskSize2048:
+    RuleCondition: !Equals [!Ref EcsTrainingCpu, "2048"]
+    Assertions:
+      - Assert: !Contains [["4096", "5120", "6144", "7168", "8192", "9216", "10240", "11264", "12288", "13312", "14336", "15360", "16384"], !Ref EcsTrainingMemory]
+        AssertDescription: With EcsTrainingCpu 2048, Fargate accepts EcsTrainingMemory of 4096 to 16384 MiB (the ECS task-size table).
+  EcsTaskSize4096:
+    RuleCondition: !Equals [!Ref EcsTrainingCpu, "4096"]
+    Assertions:
+      - Assert: !Contains [["8192", "9216", "10240", "11264", "12288", "13312", "14336", "15360", "16384", "17408", "18432", "19456", "20480", "21504", "22528", "23552", "24576", "25600", "26624", "27648", "28672", "29696", "30720"], !Ref EcsTrainingMemory]
+        AssertDescription: With EcsTrainingCpu 4096, Fargate accepts EcsTrainingMemory of 8192 to 30720 MiB (the ECS task-size table).
+  EcsTaskSize8192:
+    RuleCondition: !Equals [!Ref EcsTrainingCpu, "8192"]
+    Assertions:
+      - Assert: !Contains [["16384", "20480", "24576", "28672", "32768", "36864", "40960", "45056", "49152", "53248", "57344", "61440"], !Ref EcsTrainingMemory]
+        AssertDescription: With EcsTrainingCpu 8192, Fargate accepts EcsTrainingMemory of 16384 to 61440 MiB (the ECS task-size table).
+  EcsTaskSize16384:
+    RuleCondition: !Equals [!Ref EcsTrainingCpu, "16384"]
+    Assertions:
+      - Assert: !Contains [["32768", "40960", "49152", "57344", "65536", "73728", "81920", "90112", "98304", "106496", "114688", "122880"], !Ref EcsTrainingMemory]
+        AssertDescription: With EcsTrainingCpu 16384, Fargate accepts EcsTrainingMemory of 32768 to 122880 MiB (the ECS task-size table).
   EcsMlflowNeedsEcsTraining:
     RuleCondition: !Equals [!Ref MlflowBackend, ecs]
     Assertions:
