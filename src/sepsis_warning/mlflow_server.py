@@ -24,7 +24,9 @@ def backend_uri(environ) -> str:
     user = quote(environ["DB_USER"], safe="")
     password = quote(environ["DB_PASSWORD"], safe="")
     port = environ.get("DB_PORT", "5432")
-    return f"postgresql://{user}:{password}@{environ['DB_HOST']}:{port}/{environ['DB_NAME']}?sslmode=require"
+    # The driver is named on purpose: with SQLAlchemy 2.1 a plain "postgresql://" URL means psycopg (version 3), which the
+    # image does not install; it has psycopg2 (requirements/tools.txt). MLflow reads "postgresql+psycopg2" as PostgreSQL.
+    return f"postgresql+psycopg2://{user}:{password}@{environ['DB_HOST']}:{port}/{environ['DB_NAME']}?sslmode=require"
 
 
 def command(environ) -> list[str]:
