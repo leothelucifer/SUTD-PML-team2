@@ -133,8 +133,9 @@ class FetchDataTests(unittest.TestCase):
                 "  case \"$3\" in *training_setA/) echo 'Total Objects: 20336';; *) echo 'Total Objects: ' $COUNT_B;; esac; exit 0; fi\n"
                 "exit 0\n")
             fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+            # TAG is set so the script does not need a Git checkout (a downloaded zip has none).
             env = {**os.environ, "PATH": f"{temp}:{os.environ['PATH']}", "AWS_REGION": "ap-southeast-2", "ENVIRONMENT": "dev",
-                   "CALLS": str(log), "COUNT_B": "20000"}
+                   "TAG": "abc123", "CALLS": str(log), "COUNT_B": "20000"}
             result = subprocess.run(["bash", str(ROOT / "scripts" / "aws_deploy.sh"), "fetch-data"], env=env,
                                     capture_output=True, text=True, cwd=ROOT)
             self.assertEqual(result.returncode, 0, result.stderr + result.stdout)

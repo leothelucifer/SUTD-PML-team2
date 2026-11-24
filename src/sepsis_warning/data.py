@@ -19,6 +19,8 @@ LABS = [
 # learning hospital-specific measurement practices rather than physiology.
 STATIC = ["Age", "Gender", "HospAdmTime", "ICULOS"]
 DYNAMIC = VITALS + LABS
+# Recorded attributes kept beside the scores for the subgroup table (bias audit).
+SUBGROUP_COLUMNS = ["Age", "Gender"]
 
 
 @dataclass

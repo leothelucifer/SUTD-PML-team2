@@ -139,9 +139,10 @@ def leftovers(clients: dict, prefix: str, region: str) -> list[tuple[str, str]]:
 
 
 def run(args, session=None) -> int:
-    import boto3
+    if session is None:
+        import boto3
 
-    session = session or boto3.Session(region_name=args.region)
+        session = boto3.Session(region_name=args.region)
     cloudformation = session.client("cloudformation")
     clients = {name: session.client(name) for name in ("s3", "ecr", "dynamodb", "logs", "kms", "sts")}
     stack_exists = True

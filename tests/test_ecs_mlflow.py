@@ -1,5 +1,6 @@
 """MLflow on ECS: which tracking servers the code accepts, who is acting, and the promote step."""
 
+import importlib.util
 import json
 import os
 import tempfile
@@ -28,6 +29,7 @@ class ProjectServerTests(unittest.TestCase):
             self.assertTrue(tracking.is_project_server("http://other.example.org:5000"))
             self.assertFalse(tracking.is_project_server("http://54.9.9.9:5000"))
 
+    @unittest.skipUnless(importlib.util.find_spec("boto3"), "needs `pip install -e .[aws]`")
     def test_on_aws_the_actor_is_the_task_role_not_the_local_user(self):
         with mock.patch("boto3.client") as client:
             client.return_value.get_caller_identity.return_value = {"Arn": "arn:aws:sts::1:assumed-role/sepsis-approver/task"}

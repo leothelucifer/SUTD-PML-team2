@@ -9,10 +9,16 @@ import sys
 import unittest
 from pathlib import Path
 
-import botocore.session
 import yaml
-from botocore import xform_name
-from botocore.validate import ParamValidator
+
+try:
+    import botocore.session
+    from botocore import xform_name
+    from botocore.validate import ParamValidator
+except ImportError:  # the AWS API models ship with botocore (aws extra)
+    botocore = None
+
+NEEDS_BOTOCORE = unittest.skipUnless(botocore, "needs `pip install -e .[aws]`")
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -21,7 +27,7 @@ import aws_approval as approval  # noqa: E402
 import aws_power as power  # noqa: E402
 import aws_run_task as run_task  # noqa: E402
 
-SESSION = botocore.session.get_session()
+SESSION = botocore.session.get_session() if botocore else None
 
 
 def model(service: str):
@@ -80,6 +86,7 @@ class CheckedSession:
         return self._clients[name]
 
 
+@NEEDS_BOTOCORE
 class TheCheckBitesTests(unittest.TestCase):
     def test_a_wrong_name_or_an_invented_response_field_is_reported(self):
         problems = []
@@ -97,6 +104,7 @@ class TheCheckBitesTests(unittest.TestCase):
         self.assertIn("TaskDefinitionArn", wrong[0])
 
 
+@NEEDS_BOTOCORE
 class ClientCallTests(unittest.TestCase):
     def test_the_power_script_only_makes_calls_the_real_apis_accept(self):
         import test_power
@@ -166,6 +174,7 @@ _Loader.add_multi_constructor("!", lambda loader, suffix, node: loader.construct
                               else (loader.construct_sequence(node) if isinstance(node, yaml.SequenceNode) else loader.construct_mapping(node)))
 
 
+@NEEDS_BOTOCORE
 class StateMachineParameterTests(unittest.TestCase):
     def states(self, name: str) -> dict:
         template = yaml.load((ROOT / "infra" / "cloudformation" / name).read_text(encoding="utf-8"), Loader=_Loader)
