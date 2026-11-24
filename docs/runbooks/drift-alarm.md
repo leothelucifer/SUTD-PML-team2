@@ -14,7 +14,7 @@ the model got worse.
      inputs look the same, the patient mix may have changed.
    - `alert_rate_ratio`: staff are getting half or double the alerts expected.
      Tell the clinical owner; do not move the threshold without a review.
-3. **`reference_mismatch`**: a new model was deployed without a new reference.
+3. **`reference_mismatch`** (DriftLevel 3, raises the drift alarm): a new model was deployed without a new reference.
    Run `monitor-setup` for the deployed bundle and
    `aws_deploy.sh reference <file>`.
 4. **`insufficient_data`**: fewer than 200 predictions that day; no judgement.

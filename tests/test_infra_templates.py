@@ -48,6 +48,24 @@ class TemplateTests(unittest.TestCase):
         self.assertIn("Reusing existing $target image", text)
         self.assertIn("docker push --quiet \"$repo:$image_tag\"", text)
 
+    def test_every_role_that_uses_the_encrypted_state_table_may_use_its_key_through_dynamodb(self):
+        # The state table is encrypted with the artifact key: without these two statements every ledger
+        # read or write fails with AccessDeniedException (found on the Fargate task role).
+        for name in ("service.yaml", "serverless.yaml"):
+            text = (Path(__file__).resolve().parents[1] / "infra" / "cloudformation" / name).read_text(encoding="utf-8")
+            self.assertIn("dynamodb:UpdateItem", text, name)
+            decrypt = text.split("Action: kms:Decrypt", 1)[1].split("- Effect", 1)[0]
+            self.assertIn("dynamodb.${AWS::Region}.amazonaws.com", decrypt, f"{name}: kms:Decrypt via DynamoDB")
+            generate = text.split("Action: kms:GenerateDataKey", 1)[1].split("\n\n", 1)[0]
+            self.assertIn("dynamodb.${AWS::Region}.amazonaws.com", generate, f"{name}: kms:GenerateDataKey via DynamoDB")
+
+    def test_lock_files_hold_no_local_paths(self):
+        root = Path(__file__).resolve().parents[1]
+        for path in sorted((root / "requirements").glob("*.txt")) + [root / "requirements.txt"]:
+            text = path.read_text(encoding="utf-8")
+            for marker in ("/tmp/", "scratchpad", "claude-0", "/home/"):
+                self.assertNotIn(marker, text, f"{path.name} contains a local path ({marker})")
+
     def test_the_budget_rule_still_exists(self):
         text = (Path(__file__).resolve().parents[1] / "infra" / "cloudformation" / "monitoring.yaml").read_text(encoding="utf-8")
         self.assertIn("MonthlyBudgetRequiresEmail", rules_block(text))

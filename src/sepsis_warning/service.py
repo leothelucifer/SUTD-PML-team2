@@ -28,7 +28,7 @@ import pandas as pd
 from .alert_store import LedgerConflict, ledger_events
 from .data import DYNAMIC, STATIC, validate_record
 from .features import build_features, select_saved_features
-from .manifest import ManifestMismatch, check_runtime, code_sha256
+from .manifest import ManifestMismatch, check_runtime, code_sha256, model_code_sha256
 from .policy import apply_policy
 from .schema import range_problems
 from .scoring import BUNDLE_KEYS, file_sha256, load_bundle
@@ -147,6 +147,11 @@ class ScoringService:
             "contract_code_matches": (
                 self.manifest.get("contract_code_sha256") == code_sha256() if self.manifest else None
             ),
+            # False means a hand-written model's source changed since it was fitted; None for other models.
+            "model_code_matches": (
+                self.manifest.get("model_code_sha256") == model_code_sha256()
+                if self.manifest and self.manifest.get("model_code_sha256") else None
+            ),
             "disclaimer": DISCLAIMER,
         }
 
@@ -192,31 +197,51 @@ class ScoringService:
         text = f"{self.bundle_sha256}:{patient_id}:{float(hour)!r}"
         return hashlib.sha256(text.encode("utf-8")).hexdigest()[:24]
 
-    def _alerts(self, patient_id: str, hours, probability) -> tuple[np.ndarray, str]:
-        """Alert flag per hour: from the ledger when there is one, else a stateless replay."""
+    def _alerts(self, patient_id: str, hours, probability, commit: bool = True, latest_only: bool = False):
+        """Alert flag per hour: from the ledger when there is one, else a stateless replay.
+
+        Returns ``(events, source, settle)``. With ``commit=False`` nothing is written: ``settle()``
+        records the new alerts later (and returns the final flags), so a batch can be checked
+        completely before any alert is committed. ``latest_only`` records at most the latest hour.
+        """
         threshold, cooldown = self.bundle["threshold"], self.bundle["cooldown"]
         if self.alert_store is None:
             table = apply_policy(pd.DataFrame({"patient_id": patient_id, "hour": hours, "probability": probability}),
                                  threshold, cooldown)
-            return table["alert_event"].to_numpy(), "stateless_replay"
+            return table["alert_event"].to_numpy(), "stateless_replay", None
         hours = np.asarray(hours, dtype=float)
-        for _ in range(4):
-            delivered, version = self.alert_store.get(patient_id)
-            events, new_rows = ledger_events(hours, probability, threshold, cooldown, [a["hour"] for a in delivered])
-            if not new_rows:
-                return events, "ledger"
-            now = datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds")
-            new = [{"hour": float(hours[i]), "prediction_id": self.prediction_id(patient_id, hours[i]),
-                    "model_version": self.model_version or (self.bundle_sha256 or "")[:12], "at": now}
-                   for i in new_rows]
-            try:
-                self.alert_store.append(patient_id, new, version)
-                return events, "ledger"
-            except LedgerConflict:
-                continue  # another request wrote first: read again, so no alert is recorded twice
-        raise RuntimeError("alert ledger kept changing; try the request again")
+        first = len(hours) - 1 if latest_only else 0
+
+        def settle() -> np.ndarray:
+            for _ in range(4):
+                delivered, version = self.alert_store.get(patient_id)
+                events, new_rows = ledger_events(hours, probability, threshold, cooldown,
+                                                 [a["hour"] for a in delivered], from_row=first)
+                if not new_rows:
+                    return events
+                now = datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds")
+                new = [{"hour": float(hours[i]), "prediction_id": self.prediction_id(patient_id, hours[i]),
+                        "model_version": self.model_version or (self.bundle_sha256 or "")[:12], "at": now}
+                       for i in new_rows]
+                try:
+                    self.alert_store.append(patient_id, new, version)
+                    return events
+                except LedgerConflict:
+                    continue  # another request wrote first: read again, so no alert is recorded twice
+            raise RuntimeError("alert ledger kept changing; try the request again")
+
+        if commit:
+            return settle(), "ledger", None
+        delivered, _ = self.alert_store.get(patient_id)
+        events, _ = ledger_events(hours, probability, threshold, cooldown,
+                                  [a["hour"] for a in delivered], from_row=first)
+        return events, "ledger", settle   # nothing is written until the caller settles
 
     def score(self, patient_id, hours) -> dict:
+        return self._finish(self._prepare(patient_id, hours, commit=True))
+
+    def _prepare(self, patient_id, hours, commit: bool, latest_only: bool = False) -> dict:
+        """Validate and score one stay. With ``commit=False`` no alert is written yet (see ``_finish``)."""
         frame = self.history_frame(patient_id, hours)
         try:
             features = select_saved_features(
@@ -227,7 +252,7 @@ class ScoringService:
         probability = self.bundle["model"].predict_proba(features)[:, 1]
         hours = frame["ICULOS"].to_numpy(dtype=float)
         threshold = float(self.bundle["threshold"])
-        events, source = self._alerts(patient_id, hours, probability)
+        events, source, settle = self._alerts(patient_id, hours, probability, commit=commit, latest_only=latest_only)
         scored_at = datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds")
         result = {
             "patient_id": patient_id,
@@ -253,10 +278,22 @@ class ScoringService:
             ],
             "disclaimer": DISCLAIMER,
         }
+        return {"result": result, "settle": settle, "frame": frame, "hours": hours, "probability": probability,
+                "threshold": threshold, "events": events, "source": source}
+
+    def _finish(self, prepared: dict) -> dict:
+        """Write the stay's new alerts (when deferred), then report the prediction."""
+        result, frame = prepared["result"], prepared["frame"]
+        hours, probability, threshold = prepared["hours"], prepared["probability"], prepared["threshold"]
+        events, source = prepared["events"], prepared["source"]
+        if prepared["settle"] is not None:
+            events = prepared["settle"]()
+            for entry, event in zip(result["hours"], events, strict=True):
+                entry["alert_event"] = int(event)
         if self.on_prediction is not None:
             latest = frame.iloc[-1]
             self.on_prediction({
-                "stay": hashlib.sha256(patient_id.encode("utf-8")).hexdigest()[:16],
+                "stay": hashlib.sha256(result["patient_id"].encode("utf-8")).hexdigest()[:16],
                 "prediction_id": result["hours"][-1]["prediction_id"],
                 "hour": float(hours[-1]), "hours_in_request": len(hours),
                 "probability": float(probability[-1]), "above_threshold": bool(probability[-1] >= threshold),
@@ -267,6 +304,7 @@ class ScoringService:
                 "bundle_sha256": (self.bundle_sha256 or "")[:12],
             })
         return result
+
 
     def predict(self, stays) -> dict:
         """Current risk for several stays at once (a ward), one entry per stay.
@@ -286,14 +324,19 @@ class ScoringService:
         duplicates = sorted({i for i in ids if isinstance(i, str) and ids.count(i) > 1})
         if duplicates:
             raise InvalidInput(f"patient_id values must be unique in one request: {duplicates[:5]}")
-        predictions = []
+        # Validate and score every stay first; alerts are written only after the whole request is valid,
+        # so a 422 for one stay cannot leave another stay's alert recorded as delivered.
+        prepared = []
         for index, stay in enumerate(stays):
             if not isinstance(stay, dict):
                 raise InvalidInput(f"stays[{index}] must be an object")
             try:
-                scored = self.score(stay.get("patient_id"), stay.get("hours"))
+                prepared.append(self._prepare(stay.get("patient_id"), stay.get("hours"), commit=False, latest_only=True))
             except InvalidInput as error:
                 raise InvalidInput(f"stays[{index}]: {error}") from error
+        predictions = []
+        for entry in prepared:
+            scored = self._finish(entry)
             hours = scored["hours"]
             latest = hours[-1]
             alerts = [h["hour"] for h in hours if h["alert_event"]]

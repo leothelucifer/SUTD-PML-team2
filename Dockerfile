@@ -42,8 +42,10 @@ COPY src/sepsis_warning ./src/sepsis_warning
 # SageMaker AI training job. SageMaker runs the image with the argument
 # "train"; inputs and outputs use the /opt/ml layout (see sagemaker_train.py).
 FROM base AS training
-# requirements/training.txt pins MLflow to the SageMaker MLflow App's version (3.16 on
-# 2026-11-15; the App updates itself, so re-lock with MLFLOW_VERSION when it changes).
+# requirements/training.txt pins MLflow close to the SageMaker MLflow App's version (3.16 on
+# 2026-11-15; the App updates itself, so re-lock with MLFLOW_VERSION when it changes). 3.17.2 is
+# the first release without the three CVEs that pip-audit reported for 3.16.1; confirm the App
+# still accepts this client with `aws_deploy.sh verify` and a synthetic pipeline run.
 RUN --mount=type=secret,id=extra_ca,required=false \
     if [ -f /run/secrets/extra_ca ]; then export PIP_CERT=/run/secrets/extra_ca; fi; \
     python -m pip install --require-hashes -r requirements/training.txt && \

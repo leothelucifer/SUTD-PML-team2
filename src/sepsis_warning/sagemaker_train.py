@@ -32,7 +32,9 @@ shows as the job's failure reason. ``SM_ROOT`` overrides ``/opt/ml`` for tests.
 
 import json
 import os
+import shutil
 import sys
+import tempfile
 import traceback
 from argparse import Namespace
 from pathlib import Path
@@ -82,6 +84,10 @@ def build_args(root: Path) -> Namespace:
     )
 
 
+# Only these files of a frozen evaluation may leave the step: no patient rows, no replay page.
+AGGREGATE_EVALUATION_FILES = ("evaluation_metrics.json",)
+
+
 def evaluate_and_publish(root: Path, params: dict, args: Namespace) -> dict:
     """Pipeline step after approval: the one frozen evaluation, then a write-once publish to S3.
 
@@ -95,13 +101,21 @@ def evaluate_and_publish(root: Path, params: dict, args: Namespace) -> dict:
     if not tracking or not bucket:
         raise ValueError("mode evaluate_publish needs mlflow_tracking_uri and publish_bucket")
     model_uri = params.get("model_uri") or "models:/sepsis-warning@production"
-    try:
-        run_frozen_evaluation(data=args.data, splits=args.splits, seed=args.seed, model_uri=model_uri,
-                              mlflow_uri=tracking, output=root / "model" / "evaluation")
-    except AlreadyEvaluated as error:
-        print(f"Frozen evaluation already recorded ({error}); publishing without a second look.", flush=True)
+    # The evaluation writes patient-level test predictions and a replay page. SageMaker archives everything
+    # under /opt/ml/model into model.tar.gz, so those files go to a scratch folder that is deleted at the end
+    # of the step; only the aggregate metrics file is kept with the job's output.
+    (root / "model" / "evaluation").mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="sepsis-evaluation-") as scratch:
+        scratch_output = Path(scratch) / "evaluation"
+        try:
+            run_frozen_evaluation(data=args.data, splits=args.splits, seed=args.seed, model_uri=model_uri,
+                                  mlflow_uri=tracking, output=scratch_output)
+        except AlreadyEvaluated as error:
+            print(f"Frozen evaluation already recorded ({error}); publishing without a second look.", flush=True)
+        for name in AGGREGATE_EVALUATION_FILES:
+            if (scratch_output / name).is_file():
+                shutil.copy2(scratch_output / name, root / "model" / "evaluation" / name)
     published = publish_model(model_uri, tracking, bucket)
-    (root / "model").mkdir(parents=True, exist_ok=True)
     (root / "model" / "publish.json").write_text(json.dumps(published, indent=2), encoding="utf-8")
     print(f"Published {published['model_s3_uri']} sha256 {published['sha256']}", flush=True)
     return published

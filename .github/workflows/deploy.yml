@@ -110,9 +110,9 @@ jobs:
 
       - name: Install the deploy tools (locked)
         run: |
-          python -m pip install --require-hashes -r requirements/ci.txt
+          # The training lock holds MLflow at the App's version and sagemaker-mlflow, all with hashes.
+          python -m pip install --require-hashes -r requirements/training.txt
           python -m pip install --no-deps -e .
-          python -m pip install "sagemaker-mlflow>=0.5,<1"
 
       - name: Validate the templates and preview the stack (creates nothing)
         env:

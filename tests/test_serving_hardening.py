@@ -27,6 +27,7 @@ from sepsis_warning.client import (
 )
 from sepsis_warning.data import DYNAMIC, generate_synthetic, load_patients
 from sepsis_warning.service import (
+    MAX_BODY_BYTES,
     MAX_TOTAL_HOURS,
     InvalidInput,
     ScoringService,
@@ -189,6 +190,39 @@ class AlertLedgerTests(unittest.TestCase):
         self.assertNotIn("bed-9", json.dumps(item))            # only the hashed key is stored
         self.assertGreater(int(item["expiresAt"]["N"]), 0)
 
+    def test_ledger_history_rows_never_record_or_start_a_cooldown(self):
+        hours, p = [1, 2, 3, 4, 5, 6], [0.9] * 6
+        # Only the latest row (index 5) may raise an alert; history rows 0-4 stay silent.
+        events, new = ledger_events(hours, p, 0.5, 6, [], from_row=5)
+        self.assertEqual((events.tolist(), new), ([0, 0, 0, 0, 0, 1], [5]))
+        # A delivered alert still blocks the latest hour inside its cooldown.
+        events, new = ledger_events(hours, p, 0.5, 6, [3], from_row=5)
+        self.assertEqual((events.tolist(), new), ([0, 0, 1, 0, 0, 0], []))
+
+    def test_predict_batch_with_one_bad_stay_records_no_alert(self):
+        store = InMemoryAlertStore()
+        service, _, temp = make_service(alert_store=store)
+        self.addCleanup(temp.cleanup)
+        good = {"patient_id": "bed-a", "hours": rising(8)}
+        bad = {"patient_id": "bed-b", "hours": [{"ICULOS": 1, "HR": 80}, {"ICULOS": 1, "HR": 81}]}  # repeated hour
+        with self.assertRaises(InvalidInput):
+            service.predict([good, bad])
+        self.assertEqual(store.get("bed-a")[0], [], "a rejected request must not silence a later real alert")
+        result = service.predict([good])
+        self.assertEqual(result["alert_source"], "ledger")
+        self.assertEqual(len(store.get("bed-a")[0]), int(result["predictions"][0]["new_alert"]))
+
+    def test_predict_records_only_the_alert_it_returns(self):
+        store = InMemoryAlertStore()
+        service, _, temp = make_service(alert_store=store)
+        self.addCleanup(temp.cleanup)
+        # First contact with a stay that has a long, deteriorating history: older threshold crossings are
+        # history the caller never sees, so they must not enter the ledger as delivered.
+        result = service.predict([{"patient_id": "bed-c", "hours": rising(14)}])
+        recorded = [a["hour"] for a in store.get("bed-c")[0]]
+        latest = result["predictions"][0]
+        self.assertEqual(recorded, [float(latest["hour"])] if latest["new_alert"] else [])
+
     def test_conflicting_writers_do_not_record_an_alert_twice(self):
         for store in (InMemoryAlertStore(), DynamoAlertStore("table", client=FakeDynamo())):
             _, version = store.get("bed-1")
@@ -331,6 +365,38 @@ class ApiHardeningTests(unittest.TestCase):
         self.assertEqual(response.json()["error"], "too_large")
         many = {"stays": [{"patient_id": f"b{i}", "hours": [{"ICULOS": h} for h in range(1, 1001)]} for i in range(9)]}
         self.assertEqual(self.client.post("/predict", json=many).status_code, 413)
+
+    def test_chunked_bodies_are_counted_not_trusted(self):
+        # No Content-Length at all (chunked transfer): the limit must still hold, and a small body still works.
+        def chunks(total, size=1_000_000):
+            sent = 0
+            while sent < total:
+                piece = min(size, total - sent)
+                sent += piece
+                yield b" " * piece
+
+        too_big = self.client.post("/predict", content=chunks(MAX_BODY_BYTES + 1),
+                                   headers={"content-type": "application/json"})
+        self.assertEqual(too_big.status_code, 413)
+        small = {"stays": [{"patient_id": "chunk-1", "hours": rising(3)}]}
+        payload = json.dumps(small).encode()
+
+        def small_chunks():
+            yield payload[:20]
+            yield payload[20:]
+
+        ok = self.client.post("/predict", content=small_chunks(), headers={"content-type": "application/json"})
+        self.assertEqual(ok.status_code, 200, ok.text)
+        self.assertEqual(ok.json()["predictions"][0]["hours_scored"], 3)
+
+    def test_metric_dimension_is_the_route_not_the_raw_path(self):
+        self.stream.truncate(0)
+        self.stream.seek(0)
+        for junk in ("/wp-admin", "/a/b/c", "/score/../../etc"):
+            self.client.get(junk)
+        self.client.get("/health")
+        paths = {r["Path"] for r in self.lines() if r["record_type"] == "request"}
+        self.assertEqual(paths, {"unmatched", "/health"})
 
     def test_malformed_values_use_the_same_error_shape(self):
         for value in ("92", True, [1]):
