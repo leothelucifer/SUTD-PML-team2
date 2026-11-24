@@ -38,12 +38,14 @@ class ServiceLinkedRoleTests(unittest.TestCase):
         result, calls = run_function(role_exists=True)
         self.assertEqual(result.returncode, 0)
         self.assertNotIn("create-service-linked-role", calls)
+        self.assertIn("iam wait role-exists --role-name AWSServiceRoleForECS", calls)
 
     def test_a_missing_role_is_created_with_the_documented_command(self):
         result, calls = run_function(role_exists=False)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("iam get-role --role-name AWSServiceRoleForECS", calls)
         self.assertIn("iam create-service-linked-role --aws-service-name ecs.amazonaws.com", calls)
+        self.assertIn("iam wait role-exists --role-name AWSServiceRoleForECS", calls)
 
     def test_a_role_created_by_someone_else_in_the_meantime_is_not_an_error(self):
         result, _ = run_function(role_exists=False, create_ok=False,
