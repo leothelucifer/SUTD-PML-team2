@@ -11,7 +11,8 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = (ROOT / "scripts" / "aws_deploy.sh").read_text(encoding="utf-8")
 
 
-def run_function(*, role_exists: bool, create_output: str = "", create_ok: bool = True):
+def run_function(*, role_exists: bool, create_output: str = "", create_ok: bool = True,
+                 ecs_output: str = "", ecs_ok: bool = True):
     with tempfile.TemporaryDirectory() as temp:
         temp = Path(temp)
         log = temp / "calls.log"
@@ -25,12 +26,15 @@ def run_function(*, role_exists: bool, create_output: str = "", create_ok: bool 
             "  [ \"$CREATE_OK\" = 1 ] && exit 0 || exit 254\n"
             "fi\n"
             "if [ \"$1 $2\" = 'iam get-role' ]; then [ \"$ROLE_EXISTS\" = 1 ] && exit 0 || [ -f \"$ROLE_STATE\" ] && exit 0 || exit 254; fi\n"
+            "if [ \"$1 $2\" = 'ecs create-cluster' ]; then echo \"$ECS_OUTPUT\"; [ \"$ECS_OK\" = 1 ] && exit 0 || exit 254; fi\n"
+            "if [ \"$1 $2\" = 'ecs delete-cluster' ]; then exit 0; fi\n"
             "exit 0\n")
         fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
         function = SCRIPT[SCRIPT.index("ensure_service_linked_role() {"):]
         function = function[:function.index("\n}\n") + 3]
         env = {**os.environ, "PATH": f"{temp}:{os.environ['PATH']}", "CALLS": str(log), "ROLE_EXISTS": "1" if role_exists else "0",
                "ROLE_STATE": str(temp / "role-created"), "CREATE_OUTPUT": create_output, "CREATE_OK": "1" if create_ok else "0",
+               "ECS_OUTPUT": ecs_output, "ECS_OK": "1" if ecs_ok else "0",
                "SERVICE_LINKED_ROLE_RETRY_SECONDS": "0", "SERVICE_LINKED_ROLE_PROPAGATION_SECONDS": "0"}
         result = subprocess.run(["bash", "-c", 'fail() { echo "FAIL: $*" >&2; exit 1; }\n' + function +
                                  "\nensure_service_linked_role ecs.amazonaws.com AWSServiceRoleForECS"],
@@ -44,6 +48,17 @@ class ServiceLinkedRoleTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0)
         self.assertNotIn("create-service-linked-role", calls)
         self.assertIn("iam wait role-exists --role-name AWSServiceRoleForECS", calls)
+        self.assertIn("ecs create-cluster --cluster-name", calls)
+        self.assertIn("ecs delete-cluster --cluster", calls)
+
+    def test_ecs_must_accept_a_cluster_before_deploy_continues(self):
+        result, calls = run_function(
+            role_exists=True,
+            ecs_output="Unable to assume the service linked role. Please verify that the ECS service linked role exists.",
+            ecs_ok=False)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("ecs create-cluster --cluster-name", calls)
+        self.assertIn("cannot assume AWSServiceRoleForECS", result.stderr)
 
     def test_a_missing_role_is_created_with_the_documented_command(self):
         result, calls = run_function(role_exists=False)
