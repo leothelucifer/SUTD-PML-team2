@@ -129,12 +129,16 @@ def check_key(result: Result, kms, items: list[dict]) -> None:
         guarded(result, "KMS key", check)
 
 
-def check_repositories(result: Result, ecr, items: list[dict], tag: str | None) -> None:
+def check_repositories(result: Result, ecr, items: list[dict], tag: str | None, serving_mode: str = "lambda") -> None:
     repos = of_type(items, "AWS::ECR::Repository")
     if len(repos) < 3:
         result.add("FAIL", "ECR repositories", f"expected 3, found {len(repos)}")
     for repo in repos:
         name = repo["physical"]
+        if repo.get("logical") == "EcrRepository" and serving_mode != "fargate":
+            # The images step does not build the Fargate serving image in Lambda mode, so an empty repository is correct.
+            result.add("PASS", f"ECR {name}", "scoring image not built: Lambda serving uses the lambda image")
+            continue
 
         def check(name=name):
             images = ecr.describe_images(repositoryName=name).get("imageDetails", [])
@@ -436,7 +440,7 @@ def verify(session, stack: str, region: str, *, expect_model: bool = False, tag:
     check_outputs(result, outputs, expect_model)
     check_buckets(result, session.client("s3"), items)
     check_key(result, session.client("kms"), items)
-    check_repositories(result, session.client("ecr"), items, tag)
+    check_repositories(result, session.client("ecr"), items, tag, outputs.get("ServingMode", "lambda"))
     check_table(result, session.client("dynamodb"), items)
     # Nothing here calls a SageMaker API unless the stack uses one: with EnableSageMaker=false (or both backends on ECS)
     # the account may have no SageMaker access at all.

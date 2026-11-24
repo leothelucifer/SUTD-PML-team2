@@ -35,9 +35,9 @@ WORKDIR /app
 # changed package is refused. Behind a TLS-inspecting proxy, pass its CA as a build
 # secret; it is used only during installs and kept in no layer:
 #   docker build --secret id=extra_ca,src=/path/to/proxy-ca.crt ...
-COPY requirements ./requirements
-COPY pyproject.toml README.md ./
-COPY src/sepsis_warning ./src/sepsis_warning
+# Layer order matters for build time: each target first installs its own locked dependencies (the slow part, which
+# only changes when its lock file does), then copies the source. A change to the code then rebuilds only the last two
+# layers, and `aws_deploy.sh images` reuses the previous image's layers (docker build --cache-from).
 
 # SageMaker AI training job. SageMaker runs the image with the argument
 # "train"; inputs and outputs use the /opt/ml layout (see sagemaker_train.py).
@@ -45,9 +45,14 @@ FROM base AS training
 # requirements/training.txt pins MLflow to the SageMaker MLflow App's version (3.17 on 2026-11-15; the App
 # updates itself, so re-lock with MLFLOW_VERSION when it changes). 3.17.2 is the first release without the three
 # CVEs that pip-audit reported for 3.16.1. With MlflowBackend=ecs the server in the tools image uses the same version.
+COPY requirements/training.txt ./requirements/training.txt
 RUN --mount=type=secret,id=extra_ca,required=false \
     if [ -f /run/secrets/extra_ca ]; then export PIP_CERT=/run/secrets/extra_ca; fi; \
-    python -m pip install --require-hashes -r requirements/training.txt && \
+    python -m pip install --require-hashes -r requirements/training.txt
+COPY pyproject.toml README.md ./
+COPY src/sepsis_warning ./src/sepsis_warning
+RUN --mount=type=secret,id=extra_ca,required=false \
+    if [ -f /run/secrets/extra_ca ]; then export PIP_CERT=/run/secrets/extra_ca; fi; \
     python -m pip install --no-deps . && rm -rf /app/src /app/requirements
 ENV MLFLOW_DISABLE_TELEMETRY=true \
     MLFLOW_DISABLE_AGENT_HINT=1 \
@@ -60,9 +65,14 @@ ENTRYPOINT ["python", "-m", "sepsis_warning.sagemaker_train"]
 #   python -m sepsis_warning.evidently_job ...                       scheduled monitoring report
 #   evidently ui --workspace ... --host 0.0.0.0 --port 8000          live Evidently UI
 FROM base AS tools
+COPY requirements/tools.txt ./requirements/tools.txt
 RUN --mount=type=secret,id=extra_ca,required=false \
     if [ -f /run/secrets/extra_ca ]; then export PIP_CERT=/run/secrets/extra_ca; fi; \
-    python -m pip install --require-hashes -r requirements/tools.txt && \
+    python -m pip install --require-hashes -r requirements/tools.txt
+COPY pyproject.toml README.md ./
+COPY src/sepsis_warning ./src/sepsis_warning
+RUN --mount=type=secret,id=extra_ca,required=false \
+    if [ -f /run/secrets/extra_ca ]; then export PIP_CERT=/run/secrets/extra_ca; fi; \
     python -m pip install --no-deps . && rm -rf /app/src /app/requirements
 ENV MLFLOW_DISABLE_TELEMETRY=true \
     MLFLOW_DISABLE_AGENT_HINT=1
@@ -76,18 +86,28 @@ CMD ["sepsis_warning.mlflow_server"]
 # AWS Lambda (container image). awslambdaric talks to the Lambda runtime API;
 # the handler downloads the pinned bundle from S3 into /tmp on first use.
 FROM base AS lambda
+COPY requirements/lambda.txt ./requirements/lambda.txt
 RUN --mount=type=secret,id=extra_ca,required=false \
     if [ -f /run/secrets/extra_ca ]; then export PIP_CERT=/run/secrets/extra_ca; fi; \
-    python -m pip install --require-hashes -r requirements/lambda.txt && \
+    python -m pip install --require-hashes -r requirements/lambda.txt
+COPY pyproject.toml README.md ./
+COPY src/sepsis_warning ./src/sepsis_warning
+RUN --mount=type=secret,id=extra_ca,required=false \
+    if [ -f /run/secrets/extra_ca ]; then export PIP_CERT=/run/secrets/extra_ca; fi; \
     python -m pip install --no-deps . && rm -rf /app/src /app/requirements
 ENTRYPOINT ["python", "-m", "awslambdaric"]
 CMD ["sepsis_warning.lambda_app.handler"]
 
 # Default: the scoring API for ECS Fargate or a laptop.
 FROM base AS scoring
+COPY requirements/scoring.txt ./requirements/scoring.txt
 RUN --mount=type=secret,id=extra_ca,required=false \
     if [ -f /run/secrets/extra_ca ]; then export PIP_CERT=/run/secrets/extra_ca; fi; \
-    python -m pip install --require-hashes -r requirements/scoring.txt && \
+    python -m pip install --require-hashes -r requirements/scoring.txt
+COPY pyproject.toml README.md ./
+COPY src/sepsis_warning ./src/sepsis_warning
+RUN --mount=type=secret,id=extra_ca,required=false \
+    if [ -f /run/secrets/extra_ca ]; then export PIP_CERT=/run/secrets/extra_ca; fi; \
     python -m pip install --no-deps . && rm -rf /app/src /app/requirements
 # Fixed non-root user; it owns nothing in the image.
 RUN useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin scorer

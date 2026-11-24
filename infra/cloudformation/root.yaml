@@ -634,6 +634,8 @@ Outputs:
     Value: !GetAtt MlflowEcs.Outputs.TrackingUri
   MlflowBackend:
     Value: !Ref MlflowBackend
+  ServingMode:
+    Value: !Ref ServingMode
   EvidentlyReportFamily:
     Condition: UseEvidently
     Description: Task definition family of the drift report (run it with the monitor workflow).

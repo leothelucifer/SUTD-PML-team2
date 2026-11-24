@@ -137,6 +137,7 @@ jobs:
           ALERT_EMAIL: ${{ vars.ALERT_EMAIL }}
           MODEL_URI: ${{ inputs.model_uri }}
           TAG: ${{ github.sha }}
+          IMAGES_PARALLEL: "1"
         run: |
           bash scripts/aws_deploy.sh stack
           bash scripts/aws_deploy.sh images
