@@ -126,8 +126,33 @@ ensure_service_linked_role() {  # ensure_service_linked_role SERVICE ROLE-NAME
   fail "could not verify $2. Ask an administrator to run: aws iam create-service-linked-role --aws-service-name $1"
 }
 
+# An update that an earlier run started keeps going after that run is cancelled or times out, and CloudFormation
+# refuses a new change set while it does (deploy run 29). Cancel it and wait for the rollback so this run starts clean.
+settle_stack() {
+  local status
+  status="$(aws cloudformation describe-stacks --stack-name "$STACK" --query 'Stacks[0].StackStatus' --output text 2>/dev/null || true)"
+  case "$status" in
+    UPDATE_IN_PROGRESS)
+      echo "Stack $STACK is still updating from an earlier run; cancelling that update so this one can start"
+      aws cloudformation cancel-update-stack --stack-name "$STACK" || true
+      status=UPDATE_ROLLBACK_IN_PROGRESS ;;
+  esac
+  case "$status" in
+    UPDATE_ROLLBACK_IN_PROGRESS|UPDATE_ROLLBACK_CLEANUP_IN_PROGRESS|UPDATE_COMPLETE_CLEANUP_IN_PROGRESS)
+      echo "Waiting for $STACK to finish its earlier operation ($status)"
+      aws cloudformation wait stack-update-complete --stack-name "$STACK" 2>/dev/null || true
+      aws cloudformation wait stack-rollback-complete --stack-name "$STACK" 2>/dev/null || true ;;
+  esac
+  status="$(aws cloudformation describe-stacks --stack-name "$STACK" --query 'Stacks[0].StackStatus' --output text 2>/dev/null || true)"
+  case "$status" in
+    *_IN_PROGRESS) fail "stack $STACK is still $status; wait for it to finish (or cancel it in the CloudFormation console) and run again" ;;
+    UPDATE_ROLLBACK_FAILED) fail "stack $STACK is UPDATE_ROLLBACK_FAILED; continue the rollback in the CloudFormation console, then run again" ;;
+  esac
+}
+
 cmd_stack() {
   local extra=("$@")
+  settle_stack
   # A first create that failed leaves the stack in ROLLBACK_COMPLETE, which cannot be updated. It holds no
   # resources, so delete it and start again.
   local status
