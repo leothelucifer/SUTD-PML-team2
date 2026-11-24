@@ -230,6 +230,29 @@ def check_alerts(result: Result, sns, cloudwatch, items: list[dict]) -> None:
         guarded(result, "CloudWatch alarms", alarms)
 
 
+def check_quotas(result: Result, service_quotas, instance_type: str = "ml.m5.xlarge") -> None:
+    """SageMaker training instances start at 0 in a new account; the pipeline cannot run until they are raised."""
+    wanted = {f"{instance_type} for training job usage": "on demand (the data download)",
+              f"{instance_type} for spot training job usage": "spot (tune, train, evaluate)"}
+
+    def check():
+        found = {}
+        for page in service_quotas.get_paginator("list_service_quotas").paginate(ServiceCode="sagemaker"):
+            for quota in page["Quotas"]:
+                if quota["QuotaName"] in wanted:
+                    found[quota["QuotaName"]] = quota["Value"]
+        for name, purpose in wanted.items():
+            value = found.get(name)
+            if value is None:
+                result.add("WARN", f"SageMaker quota {name}", "not found; check Service Quotas")
+            elif value < 1:
+                result.add("WARN", f"SageMaker quota {name}", f"{value:g}: request an increase to 1 or more in Service Quotas ({purpose})")
+            else:
+                result.add("PASS", f"SageMaker quota {name}", f"{value:g} ({purpose})")
+
+    guarded(result, "SageMaker quotas", check)
+
+
 def check_budget(result: Result, budgets, account: str, items: list[dict]) -> None:
     found = of_type(items, "AWS::Budgets::Budget")
     if not found:
@@ -327,6 +350,7 @@ def verify(session, stack: str, region: str, *, expect_model: bool = False, tag:
     check_alerts(result, session.client("sns"), session.client("cloudwatch"), items)
     account = session.client("sts").get_caller_identity()["Account"]
     check_budget(result, session.client("budgets", region_name="us-east-1"), account, items)
+    check_quotas(result, session.client("service-quotas"))
     check_iam(result, session.client("iam"), outputs)
     check_function(result, session.client("lambda"), items, outputs, expect_model, signed_health(session, region) if call_api else None)
     return result
