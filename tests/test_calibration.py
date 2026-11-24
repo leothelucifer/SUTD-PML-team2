@@ -6,8 +6,6 @@ import unittest
 from argparse import Namespace
 from pathlib import Path
 
-import numpy as np
-
 from sepsis_warning.cli import run_experiment
 from sepsis_warning.data import generate_synthetic, load_patients, split_patients
 from sepsis_warning.features import META, feature_table
