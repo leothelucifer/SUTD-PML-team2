@@ -192,6 +192,17 @@ class PromotionAndPublishTests(unittest.TestCase):
             except Exception:
                 pass
 
+class CheckPromotedInputTests(unittest.TestCase):
+    def test_a_model_uri_with_neither_alias_nor_version_is_refused_with_a_clear_message(self):
+        from unittest import mock
+
+        from sepsis_warning.model_source import check_promoted
+
+        with mock.patch("sepsis_warning.registry.parse_model_uri", return_value=("sepsis-warning", None, None)), \
+                mock.patch("sepsis_warning.registry._client", return_value=mock.Mock()):
+            with self.assertRaisesRegex(ValueError, "neither an alias nor a version"):
+                check_promoted("models:/sepsis-warning", "http://tracking")
+
 
 if __name__ == "__main__":
     unittest.main()

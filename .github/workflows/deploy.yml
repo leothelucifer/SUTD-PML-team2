@@ -275,7 +275,7 @@ jobs:
           AWS_REGION: ${{ steps.target.outputs.region }}
           TAG: ${{ github.sha }}
           FULL: ${{ steps.plan.outputs.serve == 'true' && '--expect-model' || '' }}
-        run: bash scripts/aws_deploy.sh verify $FULL
+        run: bash scripts/aws_deploy.sh verify ${FULL:+"$FULL"}
 
       # Only when everything above passed: remember the commit of the stages that ran, so the next plan compares with it.
       - name: Remember what this deploy did

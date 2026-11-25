@@ -83,4 +83,4 @@ jobs:
           AWS_REGION: ${{ steps.target.outputs.region }}
           TAG: ${{ github.sha }}
           EXPECT: ${{ inputs.expect_model && '--expect-model' || '' }}
-        run: bash scripts/aws_deploy.sh verify --tag "" $EXPECT
+        run: bash scripts/aws_deploy.sh verify --tag "" ${EXPECT:+"$EXPECT"}
