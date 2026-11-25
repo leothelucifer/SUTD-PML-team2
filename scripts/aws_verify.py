@@ -18,6 +18,7 @@ import argparse
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -413,21 +414,38 @@ def check_function(result: Result, lambda_client, items: list[dict], outputs: di
         guarded(result, "API /health (signed call)", call)
 
 
-def signed_health(session, region: str):
-    """A SigV4-signed GET, the same way a hospital integration would call the function URL."""
+RETRY_STATUS = (502, 503, 504)   # a Lambda that is still starting (cold start), or timed out loading the model
+
+
+def signed_health(session, region: str, *, retries: int = 3, wait: float = 20, sleep=time.sleep, opener=urllib.request.urlopen):
+    """A SigV4-signed GET, the same way a hospital integration would call the function URL.
+
+    The first request after a deploy starts a new container image and loads the model: in the first full deploy (run 31) it took
+    longer than the 30 s function timeout and answered 502, and the next request was fine. So 502, 503, 504 and timeouts are tried
+    again ``retries`` more times, ``wait`` seconds apart; any other answer (403, 404) is final.
+    """
     from botocore.auth import SigV4Auth
     from botocore.awsrequest import AWSRequest
 
     def call(url: str) -> dict:
-        credentials = session.get_credentials()
-        request = AWSRequest(method="GET", url=url, headers={})
-        SigV4Auth(credentials, "lambda", region).add_auth(request)
-        prepared = urllib.request.Request(url, headers=dict(request.headers))
-        try:
-            with urllib.request.urlopen(prepared, timeout=30) as response:
-                return json.loads(response.read())
-        except urllib.error.HTTPError as error:
-            raise RuntimeError(f"HTTP {error.code}") from error
+        last = "no answer"
+        for attempt in range(retries + 1):
+            credentials = session.get_credentials()
+            request = AWSRequest(method="GET", url=url, headers={})
+            SigV4Auth(credentials, "lambda", region).add_auth(request)
+            prepared = urllib.request.Request(url, headers=dict(request.headers))
+            try:
+                with opener(prepared, timeout=30) as response:
+                    return json.loads(response.read())
+            except urllib.error.HTTPError as error:
+                if error.code not in RETRY_STATUS:
+                    raise RuntimeError(f"HTTP {error.code}") from error
+                last = f"HTTP {error.code}"
+            except (urllib.error.URLError, TimeoutError, OSError) as error:
+                last = f"{type(error).__name__}"
+            if attempt < retries:
+                sleep(wait)
+        raise RuntimeError(f"{last} after {retries + 1} tries")
 
     return call
 

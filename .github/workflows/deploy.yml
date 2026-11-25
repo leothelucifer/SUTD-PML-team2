@@ -264,7 +264,9 @@ jobs:
           ENVIRONMENT: ${{ inputs.environment }}
           AWS_REGION: ${{ steps.target.outputs.region }}
         run: |
-          bash scripts/aws_deploy.sh call GET /health
+          # The first request after a deploy loads the model and can exceed the function timeout (run 31: 502); /health is
+          # tried again, which also warms the function for the /predict call that follows.
+          bash scripts/aws_deploy.sh call --retries 4 GET /health
           bash scripts/aws_deploy.sh call POST /predict \
             '{"stays": [{"patient_id": "smoke-1", "hours": [{"ICULOS": 1, "HR": 92}, {"ICULOS": 2, "HR": 118}]}]}'
 
