@@ -1,6 +1,6 @@
 # Workflows: what each option does
 
-Eleven workflows, one page. **Automatic** ones start by themselves; every other workflow is started by hand
+Twelve workflows, one page. **Automatic** ones start by themselves; every other workflow is started by hand
 (**Actions → the workflow → Run workflow**), and the automatic ones also have a Run workflow button. For the click order see
 [RUN-ORDER.md](RUN-ORDER.md); for what CI runs see [cicd.md](cicd.md).
 
@@ -21,6 +21,7 @@ Every manual workflow takes **environment** (`dev`, `staging`, `prod`; staging a
 | **demo** | by hand | yes | writes a page to S3 | Replay stays through the live API |
 | **monitor** | by hand | yes | writes reports to S3 | Build the Evidently reference, make the drift report |
 | **verify** | by hand | read-only | no | Check every deployed component |
+| **collect-results** | by hand, once, at the very end | read-only | no (opens a pull request) | Pull the aggregate results from S3 into the repo for the report |
 | **teardown** | by hand | yes | **deletes** | Plan or perform a removal |
 
 ## 2. deploy: option → what happens
@@ -93,7 +94,33 @@ stopped tasks. A run that finishes green records its state in S3.
 
 Output of verify: a PASS, WARN or FAIL line per component in the run summary; the run fails on any FAIL.
 
-## 6. teardown
+## 6. collect-results
+
+Run it **once, after everything else is finished** (training, approval, deploy, demo, monitoring). It reads the private bucket,
+copies only aggregate files into the repository and opens a pull request to `main`. Nothing on AWS changes.
+
+| Option | Effect |
+|---|---|
+| `execution` | The pipeline run id. Empty = the latest run that `SUCCEEDED` |
+| `model_version` | The version whose approval record is taken. Empty = the newest published |
+| `include_monitoring` ticked | Also takes the newest drift report's `metrics.json` (run **monitor** first) |
+| `include_failure_examples` | Also takes `fig_failure_examples.png`, which shows individual stays. Off by default |
+| `dry_run` | Lists what would be collected and stops: no branch, no pull request |
+
+| Collected into | What |
+|---|---|
+| `reports/results/` | The report's tables and figures, `run/` (selection files), `tuning/`, `registry.json` (who approved, the frozen evaluation time), `monitoring/metrics.json`, and `PROVENANCE.md` (run, model, commit, SHA-256 of every file, what was skipped) |
+| `reports/results_test/` | `evaluation_metrics.json`, the one frozen test evaluation (aggregates only) |
+
+Never copied: the model, the prepared data, per-patient files (`held_out_predictions.csv`, `split_manifest.csv`), ward replays, the Evidently
+`report.html`. The bucket name and the AWS account id are replaced by placeholders in text files. The workflow refuses to commit anything
+outside the two folders or any file that looks like patient data or a model.
+
+One-time setting: Settings → Actions → General → **Allow GitHub Actions to create and approve pull requests**. A pull request opened by a
+workflow does not start the tests: close and reopen it once. The report generator's test curves and confidence intervals need per-stay
+predictions that the pipeline does not keep, so they are not part of this collection.
+
+## 7. teardown
 
 | `scope` | Result |
 |---|---|
@@ -103,7 +130,7 @@ Output of verify: a PASS, WARN or FAIL line per component in the run summary; th
 
 Anything but `plan only` needs `confirm` set to the stack name (`sepsis-dev`, `sepsis-staging` or `sepsis-prod`). `everything` cannot be undone.
 
-## 7. The automatic ones
+## 8. The automatic ones
 
 | Workflow | Trigger | Effect |
 |---|---|---|
