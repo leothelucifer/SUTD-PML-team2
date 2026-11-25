@@ -37,7 +37,50 @@ class MlflowServerTests(unittest.TestCase):
         self.assertIn("--serve-artifacts", cmd)
         self.assertEqual(cmd[cmd.index("--artifacts-destination") + 1], "s3://bucket/mlflow-artifacts")
         self.assertEqual(cmd[cmd.index("--allowed-hosts") + 1], "*")
+        self.assertEqual(cmd[cmd.index("--cors-allowed-origins") + 1], "*")
         self.assertFalse(any("p@ss" in part or "p%40ss" in part for part in cmd))
+
+    def test_the_origins_can_be_narrowed_from_the_environment(self):
+        cmd = mlflow_server.command(dict(ENV, MLFLOW_CORS_ALLOWED_ORIGINS="http://203.0.113.7:5000"))
+        self.assertEqual(cmd[cmd.index("--cors-allowed-origins") + 1], "http://203.0.113.7:5000")
+
+    def test_the_browser_ui_can_search_runs_on_the_server_this_command_starts(self):
+        """The UI's search calls carry the page's origin; with only --allowed-hosts MLflow answered 403 and every run list stayed empty."""
+        import json
+        import socket
+        import subprocess
+        import tempfile
+        import time
+        import urllib.error
+        import urllib.request
+
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = probe.getsockname()[1]
+        with tempfile.TemporaryDirectory() as temp:
+            cmd = mlflow_server.command(dict(ENV, PORT=str(port)))
+            cmd[cmd.index("--host") + 1] = "127.0.0.1"
+            env = {**os.environ, "MLFLOW_BACKEND_STORE_URI": f"sqlite:///{temp}/m.db", "MLFLOW_DISABLE_TELEMETRY": "true",
+                   "MLFLOW_DISABLE_AGENT_HINT": "1"}
+            server = subprocess.Popen(cmd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            try:
+                for _ in range(60):
+                    try:
+                        urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=2)
+                        break
+                    except (urllib.error.URLError, OSError):
+                        time.sleep(1)
+                else:
+                    self.fail("the MLflow server did not start")
+                request = urllib.request.Request(
+                    f"http://127.0.0.1:{port}/ajax-api/2.0/mlflow/runs/search", method="POST",
+                    data=json.dumps({"experiment_ids": ["0"], "max_results": 5}).encode(),
+                    headers={"Content-Type": "application/json", "Origin": "http://3.27.208.97:5000"})
+                with urllib.request.urlopen(request, timeout=10) as response:
+                    self.assertEqual(response.status, 200)
+            finally:
+                server.terminate()
+                server.wait(timeout=15)
 
     def test_missing_settings_stop_the_task_with_a_reason(self):
         for name in ("DB_HOST", "DB_PASSWORD"):
