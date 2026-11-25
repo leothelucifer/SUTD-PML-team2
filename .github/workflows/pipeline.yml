@@ -19,6 +19,11 @@ on:
         type: choice
         options: [environment default, ap-southeast-1, ap-southeast-2]
         default: environment default
+      action:
+        description: start begins a run and ends (a real run takes hours; GitHub's AWS login lasts one hour). status shows the latest run and what is running. stop ends the running run.
+        type: choice
+        options: [start, status, stop]
+        default: start
       data_source:
         description: synthetic = the software fixture (a rehearsal); physionet = the real data, copied from the open-data S3 bucket; physionet-web = the real data over HTTPS
         type: choice
@@ -99,6 +104,7 @@ jobs:
           python -m pip install --no-deps -e .
 
       - name: Build the images for this commit (skipped when they already exist)
+        if: inputs.action == 'start'
         env:
           ENVIRONMENT: ${{ inputs.environment }}
           AWS_REGION: ${{ steps.target.outputs.region }}
@@ -106,13 +112,14 @@ jobs:
         run: bash scripts/aws_deploy.sh images
 
       - name: Copy the PhysioNet data into our bucket (S3 to S3, no web download)
-        if: inputs.data_source == 'physionet' && inputs.prepare
+        if: inputs.action == 'start' && inputs.data_source == 'physionet' && inputs.prepare
         env:
           ENVIRONMENT: ${{ inputs.environment }}
           AWS_REGION: ${{ steps.target.outputs.region }}
         run: bash scripts/aws_deploy.sh fetch-data
 
-      - name: Run the pipeline and follow it
+      - name: Start the pipeline
+        if: inputs.action == 'start'
         env:
           ENVIRONMENT: ${{ inputs.environment }}
           AWS_REGION: ${{ steps.target.outputs.region }}
@@ -122,5 +129,22 @@ jobs:
           LIMIT: ${{ inputs.limit }}
           TRIALS: ${{ inputs.trials }}
           INSTANCE_TYPE: ${{ inputs.instance_type }}
-          WAIT: "1"
-        run: bash scripts/aws_deploy.sh pipeline
+          # Not followed: the run takes hours and this job's AWS login ends after one (run 5). The approval email comes
+          # by itself; use action status to see the step it is in, and action stop to end it.
+          WAIT: "0"
+        run: |
+          bash scripts/aws_deploy.sh pipeline
+          {
+            echo "### Started. It runs on its own in AWS (about 2 to 3 hours for the full real data)."
+            echo "- Where it is: run this workflow again with action **status**."
+            echo "- When it reaches the approval step an email arrives: then run **promote**, then **approve**."
+            echo "- Not wanted any more: run this workflow with action **stop**."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Show or stop the pipeline run
+        if: inputs.action != 'start'
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          AWS_REGION: ${{ steps.target.outputs.region }}
+          ACTION: ${{ inputs.action }}
+        run: python scripts/aws_pipeline_status.py "$ACTION" --stack "sepsis-$ENVIRONMENT" --region "$AWS_REGION" | tee -a "$GITHUB_STEP_SUMMARY"
