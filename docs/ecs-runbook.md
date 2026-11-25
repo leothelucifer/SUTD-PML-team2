@@ -41,7 +41,7 @@ SageMaker MLflow App again), `EnableEvidently`.
 | # | Do | Workflow | Notes |
 |---|---|---|---|
 | 1 | Start the tools | **power** start, component `all`, `allow_cidr` = your address as `x.x.x.x/32` | 5 to 10 minutes. The job summary prints the MLflow and Evidently URLs |
-| 2 | Real-data run | **pipeline**: `data_source = physionet`, trials 6 | About 2 to 3 hours the first time. Stops at the approval |
+| 2 | Real-data run | **pipeline**: `action = start`, `data_source = physionet`, trials 6 | About 2 to 3 hours the first time. The workflow starts the run and ends (GitHub's AWS login lasts one hour, so it cannot follow a run of this length). It stops at the approval and emails you. Run **pipeline** with `action = status` to see the step, the age and what is running on Fargate, and `action = stop` to end it |
 | 3 | Review | open the MLflow URL and `s3://<bucket>/reports/<run>/` | metrics table, PR curves, figures |
 | 4 | Promote | **promote** with the model version | Runs as the approver role; the GitHub user is recorded as reviewer |
 | 5 | Approve | **approve** | Then the one frozen evaluation and the publish run |

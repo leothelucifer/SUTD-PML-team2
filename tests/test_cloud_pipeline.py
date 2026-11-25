@@ -180,12 +180,12 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(workflow["permissions"]["id-token"], "write")
         names = [s.get("name", "") for s in workflow["jobs"]["pipeline"]["steps"]]
         self.assertLess(names.index("Build the images for this commit (skipped when they already exist)"),
-                        names.index("Run the pipeline and follow it"))
+                        names.index("Start the pipeline"))
         self.assertEqual(workflow["jobs"]["pipeline"]["environment"], "${{ inputs.environment }}")
         copy = next(step for step in workflow["jobs"]["pipeline"]["steps"] if step.get("name", "").startswith("Copy the PhysioNet data"))
         self.assertIn("physionet", copy["if"])
         self.assertIn("fetch-data", copy["run"])
-        self.assertLess(names.index(copy["name"]), names.index("Run the pipeline and follow it"))
+        self.assertLess(names.index(copy["name"]), names.index("Start the pipeline"))
 
 
 if __name__ == "__main__":
