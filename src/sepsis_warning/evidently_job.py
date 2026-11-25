@@ -104,7 +104,25 @@ def add_to_workspace(workspace: Path, snapshot, run_name: str = "") -> None:
     ws = Workspace.create(str(workspace))
     found = ws.search_project(PROJECT_NAME)
     project = found[0] if found else ws.create_project(PROJECT_NAME)
+    ensure_dashboard(project)
     ws.add_run(project.id, snapshot, name=run_name or None)
+
+
+def ensure_dashboard(project) -> None:
+    """Give the project's Dashboard tab panels. A new project has none and the UI says the dashboard is empty."""
+    from evidently.sdk.models import PanelMetric
+    from evidently.sdk.panels import counter_panel, line_plot_panel
+
+    if any(tab.panels for tab in project.dashboard.model().tabs):
+        return
+    drifted = "evidently:metric_v2:DriftedColumnsCount"
+    share = PanelMetric(legend="share of columns", metric=drifted, metric_labels={"value_type": "share"})
+    count = PanelMetric(legend="columns", metric=drifted, metric_labels={"value_type": "count"})
+    project.dashboard.add_panel(counter_panel(title="Share of drifted columns (latest run)", size="half", values=[share],
+                                              aggregation="last"))
+    project.dashboard.add_panel(counter_panel(title="Drifted columns (latest run)", size="half", values=[count], aggregation="last"))
+    project.dashboard.add_panel(line_plot_panel(title="Share of drifted columns over runs", size="full", values=[share]))
+    project.save()
 
 
 def cloudwatch_metrics(summary: dict, environment: str) -> list[dict]:

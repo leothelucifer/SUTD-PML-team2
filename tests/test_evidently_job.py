@@ -143,6 +143,9 @@ class EvidentlyRunTests(unittest.TestCase):
             self.assertTrue(drift["score_drift"]["drifted"])
             self.assertFalse(calm["score_drift"]["drifted"])
             self.assertTrue(any((temp / "workspace").rglob("*")))             # the UI has something to show
+            from evidently.ui.workspace import Workspace
+            project = Workspace(str(temp / "workspace")).search_project(job.PROJECT_NAME)[0]
+            self.assertGreaterEqual(sum(len(tab.panels) for tab in project.dashboard.model().tabs), 3)   # not an empty dashboard
 
     def test_the_whole_report_job_against_a_fake_bucket_publishes_metrics(self):
         rng = np.random.default_rng(2)
