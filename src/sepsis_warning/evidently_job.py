@@ -23,6 +23,7 @@ shows up without restarting the service.
 
 import argparse
 import datetime
+import hashlib
 import json
 import os
 import signal
@@ -223,21 +224,47 @@ def report(bucket: str, days: int, environment: str, now: datetime.datetime | No
     return summary
 
 
+def tree_signature(root: Path) -> str:
+    """A fingerprint of every file under ``root`` (path and content), to see whether a refresh changed anything."""
+    digest = hashlib.sha256()
+    for path in sorted(Path(root).rglob("*")):
+        if path.is_file():
+            digest.update(path.relative_to(root).as_posix().encode())
+            digest.update(path.read_bytes())
+    return digest.hexdigest()
+
+
 def ui(bucket: str, port: int = 8000, every: int = 60, s3=None, popen=subprocess.Popen, sleep=None, stop=lambda: False) -> int:
-    """Serve the workspace and keep it in step with S3 until the task is stopped."""
+    """Serve the workspace and keep it in step with S3 until the task is stopped.
+
+    The Evidently UI reads its projects when it starts and may not notice files that appear later, so when a refresh
+    changes the workspace (the first report run, or a new run) the UI process is restarted on the new files. Without this
+    the page stays on "no projects" although the workspace in S3 holds the report.
+    """
     import time
 
     s3, sleep = _s3(s3), sleep or time.sleep
     workspace = Path(tempfile.mkdtemp(prefix="evidently-workspace-"))
-    sync_down(s3, bucket, WORKSPACE_PREFIX, workspace)
-    process = popen(["evidently", "ui", "--workspace", str(workspace), "--host", "0.0.0.0", "--port", str(port)])
+    command = ["evidently", "ui", "--workspace", str(workspace), "--host", "0.0.0.0", "--port", str(port)]
+    count = sync_down(s3, bucket, WORKSPACE_PREFIX, workspace)
+    seen = tree_signature(workspace)
+    print(f"workspace: {count} file(s) from s3://{bucket}/{WORKSPACE_PREFIX}/", flush=True)
+    process = popen(command)
     signal.signal(signal.SIGTERM, lambda *_: process.terminate())
     while process.poll() is None and not stop():
         sleep(every)
         try:
-            sync_down(s3, bucket, WORKSPACE_PREFIX, workspace)
+            count = sync_down(s3, bucket, WORKSPACE_PREFIX, workspace)
         except Exception as error:  # noqa: BLE001 - keep serving what is there
-            print(f"workspace refresh failed: {type(error).__name__}", file=sys.stderr, flush=True)
+            print(f"workspace refresh failed: {type(error).__name__}: {error}", file=sys.stderr, flush=True)
+            continue
+        current = tree_signature(workspace)
+        if current != seen:
+            seen = current
+            print(f"workspace changed ({count} file(s)): restarting the UI so it loads the new project", flush=True)
+            process.terminate()
+            process.wait()
+            process = popen(command)
     if process.poll() is None:
         process.terminate()
     return process.wait()

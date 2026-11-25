@@ -192,6 +192,36 @@ class UiTests(unittest.TestCase):
         self.assertIn("--host", started[0])
         self.assertEqual(started[0][started[0].index("--port") + 1], "8000")
 
+    def test_the_ui_restarts_when_a_refresh_brings_a_new_project(self):
+        started = []
+
+        class Process:
+            def __init__(self, cmd):
+                started.append(cmd)
+                self.running = True
+
+            def poll(self):
+                return None if self.running else 0
+
+            def terminate(self):
+                self.running = False
+
+            def wait(self):
+                return 0
+
+        with tempfile.TemporaryDirectory() as temp:
+            s3 = FakeS3(Path(temp))
+            ticks = iter([False, False, False, True])
+            added = []
+
+            def sleep(_):
+                if not added:
+                    added.append(True)
+                    s3.put("bkt", "monitoring/evidently/workspace/project/snapshot.json", b"{}")
+
+            job.ui("bkt", 8000, every=1, s3=s3, popen=Process, sleep=sleep, stop=lambda: next(ticks))
+        self.assertEqual(len(started), 2)
+
 
 if __name__ == "__main__":
     unittest.main()
