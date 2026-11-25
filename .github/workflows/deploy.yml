@@ -14,6 +14,9 @@
 # No long-lived AWS keys are used: GitHub's OIDC token is exchanged for a short-lived role.
 # "staging" and "prod" should be GitHub environments with required reviewers, which is the
 # approval step. Changes to this file need owner review.
+# One manual button. What it does depends on what changed: a plan step compares the commit with what each stage last did in this
+# environment (scripts/deploy_plan.py, rules in ci/change_rules.json) and runs only the stages that need it. Choose mode and
+# retrain to override that, or dry_run to see the plan and stop. See docs/cicd.md.
 name: deploy
 
 on:
@@ -29,11 +32,24 @@ on:
         type: choice
         options: [environment default, ap-southeast-1, ap-southeast-2]
         default: environment default
-      steps:
-        description: First deploy in an account has no model yet, so start with "stack and images only"
+      mode:
+        description: auto runs only the stages the changes need. Or force "stack and images only" or "full deploy" (serve the newest approved model)
         type: choice
-        options: [stack and images only, full deploy]
-        default: stack and images only
+        options: [auto, stack and images only, full deploy]
+        default: auto
+      retrain:
+        description: auto starts a real-data training run only when training code changed (or none was ever run). yes or no overrides
+        type: choice
+        options: [auto, "yes", "no"]
+        default: auto
+      force_prepare:
+        description: Retrain only. Prepare the data again even though the stored data has the same settings (needed after changing the preparation code)
+        type: boolean
+        default: false
+      dry_run:
+        description: Show the plan and run nothing
+        type: boolean
+        default: false
       model_uri:
         description: SageMaker MLflow App only. Registered model to deploy (full deploy; must already be promoted there). Ignored when MLflow runs on ECS
         default: models:/sepsis-warning@production
@@ -85,6 +101,7 @@ jobs:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          fetch-depth: 0   # the plan compares this commit with the one each stage last ran for
           persist-credentials: false
 
       # The role's trust policy must match these claims exactly. Only the decoded claims are
@@ -117,7 +134,19 @@ jobs:
           python -m pip install --require-hashes -r requirements/training.txt
           python -m pip install --no-deps -e .
 
+      - name: Plan the deploy from what changed
+        id: plan
+        timeout-minutes: 5
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          AWS_REGION: ${{ steps.target.outputs.region }}
+          MODE: ${{ inputs.mode }}
+          RETRAIN: ${{ inputs.retrain }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: bash scripts/aws_deploy.sh plan
+
       - name: Validate the templates and preview the stack (creates nothing)
+        if: steps.plan.outputs.validate == 'true'
         timeout-minutes: 20
         env:
           ENVIRONMENT: ${{ inputs.environment }}
@@ -128,9 +157,9 @@ jobs:
           TAG: ${{ github.sha }}
         run: bash scripts/aws_deploy.sh validate
 
-      # A full deploy needs a published, approved model. Find out now, not after the images are built.
+      # A full deploy that was asked for must not be skipped quietly: it needs a published, approved model.
       - name: Check that a model is ready to deploy (full deploy only)
-        if: inputs.steps == 'full deploy'
+        if: inputs.mode == 'full deploy' && !inputs.dry_run
         timeout-minutes: 5
         env:
           ENVIRONMENT: ${{ inputs.environment }}
@@ -144,16 +173,16 @@ jobs:
         run: bash scripts/aws_deploy.sh check-model
 
       - name: Stack and images
+        if: steps.plan.outputs.stack == 'true'
         timeout-minutes: 45
         env:
           ENVIRONMENT: ${{ inputs.environment }}
-          # Prod changes need this confirmation; the environment's required reviewers are the approval.
           CONFIRM_PROD: ${{ inputs.environment == 'prod' && 'yes' || '' }}
           AWS_REGION: ${{ steps.target.outputs.region }}
           BUDGET_EMAIL: ${{ vars.BUDGET_EMAIL }}
           ALERT_EMAIL: ${{ vars.ALERT_EMAIL }}
-          MODEL_URI: ${{ inputs.model_uri }}
           TAG: ${{ github.sha }}
+          MODEL_URI: ${{ inputs.model_uri }}
           IMAGES_PARALLEL: "1"
         run: |
           bash scripts/aws_deploy.sh stack
@@ -162,8 +191,23 @@ jobs:
           # this second run, a no-op when nothing changed, creates the service.
           bash scripts/aws_deploy.sh stack
 
+      # Training or serving without a stack update still needs this commit's images (the images workflow may have built them already).
+      - name: Images for this commit
+        if: steps.plan.outputs.images == 'true' && steps.plan.outputs.stack != 'true'
+        timeout-minutes: 45
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          CONFIRM_PROD: ${{ inputs.environment == 'prod' && 'yes' || '' }}
+          AWS_REGION: ${{ steps.target.outputs.region }}
+          BUDGET_EMAIL: ${{ vars.BUDGET_EMAIL }}
+          ALERT_EMAIL: ${{ vars.ALERT_EMAIL }}
+          TAG: ${{ github.sha }}
+          IMAGES_PARALLEL: "1"
+        run: bash scripts/aws_deploy.sh images
+
       # CloudFormation says the stack is done when the services were created; this says the tools actually work.
       - name: Wait for the hosted tools to be running and healthy
+        if: steps.plan.outputs.ready == 'true'
         timeout-minutes: 20
         env:
           ENVIRONMENT: ${{ inputs.environment }}
@@ -174,9 +218,31 @@ jobs:
           TAG: ${{ github.sha }}
         run: bash scripts/aws_deploy.sh ready
 
+      # Real data is copied once (a marker), MLflow is switched on if it is off, the pipeline is started and not followed.
+      # It ends at the approval: promote, approve, then deploy again to serve the new model.
+      - name: Start a real-data training run
+        id: retrain
+        if: steps.plan.outputs.retrain == 'true'
+        timeout-minutes: 40
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          CONFIRM_PROD: ${{ inputs.environment == 'prod' && 'yes' || '' }}
+          AWS_REGION: ${{ steps.target.outputs.region }}
+          BUDGET_EMAIL: ${{ vars.BUDGET_EMAIL }}
+          ALERT_EMAIL: ${{ vars.ALERT_EMAIL }}
+          TAG: ${{ github.sha }}
+          FORCE_PREPARE: ${{ inputs.force_prepare }}
+        run: |
+          bash scripts/aws_deploy.sh retrain
+          {
+            echo "### Training started"
+            echo "It runs on its own in AWS (about 2 to 3 hours). Follow it with the **pipeline** workflow, action status."
+            echo "When the approval email arrives: **promote**, then **approve**, then run **deploy** again to serve the new model."
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Publish the promoted model and serve it
         id: publish
-        if: inputs.steps == 'full deploy'
+        if: steps.plan.outputs.serve == 'true'
         timeout-minutes: 20
         env:
           ENVIRONMENT: ${{ inputs.environment }}
@@ -184,32 +250,44 @@ jobs:
           AWS_REGION: ${{ steps.target.outputs.region }}
           BUDGET_EMAIL: ${{ vars.BUDGET_EMAIL }}
           ALERT_EMAIL: ${{ vars.ALERT_EMAIL }}
+          TAG: ${{ github.sha }}
           MODEL_VERSION: ${{ inputs.model_version }}
           MODEL_URI: ${{ inputs.model_uri }}
-          TAG: ${{ github.sha }}
         run: |
           bash scripts/aws_deploy.sh publish
           bash scripts/aws_deploy.sh serve
 
       # The canary inside the stack update already rolled back on errors; this checks the result.
       - name: Smoke test the deployed API
-        if: inputs.steps == 'full deploy'
+        if: steps.plan.outputs.serve == 'true'
         env:
           ENVIRONMENT: ${{ inputs.environment }}
           AWS_REGION: ${{ steps.target.outputs.region }}
         run: |
-          bash scripts/aws_deploy.sh call GET /health
+          # The first request after a deploy loads the model and can exceed the function timeout (run 31: 502); /health is
+          # tried again, which also warms the function for the /predict call that follows.
+          bash scripts/aws_deploy.sh call --retries 4 GET /health
           bash scripts/aws_deploy.sh call POST /predict \
             '{"stays": [{"patient_id": "smoke-1", "hours": [{"ICULOS": 1, "HR": 92}, {"ICULOS": 2, "HR": 118}]}]}'
 
       - name: Verify every deployed component
-        if: always() && steps.target.outcome == 'success' && (inputs.steps != 'full deploy' || steps.publish.outcome == 'success')
+        if: always() && steps.plan.outputs.verify == 'true' && steps.target.outcome == 'success' && (steps.plan.outputs.serve != 'true' || steps.publish.outcome == 'success')
         env:
           ENVIRONMENT: ${{ inputs.environment }}
           AWS_REGION: ${{ steps.target.outputs.region }}
           TAG: ${{ github.sha }}
-          FULL: ${{ inputs.steps == 'full deploy' && '--expect-model' || '' }}
-        run: bash scripts/aws_deploy.sh verify $FULL
+          FULL: ${{ steps.plan.outputs.serve == 'true' && '--expect-model' || '' }}
+        run: bash scripts/aws_deploy.sh verify ${FULL:+"$FULL"}
+
+      # Only when everything above passed: remember the commit of the stages that ran, so the next plan compares with it.
+      - name: Remember what this deploy did
+        if: success() && steps.plan.outputs.any == 'true'
+        timeout-minutes: 5
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          AWS_REGION: ${{ steps.target.outputs.region }}
+          STAGES: ${{ steps.plan.outputs.stages }}
+        run: bash scripts/aws_deploy.sh record-state
 
       # When anything above failed: the stack's failed events, then each service's state, stopped tasks and log tail.
       - name: Diagnose the failure
@@ -227,19 +305,25 @@ jobs:
 
       - name: What to do next
         if: always() && steps.target.outcome == 'success'
+        env:
+          RETRAINED: ${{ steps.plan.outputs.retrain }}
+          SERVED: ${{ steps.plan.outputs.serve }}
+          DRY: ${{ inputs.dry_run }}
+          STATUS: ${{ job.status }}
         run: |
           {
             echo "### Next"
-            if [ "${{ job.status }}" = success ]; then
-              if [ "${{ inputs.steps }}" = "full deploy" ]; then
-                echo "- Show it: run the **demo** workflow. When finished, run **power** with \`stop\` so nothing bills."
-              else
-                echo "- Run **pipeline** (real data), then **promote** and **approve**, then deploy again with \`full deploy\`."
-                echo "- First time on this account: copy PhysioNet to S3 once with the pipeline's prepare step."
-              fi
-            else
+            if [ "$STATUS" != success ]; then
               echo "- Read the **Diagnose the failure** step above. It lists the stack failures and why each ECS task stopped."
               echo "- A stack left in \`UPDATE_ROLLBACK_FAILED\` or \`DELETE_FAILED\` needs a person: see docs/ecs-runbook.md, section Deploy states."
               echo "- Fixed it? Run **deploy** again; it cancels any update an earlier run left running."
+            elif [ "$DRY" = true ]; then
+              echo "- That was a dry run. Run **deploy** again with dry_run unticked to do it."
+            elif [ "$RETRAINED" = true ]; then
+              echo "- Training is running. When the approval email arrives: **promote**, **approve**, then **deploy** again."
+            elif [ "$SERVED" = true ]; then
+              echo "- Show it: run the **demo** workflow. When finished, run **power** with \`stop\` so nothing bills."
+            else
+              echo "- Run **pipeline** status or **deploy** again when something changes. If the tools are on and you are done, run **power** with \`stop\`."
             fi
           } >> "$GITHUB_STEP_SUMMARY"

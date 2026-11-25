@@ -37,6 +37,11 @@ def command(environ) -> list[str]:
         "mlflow", "server", "--host", "0.0.0.0", "--port", environ.get("PORT", "5000"),
         "--artifacts-destination", artifacts, "--serve-artifacts",
         "--allowed-hosts", environ.get("MLFLOW_ALLOWED_HOSTS", "*"),
+        # The UI's list and search calls are POSTs that carry the page's own origin (http://<task ip>:5000). MLflow 3.17 refuses
+        # any origin that is not localhost with a 403, so the runs lists stayed empty ("Request error") while scripts, which send
+        # no origin, worked. The task's public address changes at every start and is not known to the task, so the default is
+        # any origin. The tools have no login by design (course project); set MLFLOW_CORS_ALLOWED_ORIGINS to narrow this.
+        "--cors-allowed-origins", environ.get("MLFLOW_CORS_ALLOWED_ORIGINS", "*"),
         "--workers", environ.get("MLFLOW_WORKERS", "2"),
     ]
 

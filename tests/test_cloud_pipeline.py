@@ -119,7 +119,7 @@ class StartScriptTests(unittest.TestCase):
 
 
 class FetchDataTests(unittest.TestCase):
-    def test_fetch_data_copies_s3_to_s3_and_checks_the_counts(self):
+    def test_fetch_data_downloads_anonymously_uploads_signed_and_checks_the_counts(self):
         with tempfile.TemporaryDirectory() as temp:
             temp = Path(temp)
             log = temp / "calls.log"
@@ -141,9 +141,16 @@ class FetchDataTests(unittest.TestCase):
                                     capture_output=True, text=True, cwd=ROOT)
             self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
             calls = log.read_text()
-            self.assertIn("s3 sync s3://physionet-open/challenge-2019/1.0.0/training/training_setA/ "
-                          "s3://my-artifact-bucket/raw/physionet/training/training_setA/ --source-region us-east-1", calls)
-            self.assertNotIn("no-sign-request", calls)  # our credentials write to our bucket
+            syncs = [line for line in calls.splitlines() if line.startswith("s3 sync")]
+            download = [line for line in syncs if "s3://physionet-open/challenge-2019/1.0.0/training/training_setA/" in line]
+            upload = [line for line in syncs if "s3://my-artifact-bucket/raw/physionet/training/training_setA/" in line]
+            self.assertEqual(len(download), 1)
+            self.assertEqual(len(upload), 1)
+            # The open-data bucket refused a signed listing (pipeline run 4): it is read anonymously, and our bucket is written
+            # with our credentials, so only the download may carry --no-sign-request.
+            self.assertIn("--no-sign-request", download[0])
+            self.assertNotIn("--no-sign-request", upload[0])
+            self.assertNotIn("s3://physionet-open", upload[0])
             self.assertIn("s3 cp - s3://my-artifact-bucket/raw/physionet/_SUCCESS", calls)   # the marker of a finished copy
             # Done once: with the marker present nothing is copied, unless FORCE=1.
             log.write_text("")
@@ -173,12 +180,12 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(workflow["permissions"]["id-token"], "write")
         names = [s.get("name", "") for s in workflow["jobs"]["pipeline"]["steps"]]
         self.assertLess(names.index("Build the images for this commit (skipped when they already exist)"),
-                        names.index("Run the pipeline and follow it"))
+                        names.index("Start the pipeline"))
         self.assertEqual(workflow["jobs"]["pipeline"]["environment"], "${{ inputs.environment }}")
         copy = next(step for step in workflow["jobs"]["pipeline"]["steps"] if step.get("name", "").startswith("Copy the PhysioNet data"))
         self.assertIn("physionet", copy["if"])
         self.assertIn("fetch-data", copy["run"])
-        self.assertLess(names.index(copy["name"]), names.index("Run the pipeline and follow it"))
+        self.assertLess(names.index(copy["name"]), names.index("Start the pipeline"))
 
 
 if __name__ == "__main__":

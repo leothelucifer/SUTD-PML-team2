@@ -128,7 +128,7 @@ for the commit, starts the Step Functions pipeline and follows it. Everything el
 | Approval | An email with a token and the report location. A reviewer who is not the trainer runs `aws_deploy.sh promote <version> "<name>"`, then `aws_deploy.sh approve <token>`. | |
 | Evaluate and publish | The one frozen evaluation of `@production`, then a write-once copy of the model. | `models/vN/` |
 
-Then run **deploy** with steps "full deploy" to serve it on Lambda, and **verify** with `expect_model` ticked.
+Then run **deploy** (mode `auto` serves it, or choose "full deploy") to serve it on Lambda, and **verify** with `expect_model` ticked.
 Rehearse with `synthetic` first (about $0.05–0.20 of SageMaker time); a real PhysioNet run costs more and its search
 takes longer. Start with a small `limit` (for example 2000 stays per hospital) to check the download. The
 approval email needs the `ALERT_EMAIL` subscription to be confirmed. From a shell the same run is

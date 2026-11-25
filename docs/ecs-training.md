@@ -18,7 +18,7 @@ MLflow, promotion, approval and monitoring are unchanged.
 
 `infra/params/dev.json` already sets `TrainingBackend` to `ecs`. For another environment, set the
 parameter in its params file, or for one run `TRAINING_BACKEND=ecs bash scripts/aws_deploy.sh stack`.
-Then run the **deploy** workflow ("stack and images only") and the **pipeline** workflow as usual. The
+Then run the **deploy** workflow (mode `auto`, or "stack and images only") and the **pipeline** workflow as usual. The
 pipeline workflow's `instance_type` input is ignored by this backend; the task size comes from
 `EcsTrainingCpu` and `EcsTrainingMemory` (default 4 vCPU, 16 GB).
 
@@ -33,7 +33,7 @@ aws service-quotas list-service-quotas --service-code fargate --region ap-southe
 
 The default quota in a new account is **6 vCPU per Region for On-Demand and 6 for Spot** ([ECS quotas](https://docs.aws.amazon.com/general/latest/gr/ecs-service.html)). A training task needs the vCPU you set in `EcsTrainingCpu` (4 by default), and the MLflow server (0.5) and the Evidently UI (0.5) run at the same time, so 5 are needed. Memory must be a valid pair for the CPU value ([task sizes](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task_definition_parameters.html)); the deploy refuses an invalid pair. If the value is lower, either
 request an increase in Service Quotas or choose a smaller task (`EcsTrainingCpu=2048`, `EcsTrainingMemory=8192`).
-Fargate Spot has its own quota: set `EcsUseSpot=false` to use on-demand capacity only.
+Fargate Spot has its own quota: set `EcsUseSpot=false` to use on-demand capacity only. `EcsUseSpot` is `true` in every parameter file, so the tune and train steps (the long ones) already run on Spot; the short prepare and evaluate steps and the MLflow and Evidently services stay on demand.
 
 ## What a run costs (estimate)
 

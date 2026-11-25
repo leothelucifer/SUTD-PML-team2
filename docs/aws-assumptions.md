@@ -59,8 +59,18 @@ the real response shape. The IAM actions in the templates were looked up in the 
 - RDS PostgreSQL 17.9 reaches the end of standard support sooner than 17.11: pinned to 17.11.
 - The memory default (16384) is invalid for 1024 or 2048 CPU units: rule added in `root.yaml`.
 
+## Found by the first real runs (deploy and pipeline runs 29 to 8), then fixed
+
+- MLflow crashed at start with `No module named 'psycopg'`: with SQLAlchemy 2.1 a plain `postgresql://` URL means psycopg 3, the image installs psycopg2. The URL now names `postgresql+psycopg2`.
+- The MLflow UI's run lists stayed empty (`Request error`): MLflow 3.17 answers 403 to any browser origin that is not localhost on its POST search calls. `--allowed-hosts` only covers the Host header. The server now passes `--cors-allowed-origins` (default `*`, narrow it with `MLFLOW_CORS_ALLOWED_ORIGINS`). Scripts send no origin, so they were never blocked.
+- The open-data PhysioNet bucket refused a signed listing from the deploy role but answers anonymous requests: the copy reads anonymously and writes with the role.
+- The GitHub job's AWS login lasts one hour, shorter than a training run: the pipeline workflow starts the run and ends.
+
+## Confirmed by running it
+
+The Cloud Map name `mlflow.<env>.local` resolves from a training task, MLflow runs against RDS, and a real-data run (40,336 stays) trained, registered, was promoted by the approver role and passed the frozen evaluation. Still not confirmed: the Lambda serving and `power start` with an `allow_cidr` beyond the first manual use.
+
 ## Not yet confirmed by running it
 
-None of this has run in an AWS account yet. The first execution should be watched for: the shape and exit-code behaviour of
-`runTask.sync` (above), MLflow starting against RDS, the Cloud Map name resolving from a training task, and the first
-`power start` with an `allow_cidr`.
+The Lambda serving path after a full deploy, the change-based deploy plan against a real state file, and the Evidently report on a
+real prediction log. The first execution of each should be watched.

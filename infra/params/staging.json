@@ -1,9 +1,17 @@
 {
-  "_comment": "Parameters for the staging stack (sepsis-staging). Use a separate AWS account per environment. Budget and alert emails come from BUDGET_EMAIL / ALERT_EMAIL.",
+  "_comment": "Parameters for the staging stack (sepsis-staging). Use a separate AWS account per environment. Budget and alert emails come from BUDGET_EMAIL / ALERT_EMAIL. Runs on ECS (no SageMaker quota needed): TrainingBackend=ecs, MlflowBackend=ecs, EnableSageMaker=false. EcsUseSpot=true runs the long tune and train steps on Fargate Spot (the short prepare and evaluate steps and the MLflow and Evidently services stay on demand); set it to false for on-demand capacity only. EnableSageMaker=true with TrainingBackend and MlflowBackend=sagemaker brings the SageMaker architecture back once the quota is approved.",
   "EnvironmentName": "sepsis-staging",
   "DeploymentType": "Canary10Percent5Minutes",
   "MonthlyBudgetUsd": "30",
   "TrainingOutputRetentionDays": "90",
   "EnablePipeline": "true",
-  "EnableObservability": "true"
+  "EnableObservability": "true",
+  "TrainingBackend": "ecs",
+  "EcsTrainingCpu": "4096",
+  "EcsTrainingMemory": "16384",
+  "EcsUseSpot": "true",
+  "MlflowBackend": "ecs",
+  "EnableSageMakerMlflowApp": "false",
+  "EnableEvidently": "true",
+  "EnableSageMaker": "false"
 }

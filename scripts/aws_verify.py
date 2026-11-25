@@ -18,6 +18,7 @@ import argparse
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -382,6 +383,9 @@ def check_outputs(result: Result, outputs: dict, expect_model: bool) -> None:
         result.add("FAIL", "scoring API URL", "no ApiBaseUrl output: run the full deploy (publish and serve)")
 
 
+LIVE_ALIAS = "live"   # AutoPublishAlias in infra/cloudformation/serverless.yaml
+
+
 def check_function(result: Result, lambda_client, items: list[dict], outputs: dict, expect_model: bool, signed_call=None) -> None:
     functions = of_type(items, "AWS::Lambda::Function")
     scoring = [f for f in functions if "scoring" in f["physical"] or "scoring" in f["logical"].lower()]
@@ -392,7 +396,9 @@ def check_function(result: Result, lambda_client, items: list[dict], outputs: di
     for function in scoring:
         def check(function=function):
             config = lambda_client.get_function_configuration(FunctionName=function["physical"])
-            url = lambda_client.get_function_url_config(FunctionName=function["physical"])
+            # The URL belongs to the "live" alias (serverless.yaml: AutoPublishAlias + FunctionUrlConfig), not to the unqualified
+            # function, so asking for the function alone answers ResourceNotFoundException (the first real full deploy, run 31).
+            url = lambda_client.get_function_url_config(FunctionName=function["physical"], Qualifier=LIVE_ALIAS)
             ok = config.get("State") == "Active" and url.get("AuthType") == "AWS_IAM"
             result.add("PASS" if ok else "FAIL", f"Lambda {function['physical']}",
                        f"{config.get('State')}, {config.get('PackageType')}, URL auth {url.get('AuthType')}")
@@ -408,21 +414,38 @@ def check_function(result: Result, lambda_client, items: list[dict], outputs: di
         guarded(result, "API /health (signed call)", call)
 
 
-def signed_health(session, region: str):
-    """A SigV4-signed GET, the same way a hospital integration would call the function URL."""
+RETRY_STATUS = (502, 503, 504)   # a Lambda that is still starting (cold start), or timed out loading the model
+
+
+def signed_health(session, region: str, *, retries: int = 3, wait: float = 20, sleep=time.sleep, opener=urllib.request.urlopen):
+    """A SigV4-signed GET, the same way a hospital integration would call the function URL.
+
+    The first request after a deploy starts a new container image and loads the model: in the first full deploy (run 31) it took
+    longer than the 30 s function timeout and answered 502, and the next request was fine. So 502, 503, 504 and timeouts are tried
+    again ``retries`` more times, ``wait`` seconds apart; any other answer (403, 404) is final.
+    """
     from botocore.auth import SigV4Auth
     from botocore.awsrequest import AWSRequest
 
     def call(url: str) -> dict:
-        credentials = session.get_credentials()
-        request = AWSRequest(method="GET", url=url, headers={})
-        SigV4Auth(credentials, "lambda", region).add_auth(request)
-        prepared = urllib.request.Request(url, headers=dict(request.headers))
-        try:
-            with urllib.request.urlopen(prepared, timeout=30) as response:
-                return json.loads(response.read())
-        except urllib.error.HTTPError as error:
-            raise RuntimeError(f"HTTP {error.code}") from error
+        last = "no answer"
+        for attempt in range(retries + 1):
+            credentials = session.get_credentials()
+            request = AWSRequest(method="GET", url=url, headers={})
+            SigV4Auth(credentials, "lambda", region).add_auth(request)
+            prepared = urllib.request.Request(url, headers=dict(request.headers))
+            try:
+                with opener(prepared, timeout=30) as response:
+                    return json.loads(response.read())
+            except urllib.error.HTTPError as error:
+                if error.code not in RETRY_STATUS:
+                    raise RuntimeError(f"HTTP {error.code}") from error
+                last = f"HTTP {error.code}"
+            except (urllib.error.URLError, TimeoutError, OSError) as error:
+                last = f"{type(error).__name__}"
+            if attempt < retries:
+                sleep(wait)
+        raise RuntimeError(f"{last} after {retries + 1} tries")
 
     return call
 
