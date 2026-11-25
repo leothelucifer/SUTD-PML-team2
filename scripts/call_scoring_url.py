@@ -17,9 +17,12 @@ import argparse
 import hashlib
 import json
 import sys
+import time
 import urllib.error
 import urllib.request
 from urllib.parse import urlparse
+
+RETRY_STATUS = (502, 503, 504)
 
 
 def signed_request(url: str, method: str, body: str | None, region: str | None, credentials=None):
@@ -50,19 +53,33 @@ def main(argv=None) -> int:
     parser.add_argument("method", choices=["GET", "POST"])
     parser.add_argument("path", help="/health, /model, /score or /predict")
     parser.add_argument("body", nargs="?", default=None, help="JSON body for POST")
+    parser.add_argument("--retries", type=int, default=0,
+                        help="GET only: try again this many times on 502, 503, 504 or a timeout (the first request after a deploy "
+                             "loads the model and can exceed the function timeout). A POST is never repeated")
+    parser.add_argument("--retry-wait", type=float, default=20, help="seconds between tries")
     args = parser.parse_args(argv)
     if args.body is not None:
         json.loads(args.body)  # fail early on malformed JSON
     url = args.url.rstrip("/") + args.path
-    prepared = signed_request(url, args.method, args.body, args.region)
-    request = urllib.request.Request(url, data=prepared.body, method=args.method, headers=dict(prepared.headers))
-    try:
-        with urllib.request.urlopen(request, timeout=60) as response:
-            print(json.dumps(json.loads(response.read()), indent=2))
-            return 0
-    except urllib.error.HTTPError as error:
-        print(f"HTTP {error.code}: {error.read().decode(errors='replace')}", file=sys.stderr)
-        return 1
+    tries = args.retries + 1 if args.method == "GET" else 1
+    for attempt in range(tries):
+        prepared = signed_request(url, args.method, args.body, args.region)
+        request = urllib.request.Request(url, data=prepared.body, method=args.method, headers=dict(prepared.headers))
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:
+                print(json.dumps(json.loads(response.read()), indent=2))
+                return 0
+        except urllib.error.HTTPError as error:
+            print(f"HTTP {error.code}: {error.read().decode(errors='replace')}", file=sys.stderr)
+            if error.code not in RETRY_STATUS or attempt == tries - 1:
+                return 1
+        except (urllib.error.URLError, TimeoutError, OSError) as error:
+            print(f"{type(error).__name__}: {error}", file=sys.stderr)
+            if attempt == tries - 1:
+                return 1
+        print(f"trying again in {args.retry_wait:g} s ({attempt + 2} of {tries})", file=sys.stderr)
+        time.sleep(args.retry_wait)
+    return 1
 
 
 if __name__ == "__main__":
