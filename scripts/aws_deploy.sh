@@ -387,10 +387,15 @@ cmd_fetch_data() {
     echo "The PhysioNet copy in s3://$bucket/raw/physionet/ is already complete (marker _SUCCESS); nothing to do. FORCE=1 copies again."
     return 0
   fi
+  # The open-data bucket answers anonymous requests, but it refused a signed listing from this account (AccessDenied, pipeline
+  # run 4), so the files come down anonymously to a scratch folder and go up with our own credentials, one hospital at a time.
+  local stage; stage="$(mktemp -d)"
+  trap 'rm -rf "$stage"' RETURN
   for set in A B; do
     echo "Copying $source/training_set$set/ to s3://$bucket/raw/physionet/training/training_set$set/"
-    aws s3 sync "$source/training_set$set/" "s3://$bucket/raw/physionet/training/training_set$set/" \
-      --source-region us-east-1 --region "$AWS_REGION" --only-show-errors
+    aws s3 sync "$source/training_set$set/" "$stage/training_set$set/" --no-sign-request --region us-east-1 --only-show-errors
+    aws s3 sync "$stage/training_set$set/" "s3://$bucket/raw/physionet/training/training_set$set/" --region "$AWS_REGION" --only-show-errors
+    rm -rf "${stage:?}/training_set$set"
     count="$(aws s3 ls "s3://$bucket/raw/physionet/training/training_set$set/" --recursive --summarize | awk '/Total Objects/ {print $3}')"
     local expected=20336; [ "$set" = B ] && expected=20000
     echo "training_set$set: $count records (expected $expected)"
