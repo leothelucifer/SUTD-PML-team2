@@ -410,6 +410,7 @@ average precision is sklearn's metric, not a claim of official leaderboard AUPRC
 
 ## Design and presentation
 
+- [Run order](docs/RUN-ORDER.md): what to click in GitHub Actions, in which order, for a new environment or a new model. One page.
 - [Design page](docs/design/sepsis-warning-pipeline.html): data split, training, model selection, alert policy, ICU call contract, AWS deployment and MLOps loop. Open it in a browser.
 - [Final presentation](docs/presentation/sepsis-early-warning.pptx): 22 slides with speaker notes. Source, assets and rebuild steps are in [docs/presentation](docs/presentation/README.md).
 - [Monitoring plan](docs/monitoring-plan.md) (M02): two-speed checks, reference data, thresholds, owners and runbook.

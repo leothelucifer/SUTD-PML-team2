@@ -12,5 +12,6 @@
   "MlflowBackend": "ecs",
   "EnableSageMakerMlflowApp": "false",
   "EnableEvidently": "true",
-  "EnableSageMaker": "false"
+  "EnableSageMaker": "false",
+  "EcsUseSpot": "true"
 }
