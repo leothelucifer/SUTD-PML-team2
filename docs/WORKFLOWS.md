@@ -71,10 +71,13 @@ stopped tasks. A run that finishes green records its state in S3.
 | **approve** | `decision = approve` | Releases the waiting run: the one frozen evaluation (hospital A test and hospital B, once), then the publish to `models/vN/` with `registry.json` |
 | | `decision = reject` | Ends the run and sends a failure notice; `reason` is stored |
 | | `execution` | The run id from the email. Empty = the only run waiting; several waiting gives an error |
-| **demo** | `split = validation` | Replays hospital A validation stays through the live API. Safe before the freeze |
+| **demo** | `mode = ward` (default) | The replay page: a few stays in beds, scored hour by hour through the live API, written to the private bucket `reports/demo/<time>/`. **At most 24 beds** (a limit in `ward.py` for a readable page) and always the same seeded mix. Each stay is one request, so one prediction-log row |
+| | `mode = traffic` | Sends many different stays through `/score` and makes **no page**: only the service's own prediction log grows. Use it to give **monitor** the 200 or more requests it needs |
+| | `split = validation` | Hospital A validation stays. Safe before the freeze |
 | | `split = internal_test` or `external_test` | Hospital A test or hospital B. **Refused** unless the served model has a recorded frozen evaluation |
-| | `beds` | How many stays are on the ward |
-| | (all) | Writes the ward page to the private bucket `reports/demo/<time>/`; never to the repository or a workflow artifact. Also fills the prediction log that Evidently reads |
+| | `beds` | ward only: how many stays are on the ward (1 to 24) |
+| | `stays` | traffic only: how many different stays to send (default 300) |
+| | `seed` | Which random stays. Another number picks others; the same number repeats the same ones |
 
 ## 5. Tools, monitoring, checking
 

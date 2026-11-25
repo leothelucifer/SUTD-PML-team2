@@ -21,7 +21,7 @@ first real run). The one rule: **deploy → pipeline → promote → approve →
 | 4 | **promote** | `model_version = 1` (digits only) | Records the reviewer and moves `@production` | It succeeds |
 | 5 | **approve** | `decision = approve` | Runs the one frozen evaluation and publishes the model | **pipeline** `status` says `SUCCEEDED` |
 | 6 | **deploy** | `mode = auto`, `retrain = no` | Serves the model, smoke test, verify, records the state | Green |
-| 7 | **demo**, then **monitor** | `split = validation`; `reference`, then `report` | Real stays through the live API, then the drift report | The Evidently UI shows the project |
+| 7 | **demo**, then **monitor** | `mode = ward`, `split = validation`; then `mode = traffic`, `stays = 300`; then **monitor** `reference`, then `report` | The ward page shows alerts; the traffic run gives the 200 or more requests the drift report needs | The Evidently UI shows the project |
 | 8 | **collect-results** | `dry_run` first, then unticked | Pulls the aggregate results from S3 and opens a pull request for the report | The pull request exists; merge it after looking at the figures |
 | 9 | **power** | `action = stop` | Stops everything that bills | `status` shows only storage |
 
