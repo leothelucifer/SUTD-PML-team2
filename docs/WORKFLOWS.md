@@ -1,6 +1,6 @@
 # Workflows: what each option does
 
-Ten workflows, one page. **Automatic** ones start by themselves; every other workflow is started by hand
+Eleven workflows, one page. **Automatic** ones start by themselves; every other workflow is started by hand
 (**Actions → the workflow → Run workflow**), and the automatic ones also have a Run workflow button. For the click order see
 [RUN-ORDER.md](RUN-ORDER.md); for what CI runs see [cicd.md](cicd.md).
 
