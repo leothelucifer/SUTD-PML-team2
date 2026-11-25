@@ -181,8 +181,9 @@ class VerifyTests(unittest.TestCase):
         deploy = yaml.safe_load((ROOT / ".github" / "workflows" / "deploy.yml").read_text(encoding="utf-8"))
         names = [step.get("name") for step in deploy["jobs"]["deploy"]["steps"]]
         self.assertIn("Verify every deployed component", names)
-        # Only the failure diagnosis and the summary of next steps may come after the verification.
-        self.assertEqual(names[names.index("Verify every deployed component") + 1:], ["Diagnose the failure", "What to do next"])
+        # Only the state record, the failure diagnosis and the summary of next steps may come after the verification.
+        self.assertEqual(names[names.index("Verify every deployed component") + 1:],
+                         ["Remember what this deploy did", "Diagnose the failure", "What to do next"])
 
 
 if __name__ == "__main__":

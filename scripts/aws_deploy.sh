@@ -3,6 +3,9 @@
 #
 #   bash scripts/aws_deploy.sh validate              check every template with CloudFormation and preview the stack (creates nothing)
 #   bash scripts/aws_deploy.sh verify [--expect-model]  check that every deployed component exists and is healthy (read-only)
+#   bash scripts/aws_deploy.sh plan                  decide the deploy stages from what changed (MODE, RETRAIN, DRY_RUN)
+#   bash scripts/aws_deploy.sh retrain               start a real-data training run (copy data once, MLflow on, pipeline, not followed)
+#   bash scripts/aws_deploy.sh record-state          remember which stages ran for this commit (STAGES=stack,serve,...)
 #   bash scripts/aws_deploy.sh ready                 wait until the hosted tools (MLflow, Evidently UI) are running and healthy
 #   bash scripts/aws_deploy.sh diagnose              print why a deploy failed: stack events, then each service's stopped tasks and their logs
 #   bash scripts/aws_deploy.sh stack                 create/update the stack (storage, MLflow App, roles, budget)
@@ -428,6 +431,31 @@ cmd_promote() {
 
 # publish: with the SageMaker MLflow App, copy the promoted version to S3 from here. With MLflow on ECS the registry is
 # private and the pipeline's last step already published the approved model, so read that from S3 instead.
+# ---- change-based deploy (see scripts/deploy_plan.py and docs/cicd.md)
+
+# plan: decide the stages from what changed since each stage last ran. MODE (auto | "stack and images only" | "full deploy"),
+# RETRAIN (auto | yes | no) and DRY_RUN=true are the manual options. Writes stage=true|false lines to GITHUB_OUTPUT.
+cmd_plan() {
+  local dry=(); [ "${DRY_RUN:-}" = true ] && dry=(--dry-run)
+  "$PYTHON" "$ROOT/scripts/deploy_plan.py" plan --stack "$STACK" --region "$AWS_REGION" \
+    --head "${GITHUB_SHA:-$(git -C "$ROOT" rev-parse HEAD)}" --mode "${MODE:-auto}" --retrain "${RETRAIN:-auto}" "${dry[@]}"
+}
+
+# record-state: after everything passed, remember the commit of the stages that ran (STAGES=stack,retrain,serve).
+cmd_record_state() {
+  "$PYTHON" "$ROOT/scripts/deploy_plan.py" record --stack "$STACK" --region "$AWS_REGION" \
+    --head "${GITHUB_SHA:-$(git -C "$ROOT" rev-parse HEAD)}" --stages "${STAGES:-}" \
+    --by "${GITHUB_ACTOR:-unknown}" --run "${GITHUB_RUN_ID:-}"
+}
+
+# retrain: start a real-data training run from the deploy. The PhysioNet copy is made once (a marker), MLflow is switched on if
+# it is off, and the pipeline is started and not followed: it ends at your approval (promote, then approve, then deploy again).
+cmd_retrain() {
+  cmd_fetch_data
+  cmd_power require-on --component mlflow || cmd_power start --component mlflow
+  DATA_SOURCE=physionet PREPARE=true LIMIT=0 TRIALS="${TRIALS:-6}" WAIT=0 cmd_pipeline
+}
+
 # Before a full deploy spends ten minutes on images: is there a published, approved model to serve?
 # Fails at once, with what to do, when the stack is not there yet or the pipeline has not published anything.
 cmd_check_model() {
@@ -503,8 +531,11 @@ cmd_pipeline() {
   local instance_type="${INSTANCE_TYPE:-ml.m5.large}"
   case "$instance_type" in ml.*) ;; *) fail "INSTANCE_TYPE must be a SageMaker instance type" ;; esac
   local input
-  input="$(printf '{"image_tag": "training-%s", "git_commit": "%s", "require_real_data": "%s", "prepare": "%s", "data_source": "%s", "limit": "%s", "trials": "%s", "instance_type": "%s"}' \
-    "$TAG" "$(git -C "$ROOT" rev-parse HEAD)" "$real" "$prepare" "$source" "$limit" "$trials" "$instance_type")"
+  # FORCE_PREPARE=true prepares the data again even though the stored data has the same settings: the skip only compares the
+  # source, the limit and the seed, so a change to the preparation code needs this.
+  local force=false; [ "${FORCE_PREPARE:-}" = true ] && force=true
+  input="$(printf '{"image_tag": "training-%s", "git_commit": "%s", "require_real_data": "%s", "prepare": "%s", "data_source": "%s", "limit": "%s", "trials": "%s", "instance_type": "%s", "force": "%s"}' \
+    "$TAG" "$(git -C "$ROOT" rev-parse HEAD)" "$real" "$prepare" "$source" "$limit" "$trials" "$instance_type" "$force")"
   local execution
   execution="$(aws stepfunctions start-execution --state-machine-arn "$arn" --query executionArn --output text --input "$input")"
   echo "$execution"
@@ -642,6 +673,9 @@ case "${1:-}" in
   mlflow-ui) cmd_mlflow_ui ;;
   promote) shift; cmd_promote "$@" ;;
   check-model) cmd_check_model ;;
+  plan) cmd_plan ;;
+  record-state) cmd_record_state ;;
+  retrain) cmd_retrain ;;
   publish) cmd_publish ;;
   serve) cmd_serve ;;
   call) shift; cmd_call "$@" ;;
@@ -658,5 +692,5 @@ case "${1:-}" in
   down) cmd_down ;;
   github-oidc) shift; cmd_github_oidc "$@" ;;
   destroy) cmd_destroy ;;
-  *) sed -n '2,38p' "$0"; exit 2 ;;
+  *) sed -n '2,41p' "$0"; exit 2 ;;
 esac

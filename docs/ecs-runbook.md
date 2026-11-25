@@ -13,7 +13,7 @@ approval, serving and monitoring are containers; what bills while idle can be sw
 | MLflow server and registry | Fargate service + RDS PostgreSQL | **yes** | the **power** workflow |
 | Evidently UI | Fargate service | **yes** | the **power** workflow |
 | Evidently drift report | one-off Fargate task | no | the **monitor** workflow |
-| Scoring endpoint | Lambda container, IAM-signed function URL | no | **deploy** ("full deploy") |
+| Scoring endpoint | Lambda container, IAM-signed function URL | no | **deploy** (mode `auto` or "full deploy") |
 | Predict demo | runs from GitHub against the endpoint | no | the **demo** workflow |
 
 **No SageMaker access needed.** `infra/params/dev.json` has `EnableSageMaker=false`: the stack then creates no SageMaker
@@ -29,7 +29,7 @@ SageMaker MLflow App again), `EnableEvidently`.
 
 ## One-time setup
 
-1. **Deploy** workflow, steps "stack and images only". It runs the stack update twice on purpose: the second run creates
+1. **Deploy** workflow, mode "stack and images only" (or `auto`, which does the same on a new account). It runs the stack update twice on purpose: the second run creates
    the MLflow and Evidently services once their image exists.
 2. Check the quotas with **verify** (Fargate vCPU; see [ecs-training.md](ecs-training.md)).
 3. The PhysioNet data is copied once with `aws_deploy.sh fetch-data` (the **pipeline** workflow does it when you pick
@@ -45,7 +45,7 @@ SageMaker MLflow App again), `EnableEvidently`.
 | 3 | Review | open the MLflow URL and `s3://<bucket>/reports/<run>/` | metrics table, PR curves, figures |
 | 4 | Promote | **promote** with the model version | Runs as the approver role; the GitHub user is recorded as reviewer |
 | 5 | Approve | **approve** | Then the one frozen evaluation and the publish run |
-| 6 | Serve | **deploy**, steps "full deploy" | Canary on Lambda. It deploys the newest model the pipeline published to S3 (`MODEL_VERSION` picks another); a real-data model without a recorded approval and frozen evaluation is refused |
+| 6 | Serve | **deploy**, mode "full deploy" (or mode `auto`: it serves a newer approved model by itself) | Canary on Lambda. It deploys the newest model the pipeline published to S3 (`MODEL_VERSION` picks another); a real-data model without a recorded approval and frozen evaluation is refused |
 | 7 | Predict | **demo**, `split = validation` | Replays stays through the live endpoint; the page goes to the private bucket |
 | 8 | Monitor | **monitor** `reference` once, then `report` | Reference from hospital A validation; report from the prediction log |
 | 9 | Stop | **power** stop, component `all` | Closes browser access, stops the services and the database |
