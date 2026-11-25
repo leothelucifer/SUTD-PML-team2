@@ -25,7 +25,8 @@ class DeployWorkflowTests(unittest.TestCase):
         steps = self.inputs["steps"]
         self.assertEqual(steps["default"], "stack and images only")
         gated = [s["name"] for s in self.workflow["jobs"]["deploy"]["steps"] if s.get("if") == "inputs.steps == 'full deploy'"]
-        self.assertEqual(gated, ["Publish the promoted model and serve it", "Smoke test the deployed API"])
+        self.assertEqual(gated, ["Check that a model is ready to deploy (full deploy only)", "Publish the promoted model and serve it",
+                                 "Smoke test the deployed API"])
 
     def test_verify_is_not_run_as_a_second_failure_after_publish_fails(self):
         steps = {step["name"]: step for step in self.workflow["jobs"]["deploy"]["steps"] if "name" in step}

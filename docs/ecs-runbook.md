@@ -107,3 +107,47 @@ update fails with a reason instead of waiting. The failure list shows only the l
 | Task cannot start | Fargate vCPU quota (**verify**; the default is 6 vCPU, the tools and a training task need 5), or lower `EcsTrainingCpu` |
 
 What was checked against AWS documentation, and what still has to be watched on the first run, is in [aws-assumptions.md](aws-assumptions.md).
+
+## Deploy: order, gates and recovery
+
+The deploy workflow is a fixed sequence. Each step has a timeout, and a gate stops the run at the first step that fails, with the reason in the log.
+
+| # | Step | What it guarantees | If it fails |
+|---|------|--------------------|-------------|
+| 1 | Validate and preview | Every template is valid and the change set builds. Nothing is created. | The message names the template or resource. Before the preview, an update left running by an earlier run is cancelled and waited for. |
+| 2 | Check that a model is ready (full deploy only) | A published, approved model exists. Fails in seconds instead of after the image build. | Run the pipeline, then promote and approve. |
+| 3 | Stack and images | stack (creates ECR repositories, no services yet) → images (built in parallel, cached) → stack (creates MLflow and Evidently with their image). A watcher prints why any ECS task stops and cancels the update if a service crash-loops. | The log shows the stopped reason and the last log lines of the container, then the stack failure events. |
+| 4 | Wait for the hosted tools | MLflow and Evidently UI have all tasks running and healthy. A service switched off by the power workflow is skipped. | The same diagnosis, after 20 minutes at most. |
+| 5 | Publish and serve (full deploy only) | The approved model is on Lambda behind the API. | See the publish log. |
+| 6 | Smoke test, verify | `/health` and `/predict` answer. Every component exists and is healthy. | The verify table marks each failure. |
+| 7 | Diagnose, next steps (always) | On failure: stack events, service states, stopped tasks with logs. A "what to do next" list goes into the run summary. | |
+
+### Stack states and what the deploy does
+
+A cancelled workflow does not stop CloudFormation, so a new run can find the stack mid-operation. Every state is handled before the preview:
+
+| Stack state | The deploy |
+|---|---|
+| none, `CREATE_COMPLETE`, `UPDATE_COMPLETE`, `UPDATE_ROLLBACK_COMPLETE` | goes ahead (a rolled-back update is back to its last good state) |
+| `UPDATE_IN_PROGRESS` | cancels that update, waits for the rollback, then goes ahead |
+| `UPDATE_ROLLBACK_IN_PROGRESS`, `…CLEANUP_IN_PROGRESS` | waits |
+| `CREATE_IN_PROGRESS`, `ROLLBACK_IN_PROGRESS`, `DELETE_IN_PROGRESS` | waits (a create cannot be cancelled) |
+| `ROLLBACK_COMPLETE` (a first create failed) | deletes the empty stack, then creates it again |
+| `UPDATE_ROLLBACK_FAILED` | stops. In the CloudFormation console choose **Continue update rollback**, then run deploy again. |
+| `ROLLBACK_FAILED`, `DELETE_FAILED` | stops. Run the teardown workflow, which removes what blocks the delete, then deploy again. |
+
+If the deploy job itself is cancelled while an update runs, it cancels the update before it exits, so nothing is left running unattended.
+
+### Failure scenarios
+
+| Symptom | Cause | What happens / what to do |
+|---|---|---|
+| Container stops at start (missing module, wrong setting) | image or settings wrong | The watcher prints the stopped reason and the log within about two minutes. After three stopped tasks with none running it cancels the update; deploy fails with that output. Fix, merge, run deploy. |
+| Service never becomes healthy but does not crash | health check fails | The gate (step 4) times out and shows the stopped tasks and the service events. |
+| `no approved published model` | full deploy before the pipeline | Step 2 stops the run. |
+| Stack missing on a full deploy | first deploy in the account | Step 2 says to run **stack and images only** first. |
+| Image already in ECR for this commit | re-run of the same commit | The image is reused, not rebuilt. |
+| Two deploys at once | both started | The workflow's concurrency group queues the second; it never cancels a running deploy. |
+| Billable services left on | demo finished | Run the **power** workflow with `stop`. |
+
+Commands for a person with a shell: `bash scripts/aws_deploy.sh ready` (the gate), `bash scripts/aws_deploy.sh diagnose` (stack failures, then services and stopped tasks).

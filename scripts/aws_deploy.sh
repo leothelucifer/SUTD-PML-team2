@@ -3,6 +3,8 @@
 #
 #   bash scripts/aws_deploy.sh validate              check every template with CloudFormation and preview the stack (creates nothing)
 #   bash scripts/aws_deploy.sh verify [--expect-model]  check that every deployed component exists and is healthy (read-only)
+#   bash scripts/aws_deploy.sh ready                 wait until the hosted tools (MLflow, Evidently UI) are running and healthy
+#   bash scripts/aws_deploy.sh diagnose              print why a deploy failed: stack events, then each service's stopped tasks and their logs
 #   bash scripts/aws_deploy.sh stack                 create/update the stack (storage, MLflow App, roles, budget)
 #   bash scripts/aws_deploy.sh images                build and push the lambda, training and scoring images
 #   bash scripts/aws_deploy.sh fetch-data            copy PhysioNet Challenge 2019 from the open-data S3 bucket into ours (server-side copy)
@@ -126,8 +128,58 @@ ensure_service_linked_role() {  # ensure_service_linked_role SERVICE ROLE-NAME
   fail "could not verify $2. Ask an administrator to run: aws iam create-service-linked-role --aws-service-name $1"
 }
 
+# What state may the stack be in when a deploy starts? A cancelled workflow does not stop CloudFormation, so an earlier run's
+# operation can still be going (deploy run 29 failed at the preview because of this). Every state is handled here:
+#   none / *_COMPLETE (not a rollback) ..... go ahead
+#   UPDATE_IN_PROGRESS ..................... cancel it, wait for the rollback
+#   UPDATE_ROLLBACK_IN_PROGRESS / CLEANUP .. wait
+#   CREATE_IN_PROGRESS / ROLLBACK_IN_PROGRESS / DELETE_IN_PROGRESS ... wait (these cannot be cancelled)
+#   UPDATE_ROLLBACK_COMPLETE ............... fine, the stack is back to its last good state and can be updated
+#   ROLLBACK_COMPLETE ...................... a first create failed; cmd_stack deletes the empty stack
+#   UPDATE_ROLLBACK_FAILED / ROLLBACK_FAILED / DELETE_FAILED ... a person must act; the message says how
+settle_stack() {
+  local status
+  status="$(aws cloudformation describe-stacks --stack-name "$STACK" --query 'Stacks[0].StackStatus' --output text 2>/dev/null || true)"
+  case "$status" in
+    UPDATE_IN_PROGRESS)
+      echo "Stack $STACK is still updating from an earlier run; cancelling that update so this one can start"
+      aws cloudformation cancel-update-stack --stack-name "$STACK" || true
+      status=UPDATE_ROLLBACK_IN_PROGRESS ;;
+  esac
+  case "$status" in
+    UPDATE_ROLLBACK_IN_PROGRESS|UPDATE_ROLLBACK_CLEANUP_IN_PROGRESS|UPDATE_COMPLETE_CLEANUP_IN_PROGRESS)
+      echo "Waiting for $STACK to finish its earlier operation ($status)"
+      aws cloudformation wait stack-update-complete --stack-name "$STACK" 2>/dev/null || true
+      aws cloudformation wait stack-rollback-complete --stack-name "$STACK" 2>/dev/null || true ;;
+    CREATE_IN_PROGRESS|ROLLBACK_IN_PROGRESS)
+      echo "Waiting for $STACK to finish its earlier operation ($status); a create cannot be cancelled"
+      aws cloudformation wait stack-create-complete --stack-name "$STACK" 2>/dev/null || true
+      aws cloudformation wait stack-rollback-complete --stack-name "$STACK" 2>/dev/null || true ;;
+    DELETE_IN_PROGRESS)
+      echo "Waiting for $STACK to finish deleting"
+      aws cloudformation wait stack-delete-complete --stack-name "$STACK" 2>/dev/null || true ;;
+  esac
+  status="$(aws cloudformation describe-stacks --stack-name "$STACK" --query 'Stacks[0].StackStatus' --output text 2>/dev/null || true)"
+  case "$status" in
+    *_IN_PROGRESS) fail "stack $STACK is still $status; wait for it to finish (or cancel it in the CloudFormation console) and run again" ;;
+    UPDATE_ROLLBACK_FAILED) fail "stack $STACK is UPDATE_ROLLBACK_FAILED; in the CloudFormation console choose Continue update rollback, then run again" ;;
+    ROLLBACK_FAILED|DELETE_FAILED) fail "stack $STACK is $status; run the teardown workflow (it removes what blocks the delete), then deploy again" ;;
+  esac
+}
+
+# If this job is cancelled while the update runs, undo the update instead of leaving it running unattended.
+cancel_running_update() {
+  local status
+  status="$(aws cloudformation describe-stacks --stack-name "$STACK" --query 'Stacks[0].StackStatus' --output text 2>/dev/null || true)"
+  if [ "$status" = UPDATE_IN_PROGRESS ]; then
+    echo "Deploy interrupted: cancelling the running update of $STACK"
+    aws cloudformation cancel-update-stack --stack-name "$STACK" || true
+  fi
+}
+
 cmd_stack() {
   local extra=("$@")
+  settle_stack
   # A first create that failed leaves the stack in ROLLBACK_COMPLETE, which cannot be updated. It holds no
   # resources, so delete it and start again.
   local status
@@ -183,9 +235,24 @@ for key, value in json.load(open(sys.argv[1])).items():
     params+=("BudgetEmail=$BUDGET_EMAIL")
   fi
   [ -n "${ALERT_EMAIL:-}" ] && params+=("AlertEmail=$ALERT_EMAIL")
-  if ! aws cloudformation deploy --stack-name "$STACK" --template-file "$STATE/packaged.yaml" \
+  # While the update runs, a watcher prints why any ECS task stops and cancels the update if a service is crash-looping,
+  # so a broken container fails the deploy within minutes and with its cause, not after the circuit breaker.
+  local watcher=""
+  if [ -z "${PREVIEW:-}" ] && ! printf '%s ' "${extra[@]}" | grep -q -- '--no-execute-changeset'; then
+    "$PYTHON" "$ROOT/scripts/aws_watch_services.py" watch --stack "$STACK" --region "$AWS_REGION" &
+    watcher=$!
+    trap 'cancel_running_update; [ -z "$watcher" ] || kill "$watcher" 2>/dev/null || true; exit 130' INT TERM
+  fi
+  local deployed=0
+  aws cloudformation deploy --stack-name "$STACK" --template-file "$STATE/packaged.yaml" \
     --capabilities CAPABILITY_IAM CAPABILITY_AUTO_EXPAND --no-fail-on-empty-changeset \
-    --parameter-overrides "${params[@]}" "${extra[@]}"; then
+    --parameter-overrides "${params[@]}" "${extra[@]}" || deployed=1
+  if [ -n "$watcher" ]; then
+    kill "$watcher" 2>/dev/null || true
+    wait "$watcher" 2>/dev/null || true
+    trap - INT TERM
+  fi
+  if [ "$deployed" != 0 ]; then
     local failed_set
     failed_set="$(aws cloudformation list-change-sets --stack-name "$STACK" \
       --query "Summaries[?Status=='FAILED'] | [-1].ChangeSetName" --output text 2>/dev/null | sed 's/^None$//' || true)"
@@ -193,6 +260,17 @@ for key, value in json.load(open(sys.argv[1])).items():
     fail "stack $STACK could not be created or updated; the reasons are listed above"
   fi
   [ -n "${PREVIEW:-}" ] || cmd_outputs
+}
+
+# Gate: every hosted service that is meant to run has all its tasks running and healthy (see aws_watch_services.py).
+cmd_ready() {
+  "$PYTHON" "$ROOT/scripts/aws_watch_services.py" ready --stack "$STACK" --region "$AWS_REGION" ${READY_TIMEOUT:+--timeout "$READY_TIMEOUT"}
+}
+
+# Why did it fail? Everything a person would otherwise look up by hand: stack failures, then each service's state and stopped tasks.
+cmd_diagnose() {
+  "$PYTHON" "$ROOT/scripts/aws_stack_failures.py" --stack "$STACK" --region "$AWS_REGION" || true
+  "$PYTHON" "$ROOT/scripts/aws_watch_services.py" watch --stack "$STACK" --region "$AWS_REGION" --once --no-cancel || true
 }
 
 # Check every template with CloudFormation itself, then preview the stack as a change set. CloudFormation runs its
@@ -345,6 +423,19 @@ cmd_promote() {
 
 # publish: with the SageMaker MLflow App, copy the promoted version to S3 from here. With MLflow on ECS the registry is
 # private and the pipeline's last step already published the approved model, so read that from S3 instead.
+# Before a full deploy spends ten minutes on images: is there a published, approved model to serve?
+# Fails at once, with what to do, when the stack is not there yet or the pipeline has not published anything.
+cmd_check_model() {
+  local status
+  status="$(aws cloudformation describe-stacks --stack-name "$STACK" --query 'Stacks[0].StackStatus' --output text 2>/dev/null || true)"
+  [ -n "$status" ] || fail "stack $STACK does not exist yet: run deploy with 'stack and images only' first, then train and approve a model, then run a full deploy"
+  [ -z "$(output MlflowAppArn)" ] || { echo "MLflow App is the registry: the model is checked when it is published"; return 0; }
+  local allow=(); [ "${ALLOW_SYNTHETIC:-}" = 1 ] && allow=(--allow-synthetic)
+  "$PYTHON" "$ROOT/scripts/aws_published_model.py" --stack "$STACK" --region "$AWS_REGION" \
+    ${MODEL_VERSION:+--version "$MODEL_VERSION"} "${allow[@]}" \
+    || fail "no approved published model to deploy. Run the pipeline workflow, then promote and approve, then run a full deploy"
+}
+
 cmd_publish() {
   if [ -z "$(output MlflowAppArn)" ]; then
     local allow=(); [ "${ALLOW_SYNTHETIC:-}" = 1 ] && allow=(--allow-synthetic)
@@ -535,6 +626,8 @@ cmd_destroy() {
 case "${1:-}" in
   validate) cmd_validate ;;
   verify) shift; cmd_verify "$@" ;;
+  ready) cmd_ready ;;
+  diagnose) cmd_diagnose ;;
   stack) shift; cmd_stack "$@" ;;
   outputs) cmd_outputs ;;
   images) cmd_images ;;
@@ -543,6 +636,7 @@ case "${1:-}" in
   train) shift; cmd_train "$@" ;;
   mlflow-ui) cmd_mlflow_ui ;;
   promote) shift; cmd_promote "$@" ;;
+  check-model) cmd_check_model ;;
   publish) cmd_publish ;;
   serve) cmd_serve ;;
   call) shift; cmd_call "$@" ;;
@@ -559,5 +653,5 @@ case "${1:-}" in
   down) cmd_down ;;
   github-oidc) shift; cmd_github_oidc "$@" ;;
   destroy) cmd_destroy ;;
-  *) sed -n '2,36p' "$0"; exit 2 ;;
+  *) sed -n '2,38p' "$0"; exit 2 ;;
 esac
