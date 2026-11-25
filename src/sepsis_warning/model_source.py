@@ -124,7 +124,12 @@ def check_promoted(model_uri: str, tracking_uri: str) -> str:
 
     name, alias, version = parse_model_uri(model_uri)
     client = _client(tracking_uri)
-    found = client.get_model_version_by_alias(name, alias) if alias else client.get_model_version(name, version)
+    if alias:
+        found = client.get_model_version_by_alias(name, alias)
+    elif version is not None:
+        found = client.get_model_version(name, version)
+    else:
+        raise ValueError(f"{model_uri!r} names neither an alias nor a version")
     tags = dict(found.tags)
     if tags.get("synthetic") != "true":
         ensure_promoted(model_uri, tracking_uri, str(found.version), tags)
