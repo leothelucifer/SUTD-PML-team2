@@ -18,7 +18,7 @@ MLflow, promotion, approval and monitoring are unchanged.
 
 `infra/params/dev.json` already sets `TrainingBackend` to `ecs`. For another environment, set the
 parameter in its params file, or for one run `TRAINING_BACKEND=ecs bash scripts/aws_deploy.sh stack`.
-Then run the **deploy** workflow ("stack and images only") and the **pipeline** workflow as usual. The
+Then run the **deploy** workflow (mode `auto`, or "stack and images only") and the **pipeline** workflow as usual. The
 pipeline workflow's `instance_type` input is ignored by this backend; the task size comes from
 `EcsTrainingCpu` and `EcsTrainingMemory` (default 4 vCPU, 16 GB).
 

@@ -129,7 +129,7 @@ Resources:
         Comment: >-
           Same input as pipeline.yaml (all values are strings): {"image_tag": "training-<git sha>", "git_commit": "<sha>",
           "require_real_data": "true|false", "prepare": "true|false", "data_source": "synthetic|physionet",
-          "limit": "0", "trials": "6"}. Extra keys (instance_type) are ignored. Each data source has its own folder
+          "limit": "0", "trials": "6", "force": "false"}. Extra keys (instance_type) are ignored. Each data source has its own folder
           (data/synthetic, data/physionet, data/physionet-web), so a rehearsal can never touch the real data. Each step is an ECS task that runs
           the image's sepsis_warning.ecs_job entry point; its output goes to s3://<bucket>/training-output/<execution>/<step>/.
         StartAt: RegisterTaskDefinition
@@ -216,6 +216,8 @@ Resources:
                         Value.$: $.data_source
                       - Name: HP_limit
                         Value.$: $.limit
+                      - Name: HP_force
+                        Value.$: $.force
                       - Name: HP_seed
                         Value: "42"
                       - Name: HP_synthetic_stays

@@ -21,12 +21,32 @@ class DeployWorkflowTests(unittest.TestCase):
         self.assertIn("ap-southeast-2", regions)
         self.assertEqual(self.workflow["jobs"]["deploy"]["environment"], "${{ inputs.environment }}")
 
-    def test_first_deploy_can_stop_before_publishing(self):
-        steps = self.inputs["steps"]
-        self.assertEqual(steps["default"], "stack and images only")
-        gated = [s["name"] for s in self.workflow["jobs"]["deploy"]["steps"] if s.get("if") == "inputs.steps == 'full deploy'"]
-        self.assertEqual(gated, ["Check that a model is ready to deploy (full deploy only)", "Publish the promoted model and serve it",
-                                 "Smoke test the deployed API"])
+    def test_the_deploy_plans_from_changes_and_can_be_overridden(self):
+        self.assertEqual(self.inputs["mode"]["default"], "auto")
+        self.assertEqual(self.inputs["mode"]["options"], ["auto", "stack and images only", "full deploy"])
+        self.assertEqual(self.inputs["retrain"]["options"], ["auto", "yes", "no"])
+        self.assertIs(self.inputs["dry_run"]["default"], False)
+        self.assertIs(self.inputs["force_prepare"]["default"], False)
+        steps = {s["name"]: s for s in self.workflow["jobs"]["deploy"]["steps"] if "name" in s}
+        self.assertEqual(steps["Plan the deploy from what changed"]["id"], "plan")
+        for name, flag in (("Stack and images", "stack"), ("Wait for the hosted tools to be running and healthy", "ready"),
+                           ("Start a real-data training run", "retrain"), ("Publish the promoted model and serve it", "serve"),
+                           ("Smoke test the deployed API", "serve")):
+            self.assertIn(f"steps.plan.outputs.{flag} == 'true'", steps[name]["if"], name)
+
+    def test_a_requested_full_deploy_is_never_skipped_quietly(self):
+        steps = {s["name"]: s for s in self.workflow["jobs"]["deploy"]["steps"] if "name" in s}
+        check = steps["Check that a model is ready to deploy (full deploy only)"]
+        self.assertIn("inputs.mode == 'full deploy'", check["if"])
+        self.assertIn("!inputs.dry_run", check["if"])
+
+    def test_the_checkout_has_history_for_the_plan(self):
+        checkout = [s for s in self.workflow["jobs"]["deploy"]["steps"] if str(s.get("uses", "")).startswith("actions/checkout")][0]
+        self.assertEqual(checkout["with"]["fetch-depth"], 0)
+
+    def test_state_is_remembered_only_after_everything_passed(self):
+        steps = {s["name"]: s for s in self.workflow["jobs"]["deploy"]["steps"] if "name" in s}
+        self.assertTrue(steps["Remember what this deploy did"]["if"].startswith("success()"))
 
     def test_verify_is_not_run_as_a_second_failure_after_publish_fails(self):
         steps = {step["name"]: step for step in self.workflow["jobs"]["deploy"]["steps"] if "name" in step}

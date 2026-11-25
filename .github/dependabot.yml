@@ -1,0 +1,9 @@
+# Keeps the pinned GitHub Actions (each is a full commit SHA with its version in a comment) current. A pull request per update
+# runs the normal CI; the Python dependencies are hash-locked by scripts/lock_requirements.sh and are updated by hand.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
