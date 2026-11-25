@@ -69,10 +69,31 @@ class VerifyTests(unittest.TestCase):
             verify.check_function(result, Namespace(), [], {}, expect)
             self.assertEqual(statuses(result)["Lambda scoring function"], wanted)
 
+    def test_the_function_url_is_read_from_the_live_alias(self):
+        """AWS answers ResourceNotFoundException for the unqualified function: the URL belongs to the alias (first full deploy)."""
+        items = [{"type": "AWS::Lambda::Function", "logical": "ScoringFunction", "physical": "sepsis-dev-scoring"}]
+        asked = []
+
+        def url_config(FunctionName, Qualifier=None):
+            asked.append(Qualifier)
+            if Qualifier != "live":
+                raise RuntimeError("ResourceNotFoundException: the resource you requested does not exist")
+            return {"AuthType": "AWS_IAM"}
+
+        client = Namespace(get_function_configuration=lambda FunctionName: {"State": "Active", "PackageType": "Image"},
+                           get_function_url_config=url_config)
+        result = verify.Result()
+        verify.check_function(result, client, items, {}, True)
+        self.assertEqual(asked, ["live"])
+        self.assertEqual(statuses(result)["Lambda sepsis-dev-scoring"], "PASS")
+
     def test_a_healthy_function_and_signed_call_pass(self):
         items = [{"type": "AWS::Lambda::Function", "logical": "ScoringFunction", "physical": "sepsis-dev-scoring"}]
+        def function_url_config(FunctionName, Qualifier=None):
+            return {"AuthType": "AWS_IAM"}
+
         client = Namespace(get_function_configuration=lambda FunctionName: {"State": "Active", "PackageType": "Image"},
-                           get_function_url_config=lambda FunctionName: {"AuthType": "AWS_IAM"})
+                           get_function_url_config=function_url_config)
         result = verify.Result()
         verify.check_function(result, client, items, {"ApiBaseUrl": "https://x.lambda-url.r.on.aws/"}, True,
                               lambda url: {"model_name": "m", "bundle_sha256": "a" * 64, "synthetic_model": False})

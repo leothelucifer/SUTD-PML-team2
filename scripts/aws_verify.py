@@ -382,6 +382,9 @@ def check_outputs(result: Result, outputs: dict, expect_model: bool) -> None:
         result.add("FAIL", "scoring API URL", "no ApiBaseUrl output: run the full deploy (publish and serve)")
 
 
+LIVE_ALIAS = "live"   # AutoPublishAlias in infra/cloudformation/serverless.yaml
+
+
 def check_function(result: Result, lambda_client, items: list[dict], outputs: dict, expect_model: bool, signed_call=None) -> None:
     functions = of_type(items, "AWS::Lambda::Function")
     scoring = [f for f in functions if "scoring" in f["physical"] or "scoring" in f["logical"].lower()]
@@ -392,7 +395,9 @@ def check_function(result: Result, lambda_client, items: list[dict], outputs: di
     for function in scoring:
         def check(function=function):
             config = lambda_client.get_function_configuration(FunctionName=function["physical"])
-            url = lambda_client.get_function_url_config(FunctionName=function["physical"])
+            # The URL belongs to the "live" alias (serverless.yaml: AutoPublishAlias + FunctionUrlConfig), not to the unqualified
+            # function, so asking for the function alone answers ResourceNotFoundException (the first real full deploy, run 31).
+            url = lambda_client.get_function_url_config(FunctionName=function["physical"], Qualifier=LIVE_ALIAS)
             ok = config.get("State") == "Active" and url.get("AuthType") == "AWS_IAM"
             result.add("PASS" if ok else "FAIL", f"Lambda {function['physical']}",
                        f"{config.get('State')}, {config.get('PackageType')}, URL auth {url.get('AuthType')}")
