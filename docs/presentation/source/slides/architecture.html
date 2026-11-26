@@ -33,6 +33,6 @@
 <p style="font-size:26px;line-height:1.45"><b>Serving contract:</b> each hour the hospital sends a stay's full history so far. The service rebuilds the features exactly as in training and the model stays stateless. The only state is the alert ledger in DynamoDB: the hours already alerted, so the 6-hour cooldown holds across requests.</p>
 <p style="font-size:26px;line-height:1.45;color:#2c6285">Latency, one client, 24 h stay, 2 CPUs: p50 41 ms · p95 67 ms · p99 116 ms (13 Nov, synthetic model, docs/serving.md) · leakage and parity tests run in CI (GitHub Actions)</p>
 </div>
-<p style="position:absolute;left:128px;bottom:64px;width:1664px;font-size:24px;color:#5b6870">16</p>
+<p style="position:absolute;left:128px;bottom:64px;width:1664px;font-size:24px;color:#5b6870">17</p>
 <aside>Why the full history: a lab measured 30 hours ago is still the last lactate, and the features depend on the whole stay, so a short window alone would give different features from training. Latency is from the local Docker run; Lambda cold-start and real-data numbers are still to measure. Demo point: one command reproduces the model, the container and the monitoring report.</aside>
 </section>
