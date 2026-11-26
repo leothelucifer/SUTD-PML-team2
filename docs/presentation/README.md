@@ -2,7 +2,7 @@
 
 | File | What it is |
 |---|---|
-| `sepsis-early-warning.pptx` | Final presentation, 23 slides, 16:9, with speaker notes. Each slide is a full-slide image rendered from the source below. |
+| `sepsis-early-warning.pptx` | Final presentation, 22 slides, 16:9, with speaker notes. Each slide is a full-slide image rendered from the source below. |
 | `source/deck.json`, `source/slides/*.html` | Editable slide source (one HTML file per slide, in order given by `deck.json`). |
 | `assets/` | Images used by the slides: AWS Architecture Icons and three aggregate figures from the hospital comparison (PR #48). `blob-map.json` maps the asset ids in the slide HTML to these files. |
 | `tools/render_slides.js`, `tools/build_pptx.py` | Rebuild the PowerPoint from the source. |
@@ -25,7 +25,7 @@ The slide text in the `.pptx` is part of the image, so text edits belong in `sou
 
 ## Still to fill in
 
-Bracketed placeholders (`[__]`) still mark results that need the MLflow runs or new runs: the SIRS AUROC and AUPRC, the logistic regression row and the gradient boosting columns other than utility on the model comparison slide, the SHAP drivers, the drift report numbers on the monitoring slide, the fairness gaps, and the presentation date. Slides after "If the model is wrong" moved down by one number.
+Bracketed placeholders (`[__]`) still mark results that need the MLflow runs or new runs: the SIRS AUROC and AUPRC, the logistic regression row and the gradient boosting columns other than utility on the model comparison slide, the SHAP drivers, the drift report numbers on the monitoring slide, the fairness gaps, and the presentation date. The slides on HMM and signature features (a local study that was not part of the AWS run) were removed. Slides after "If the model is wrong" moved down by one number.
 
 ## Slide owners
 
@@ -34,9 +34,9 @@ Bracketed placeholders (`[__]`) still mark results that need the MLflow runs or 
 | Edwin | 4 Data and split · 5 Bedside to model · 9 EDA · 10 SIRS baseline |
 | Jawad | 6 Pipeline · 7 Causal features |
 | Kaiyuan | 3 Objective · 8 Modelling ladder · 11 Score to alert · 12 Model comparison |
-| Josh | 15 HMM states and patient groups |
-| Leo | 17 Building blocks · 18 Commit to production · 19 AWS deployment |
-| Mashie | 13 Hospital B test · 14 If the model is wrong · 16 Explanations · 20 Monitoring · 21 Governance |
+| Josh | 14 If the model is wrong (new) · 20 Governance (video) |
+| Leo | 16 Building blocks · 17 Commit to production · 18 AWS deployment |
+| Mashie | 13 Hospital B test · 15 Explanations · 19 Monitoring · 20 Governance |
 
 ## Attribution
 

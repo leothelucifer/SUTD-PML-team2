@@ -21,7 +21,6 @@
   "results",
   "generalisation",
   "stakes",
-  "latent",
   "explain",
   "architecture",
   "release",
@@ -41,7 +40,7 @@
    "start": "data"
   },
   "s3": {
-   "description": "Findings: EDA, SIRS baseline, alert policy, model comparison, cross-hospital test, latent states, explainability",
+   "description": "Findings: EDA, SIRS baseline, alert policy, model comparison, cross-hospital test, explainability",
    "start": "eda"
   },
   "s4": {

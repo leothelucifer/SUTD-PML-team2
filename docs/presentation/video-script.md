@@ -25,7 +25,7 @@ Speakers follow the slide owners in [README.md](README.md); change them freely.
 | 14 | Lessons | Jawad, Kaiyuan, Leo | `lessons` | slide | 10:50 | 0:30 |
 | 15 | Close | Edwin | `close` | slide | 11:20 | 0:10 |
 
-Skipped in the video, kept for questions (backup slides): `hospitalflow`, `pipeline`, `ladder`, `eda`, `sirs`, `policy`, `latent`,
+Skipped in the video, kept for questions (backup slides): `hospitalflow`, `pipeline`, `ladder`, `eda`, `sirs`, `policy`,
 `explain`, `architecture`.
 
 ## 2. Narration
@@ -63,7 +63,7 @@ Skipped in the video, kept for questions (backup slides): `hospitalflow`, `pipel
 > random forest 0.379. That gap is smaller than the noise, one standard error, so our rule picks the simpler model: the random forest. It
 > keeps false alerts at 0.177 per patient-day, inside our budget, and catches fifty-six percent of septic stays early. The SIRS rule raises
 > about two false alerts per patient-day, ten times our budget, and held to the same budget it scores only 0.018. Calibration matters too.
-> It brings the Brier score from 0.137 down to 0.020, so a threshold of five percent means a real risk. The model choice was the easy part. Most of our work went into the splits, so that the numbers can be trusted. We also tried richer feature sets in a local study, but they are not part of the final AWS run.
+> It brings the Brier score from 0.137 down to 0.020, so a threshold of five percent means a real risk. The model choice was the easy part. Most of our work went into the splits, so that the numbers can be trusted.
 
 ### 7. The unseen hospital (Mashie, 1:00)
 > Now the real test: a hospital the model never saw. We scored the frozen model once on hospital A's test stays, and once on all twenty
