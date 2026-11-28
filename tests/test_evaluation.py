@@ -17,9 +17,8 @@ import pandas as pd
 os.environ.setdefault("MLFLOW_DISABLE_AGENT_HINT", "1")
 os.environ.setdefault("MLFLOW_DISABLE_TELEMETRY", "true")
 
-from sepsis_warning.cli import check_training_data, run_experiment
 from sepsis_warning.data import generate_synthetic
-from sepsis_warning.evaluation import (
+from sepsis_warning.evaluation.frozen import (
     MARKER_FILE,
     AlreadyEvaluated,
     check_same_split,
@@ -37,6 +36,7 @@ from sepsis_warning.lifecycle.manifest import (
 from sepsis_warning.lifecycle.model_source import load_serving_model
 from sepsis_warning.models.scoring import file_sha256, load_bundle
 from sepsis_warning.serving.service import ModelMismatch, ScoringService
+from sepsis_warning.training.workflow import check_training_data, run_experiment
 
 ROOT = Path(__file__).resolve().parents[1]
 HAVE_PANDERA = importlib.util.find_spec("pandera") is not None
@@ -215,7 +215,7 @@ class FrozenEvaluationTests(TrainedRun):
     def test_registered_version_is_tagged_and_logged_separately(self):
         from mlflow.tracking import MlflowClient
 
-        from sepsis_warning.evaluation import EVALUATED_TAG, EVALUATION_EXPERIMENT
+        from sepsis_warning.evaluation.frozen import EVALUATED_TAG, EVALUATION_EXPERIMENT
         from sepsis_warning.lifecycle.registry import MODEL_NAME, register_bundle
         from sepsis_warning.lifecycle.tracking import SELECTION_EXPERIMENT, log_run
 

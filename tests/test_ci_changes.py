@@ -46,7 +46,9 @@ class ClassifyTests(unittest.TestCase):
             "src/sepsis_warning/lifecycle/mlflow_server.py": "tools", "src/sepsis_warning/monitoring/evidently_job.py": "tools",
             "infra/cloudformation/mlflow-ecs.yaml": "infra", "scripts/aws_deploy.sh": "infra",
             "Dockerfile": "image", "requirements/tools.txt": "dependencies", "pyproject.toml": "dependencies",
-            ".github/workflows/deploy.yml": "workflows", "ci/change_rules.json": "ci",
+            ".github/workflows/deploy.yml": "workflows",
+            ".github/actions/aws-target/action.yml": "workflows",
+            "ci/change_rules.json": "ci",
             "something/unknown.bin": "other",
         }
         for path, expected in examples.items():

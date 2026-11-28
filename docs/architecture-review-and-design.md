@@ -1,5 +1,9 @@
 # Architecture review and team-adoptable design
 
+> Historical review from 2026-11-07. It describes the repository at the
+> commit below, not the current implementation or deployment. Use the
+> [code map](agent-repository-guide.md) for current module ownership.
+
 **Review date:** 2026-11-07
 
 **Scope:** Repository code and documentation at commit

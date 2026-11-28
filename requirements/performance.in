@@ -1,0 +1,2 @@
+-r scoring.txt
+locust>=2.31,<3

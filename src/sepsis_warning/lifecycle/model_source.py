@@ -144,7 +144,7 @@ def publish_model(model_uri: str, tracking_uri: str, bucket: str, prefix: str = 
     version must have had its one frozen evaluation first, so every deployed
     model has recorded test results.
     """
-    from ..evaluation import EVALUATED_TAG
+    from ..evaluation.frozen import EVALUATED_TAG
     from .registry import resolve_model
 
     s3 = _s3(client)

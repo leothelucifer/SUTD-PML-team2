@@ -4,15 +4,14 @@ import unittest
 from pathlib import Path
 
 import yaml
+from workflow_helpers import load_workflow, workflow_steps
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOWS = ROOT / ".github" / "workflows"
 
 
 def load(name):
-    document = yaml.safe_load((WORKFLOWS / name).read_text(encoding="utf-8"))
-    document["on"] = document.pop(True, document.get("on"))   # PyYAML reads the key `on` as True
-    return document
+    return load_workflow(name)
 
 
 RULES = yaml.safe_load((ROOT / "ci" / "change_rules.json").read_text(encoding="utf-8"))
@@ -86,12 +85,99 @@ class ImagesWorkflowTests(unittest.TestCase):
 
 class AwsWorkflowsStayManualTests(unittest.TestCase):
     def test_everything_that_changes_aws_is_started_by_hand(self):
-        for name in ("deploy", "pipeline", "promote", "approve", "demo", "monitor", "power", "teardown", "verify", "collect-results"):
+        for name in (
+            "deploy", "pipeline", "promote", "approve", "demo", "monitor", "performance", "power", "teardown", "verify",
+            "collect-results",
+        ):
             self.assertEqual(list(load(f"{name}.yml")["on"]), ["workflow_dispatch"], name)
 
     def test_every_workflow_keeps_a_manual_option(self):
         for path in WORKFLOWS.glob("*.yml"):
             self.assertIn("workflow_dispatch", load(path.name)["on"], path.name)
+
+
+class WorkflowOrganizationTests(unittest.TestCase):
+    EXPECTED_NAMES = {
+        "tests.yml": "1 CI · tests",
+        "images.yml": "1 CI · images",
+        "deploy.yml": "2 Env · deploy",
+        "verify.yml": "2 Env · verify",
+        "power.yml": "2 Env · power",
+        "teardown.yml": "2 Env · teardown",
+        "pipeline.yml": "3 Model · pipeline",
+        "promote.yml": "3 Model · promote",
+        "approve.yml": "3 Model · approve",
+        "collect-results.yml": "3 Model · collect-results",
+        "demo.yml": "4 Ops · demo",
+        "monitor.yml": "4 Ops · monitor",
+        "performance.yml": "4 Ops · performance",
+    }
+
+    def test_sidebar_names_keep_the_lifecycle_groups_without_renaming_files(self):
+        self.assertEqual(set(self.EXPECTED_NAMES), {path.name for path in WORKFLOWS.glob("*.yml")})
+        for filename, expected in self.EXPECTED_NAMES.items():
+            self.assertEqual(load(filename)["name"], expected, filename)
+
+    def test_every_external_action_is_pinned_to_a_full_commit_sha(self):
+        files = list(WORKFLOWS.glob("*.yml")) + list((ROOT / ".github" / "actions").glob("*/action.yml"))
+        for path in files:
+            document = yaml.safe_load(path.read_text(encoding="utf-8"))
+            steps = [
+                step
+                for job in document.get("jobs", {}).values()
+                for step in job.get("steps", [])
+            ] if "jobs" in document else document["runs"]["steps"]
+            for step in steps:
+                action = step.get("uses", "")
+                if action.startswith("./.github/actions/"):
+                    continue
+                if action:
+                    self.assertRegex(action, r"^[^@]+@[0-9a-f]{40}$", f"{path}: {action}")
+
+    def test_workflows_delegate_aws_role_resolution_and_assumption(self):
+        for path in WORKFLOWS.glob("*.yml"):
+            document = load(path.name)
+            for job in document.get("jobs", {}).values():
+                for step in job.get("steps", []):
+                    self.assertNotIn("role-to-assume", step.get("with") or {}, path.name)
+                    self.assertNotIn("github-deploy-", step.get("run") or "", path.name)
+                    self.assertFalse(
+                        step.get("uses", "").startswith("aws-actions/configure-aws-credentials@"),
+                        path.name,
+                    )
+
+        target = yaml.safe_load((ROOT / ".github" / "actions" / "aws-target" / "action.yml").read_text(encoding="utf-8"))
+        credential_steps = [
+            step for step in target["runs"]["steps"]
+            if step.get("uses", "").startswith("aws-actions/configure-aws-credentials@")
+        ]
+        self.assertEqual(len(credential_steps), 1)
+        self.assertEqual(credential_steps[0]["with"]["role-to-assume"], "${{ steps.resolve.outputs.role }}")
+
+    def test_every_aws_workflow_uses_the_shared_target_action(self):
+        names = (
+            "approve.yml", "collect-results.yml", "demo.yml", "deploy.yml", "images.yml", "monitor.yml",
+            "performance.yml", "pipeline.yml", "power.yml", "promote.yml", "teardown.yml", "verify.yml",
+        )
+        for name in names:
+            workflow = load(name)
+            target = next(
+                step for job in workflow["jobs"].values() for step in job.get("steps", [])
+                if step.get("uses") == "./.github/actions/aws-target"
+            )
+            self.assertEqual(
+                set(target["with"]),
+                {"environment", "region", "default-region", "account-id", "role-arn"},
+                name,
+            )
+
+    def test_local_composites_are_expanded_for_behavior_assertions(self):
+        steps = workflow_steps("deploy.yml", "deploy")
+        python_install = next(
+            step for step in steps
+            if "pip install --require-hashes" in step.get("run", "")
+        )
+        self.assertEqual(python_install["env"]["REQUIREMENTS_FILE"], "requirements/training.txt")
 
 
 class DeployScriptTests(unittest.TestCase):

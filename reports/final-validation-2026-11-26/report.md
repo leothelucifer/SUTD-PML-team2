@@ -6,6 +6,10 @@ lang: en
 toc-title: "Contents"
 ---
 
+> Archived validation snapshot from 2026-11-26. Supporting logs and patient-
+> level artifacts were kept outside Git and are not available in this checkout;
+> the committed `evidence.json` is the retained summary.
+
 \newpage
 
 **Report ID:** LV-20261126-1412  
@@ -96,12 +100,12 @@ it does not retroactively restore the missing training revision.
 
 ## Infrastructure and environment configuration
 
-The platform is defined by the [extended CloudFormation root stack](../../infra%20copy/cloudformation/root.yaml),
-its nested templates, and the [deployment automation](../../scripts%20copy/aws_deploy.sh).
+The platform is defined by the [CloudFormation root stack](../../infra/cloudformation/root.yaml),
+its nested templates, and the [deployment automation](../../scripts/aws_deploy.sh).
 The infrastructure separates artifact storage, training orchestration,
 experiment tracking, serving, and observability.
 
-The [development configuration](../../infra%20copy/params/dev.json) selects
+The [development configuration](../../infra/params/dev.json) selects
 **ECS Fargate training**, **MLflow on ECS with RDS PostgreSQL**, and
 **Evidently monitoring**. SageMaker is disabled in this profile. Scoring
 defaults to **Lambda**. This is different from the root template's generic
@@ -180,7 +184,7 @@ into the serving stack. Both the Lambda entry point and the Fargate serving
 command support checksum-verified model retrieval; the earlier local-only
 image path is not the cloud model-delivery mechanism.
 
-The [Lambda template](../../infra%20copy/cloudformation/serverless.yaml)
+The [Lambda template](../../infra/cloudformation/serverless.yaml)
 uses versioned aliases and configurable CodeDeploy traffic shifting with
 error/duration alarms. The development profile deliberately selects
 `AllAtOnce`; the root template also supports canary and linear policies.
@@ -575,18 +579,18 @@ does not replace application authentication.
 
 ### Checksum-bound cloud model delivery
 
-The extended [Fargate service definition](../../infra%20copy/cloudformation/service.yaml)
+The extended [Fargate service definition](../../infra/cloudformation/service.yaml)
 passes the model S3 URI and checksum explicitly. The
-[shared cloud loader](../../src%20copy/sepsis_warning/model_source.py)
+[shared cloud loader](../../src/sepsis_warning/lifecycle/model_source.py)
 requires a pinned SHA-256 for S3 models; the
-[Lambda entry point](../../src%20copy/sepsis_warning/lambda_app.py)
+[Lambda entry point](../../src/sepsis_warning/adapters/aws/lambda_app.py)
 uses the same loading path and initializes the DynamoDB ledger.
 This closes the architectural gap between an image expecting a local model
 file and an independently published cloud model.
 
 ### Research-pipeline robustness: hospital isolation
 
-The [saved-split loader](../../src/sepsis_warning/splits.py#L61) validates split
+The [saved-split loader](../../src/sepsis_warning/data/splits.py) validates split
 names and record membership but does not enforce the hospital/split boundary.
 An isolated synthetic probe reassigned **30 B stays** to training and the
 loader accepted them.
@@ -597,7 +601,7 @@ training; add a regression test for the rejected case.
 
 ### Research-pipeline robustness: monitoring split identity
 
-[Monitoring setup](../../src/sepsis_warning/monitoring.py#L800) regenerates
+[Monitoring setup](../../src/sepsis_warning/monitoring/offline.py) regenerates
 cohorts from a seed instead of consuming a model-bound immutable assignment.
 A synthetic seed-7 model accepted a seed-42 reference: its monitoring
 validation cohort contained **eight original training stays and six original
@@ -608,7 +612,7 @@ manifest; refuse mismatches at setup and replay.
 
 ### Research-pipeline robustness: transformation semantics
 
-The [service compatibility check](../../src/sepsis_warning/service.py#L75)
+The [service compatibility check](../../src/sepsis_warning/serving/service.py)
 checks feature availability, and the recorded hash covers ordered column
 names rather than transformation behavior. A synthetic probe multiplied
 `HR__last` by ten without renaming columns. Startup remained `ok`, the hash
@@ -821,7 +825,7 @@ or production services.
 These excerpts describe the completed run. The existing destinations must
 not be overwritten. For a new execution, choose a fresh `RUN`, verify the
 dataset, and initialize an isolated local MLflow experiment/artifact location
-as in the [training runbook](../../docs/runbooks/2026-11-14-training-and-mlflow.md).
+as in the [real-data workflow](../../docs/testing/real-data.md).
 Use the recorded environment rather than silently resolving newer packages.
 
 ```bash
@@ -872,17 +876,17 @@ part of the submission package.
 
 | Evidence | Source and purpose |
 |---|---|
-| E01 | [Execution summary](../../artifacts/local-verification-20261126-1412/verification-summary.json): completed steps, verification checks, warnings, exclusions. |
-| E02 | [Model metrics](../../artifacts/local-verification-20261126-1412/training/metrics.json) and [validation comparison](../../artifacts/local-verification-20261126-1412/training/validation_models.csv): primary model results. |
-| E03 | [Run metadata](../../artifacts/local-verification-20261126-1412/training/run_metadata.json) and [split summary](../../artifacts/local-verification-20261126-1412/prepared/splits.csv.summary.json): settings and lineage. |
-| E04 | [Test log](../../artifacts/local-verification-20261126-1412/tests.log): 145 passing tests and unsuppressed warnings. |
-| E05 | [Baseline metrics](../../artifacts/local-verification-20261126-1412/baseline/baseline_metrics.csv): SIRS and always-no comparisons. |
-| E06 | [Internal monitoring](../../artifacts/local-verification-20261126-1412/monitoring/internal-test/summary.json) and [external monitoring](../../artifacts/local-verification-20261126-1412/monitoring/external-test/summary.json): windows, statuses, pooled metrics, subgroup counts. |
-| E07 | [API verification](../../artifacts/local-verification-20261126-1412/api-verification.json) and [latency results](../../artifacts/local-verification-20261126-1412/latency.json): serving parity, rejection, and performance. |
-| E08 | [Missingness analysis](../../artifacts/local-verification-20261126-1412/missingness/summary.json): fixed exploratory strategies on train/validation only. |
-| E09 | [Synthetic control probes](../../artifacts/local-verification-20261126-1412/review-control-probes.json): reproducible missing-guardrail cases; no real-data contamination asserted. |
+| E01 | `artifacts/local-verification-20261126-1412/verification-summary.json` (local, not committed): completed steps, verification checks, warnings, exclusions. |
+| E02 | `artifacts/local-verification-20261126-1412/training/metrics.json` and `validation_models.csv` (local, not committed): primary model results. |
+| E03 | `artifacts/local-verification-20261126-1412/training/run_metadata.json` and `prepared/splits.csv.summary.json` (local, not committed): settings and lineage. |
+| E04 | `artifacts/local-verification-20261126-1412/tests.log` (local, not committed): 145 passing tests and unsuppressed warnings. |
+| E05 | `artifacts/local-verification-20261126-1412/baseline/baseline_metrics.csv` (local, not committed): SIRS and always-no comparisons. |
+| E06 | Internal and external monitoring summaries under `artifacts/local-verification-20261126-1412/monitoring/` (local, not committed): windows, statuses, pooled metrics, subgroup counts. |
+| E07 | `api-verification.json` and `latency.json` under the local run directory (not committed): serving parity, rejection, and performance. |
+| E08 | `artifacts/local-verification-20261126-1412/missingness/summary.json` (local, not committed): fixed exploratory strategies on train/validation only. |
+| E09 | `artifacts/local-verification-20261126-1412/review-control-probes.json` (local, not committed): reproducible missing-guardrail cases; no real-data contamination asserted. |
 | E10 | [Aggregate report evidence](evidence.json): checked split totals, derived hourly metrics/deltas, container identity, source/configuration hashes, and figure inputs. |
-| E11 | [Docker build log](../../artifacts/local-verification-20261126-1412/docker-build.log), [synthetic training log](../../artifacts/local-verification-20261126-1412/docker-demo.log), and [API log](../../artifacts/local-verification-20261126-1412/docker-api.log): local container evidence. |
+| E11 | Docker build, synthetic training, and API logs under `artifacts/local-verification-20261126-1412/` (local, not committed): local container evidence. |
 | E12 | [Deployment diagram source](figures/aws-delivery-architecture.svg) and [application/operations diagram source](figures/aws-runtime-architecture.svg): self-contained, editable SVGs with embedded official AWS icons. |
 | E13 | [Expanded Step Functions/ECS workflow](figures/aws-step-functions-ecs-workflow.svg): exact state names, shared task-definition revision, per-step modes/capacity providers, SNS approval, and summarized failure handling. |
 
@@ -890,9 +894,9 @@ Method and limitation references:
 
 - [Project README](../../README.md): target semantics, implemented methods, split design, and research restrictions.
 - [Monitoring plan](../../docs/monitoring-plan.md): thresholds, windowing, owners, and response policy.
-- [CloudFormation composition](../../infra%20copy/cloudformation/root.yaml) and [development parameters](../../infra%20copy/params/dev.json): resource conditions and the illustrated ECS-training/Lambda-serving profile.
-- [Training pipeline](../../infra%20copy/cloudformation/pipeline-ecs.yaml), [MLflow](../../infra%20copy/cloudformation/mlflow-ecs.yaml), [Lambda scoring](../../infra%20copy/cloudformation/serverless.yaml), and [observability](../../infra%20copy/cloudformation/observability.yaml): service relationships and release/monitoring controls.
-- [Deployment automation](../../scripts%20copy/aws_deploy.sh), [deployment planner](../../scripts%20copy/deploy_plan.py), and [workflow contract tests](../../tests%20copy/test_deploy_workflow.py): delivery stages and environment/OIDC contract. The exported workflow directory contains the test workflow; the deploy workflow YAML and hosted run logs are not included in this source bundle.
+- [CloudFormation composition](../../infra/cloudformation/root.yaml) and [development parameters](../../infra/params/dev.json): resource conditions and the illustrated ECS-training/Lambda-serving profile.
+- [Training pipeline](../../infra/cloudformation/pipeline-ecs.yaml), [MLflow](../../infra/cloudformation/mlflow-ecs.yaml), [Lambda scoring](../../infra/cloudformation/serverless.yaml), and [observability](../../infra/cloudformation/observability.yaml): service relationships and release/monitoring controls.
+- [Deployment automation](../../scripts/aws_deploy.sh), [deployment planner](../../scripts/deploy_plan.py), and [workflow contract tests](../../tests/test_deploy_workflow.py): delivery stages and environment/OIDC contract. Hosted run logs are not included in this source bundle.
 - [Risk register](../../docs/risk-register.md): historical risks, prior B exposure, and open redistribution review. Some execution-status statements predate this run.
 - [PhysioNet Challenge 2019](https://physionet.org/content/challenge-2019/1.0.0/): public benchmark source.
 - [Published scoring reference](https://github.com/physionetchallenges/evaluation-2019): benchmark utility reference; no official leaderboard certification is claimed.

@@ -1,5 +1,10 @@
 # Risk register (M05)
 
+> Historical snapshot from 2026-11-19. Owner and status fields record that
+> review only; they are not current approvals or live issue status. Use the
+> [code map](agent-repository-guide.md) and [documentation index](README.md)
+> for current implementation and workflow guides.
+
 **Maintainer:** Mashie. **Last reviewed:** 2026-11-19 (second review, against
 `main` at `ee6ca9f`: after the NumPy models, the MLOps phases 1-4 and the M01
 replay tooling merged; no model has been frozen yet). **Status:** In review;
@@ -85,7 +90,7 @@ before the deck freeze, and before submission (6 Dec 2026).
   windows, whole-stay summaries, smoothing), so validation results are
   inflated and do not hold in real time.
 - **In place:** forward-fill only, trailing windows
-  ([features.py](../src/sepsis_warning/features.py)); prefix, future-corruption
+  ([features/core.py](../src/sepsis_warning/features/core.py)); prefix, future-corruption
   and prefix-scoring tests, plus a deliberately leaking backward fill that the
   check must catch (`test_a_leaking_fill_changes_earlier_rows`) in
   [test_invariants.py](../tests/test_invariants.py) (J04, done); the HMM forward
@@ -103,11 +108,11 @@ before the deck freeze, and before submission (6 Dec 2026).
 - **Risk:** rows from one stay, or stays from one person, appear in training
   and testing, inflating results.
 - **In place:** whole stays assigned to one split, seeded and stratified, with
-  disjointness and load-order tests ([splits.py](../src/sepsis_warning/splits.py),
+  disjointness and load-order tests ([data/splits.py](../src/sepsis_warning/data/splits.py),
   [test_splits.py](../tests/test_splits.py)); `splits.csv` with SHA-256 hashes;
   `train`, `baseline` and `evaluate` read the saved split, and `evaluate`
   refuses a split whose hash differs from the one the model was trained on
-  ([evaluation.py](../src/sepsis_warning/evaluation.py)).
+  ([evaluation/frozen.py](../src/sepsis_warning/evaluation/frozen.py)).
 - **Remaining exposure:** the data has no person ID, so one person could have
   stays in two splits. This cannot be fixed with this dataset; it is reported
   as a limitation.
@@ -121,11 +126,11 @@ before the deck freeze, and before submission (6 Dec 2026).
   validation only (PR #77). The `evaluate` command scores the test splits once
   per frozen model and refuses a second look on real data, recorded as a
   registry tag or a `frozen_evaluation.json` marker
-  ([evaluation.py](../src/sepsis_warning/evaluation.py)). `monitor-replay` and
+  ([evaluation/frozen.py](../src/sepsis_warning/evaluation/frozen.py)). `monitor-replay` and
   `ward` refuse the test splits unless `--after-freeze` is given
-  ([ward.py](../src/sepsis_warning/ward.py) `check_split`). The monitoring
+  ([reporting/ward.py](../src/sepsis_warning/reporting/ward.py) `check_split`). The monitoring
   reference reads only A train and validation (tested). Promotion gates use
-  validation numbers only ([gates.py](../src/sepsis_warning/gates.py)).
+  validation numbers only ([lifecycle/gates.py](../src/sepsis_warning/lifecycle/gates.py)).
 - **Remaining exposure:**
   - Several commands can still read hospital B labels: `evaluate`,
     `monitor-replay --split external_test --after-freeze`,
@@ -151,7 +156,7 @@ before the deck freeze, and before submission (6 Dec 2026).
 - **In place:** the label is never shifted in code; the utility uses the
   published weights; utility-weighted training targets use training labels
   only; left-censored stays are excluded from lead time and counted in the
-  M01 timing table ([cross_source.py](../src/sepsis_warning/cross_source.py));
+  M01 timing table ([evaluation/cross_source.py](../src/sepsis_warning/evaluation/cross_source.py));
   documented in [README.md](../README.md) and [data-profile.md](data-profile.md).
 - **Remaining exposure:** the cover slide still says the score "warns up to 6
   hours before sepsis onset" (see R23). The written model card (M04) does not
@@ -165,7 +170,7 @@ before the deck freeze, and before submission (6 Dec 2026).
   and broken hour sequences ([test_prepare.py](../tests/test_prepare.py));
   Pandera rules and the `validate` command pass all 40,336 stays / 1,552,210
   rows, and implausible readings are counted for review on train only, never
-  rejected ([schema.py](../src/sepsis_warning/schema.py),
+  rejected ([data/schema.py](../src/sepsis_warning/data/schema.py),
   [test_schema.py](../tests/test_schema.py), E03); the scoring service rejects
   values outside hard physical limits (422); the monitoring `schema` check
   repeats the core rules on new data.
@@ -183,8 +188,8 @@ before the deck freeze, and before submission (6 Dec 2026).
   training-only fallback is implemented and tested but not called by `train`);
   the `missingness` audit command; the monitoring `missingness` check.
 - **Remaining exposure:** carry-forward has no expiry, and no decision is
-  recorded (the [MLOps audit](mlops-audit.md) suggests a staleness-limit
-  ablation and a note in the model card); no with/without-missingness-features
+  recorded on a staleness-limit ablation or a note in the model card; no
+  with/without-missingness-features
   ablation (H03 tested HMM and signature features only).
 
 ### R07. Synthetic, subset or untraceable results reported as evidence (Data quality)
@@ -212,7 +217,7 @@ before the deck freeze, and before submission (6 Dec 2026).
   comparison ([hospital-a-vs-b.md](hospital-a-vs-b.md)); two-speed monitoring
   with thresholds frozen from A only ([monitoring-plan.md](monitoring-plan.md));
   the M01 cross-source report with a whole-stay bootstrap and timing counts
-  ([cross_source.py](../src/sepsis_warning/cross_source.py),
+  ([evaluation/cross_source.py](../src/sepsis_warning/evaluation/cross_source.py),
   [test_hospital_b_replay.py](../tests/test_hospital_b_replay.py)); rule:
   report degradation, do not retune on B.
 - **Remaining exposure:** no model result at B yet (waits for the freeze, R25);
@@ -228,7 +233,7 @@ before the deck freeze, and before submission (6 Dec 2026).
   ([test_monitoring.py](../tests/test_monitoring.py)); the API rejects unknown
   fields, labels, gaps and physically impossible values (422); the live drift
   job tracks missingness per measurement
-  ([live_drift.py](../src/sepsis_warning/live_drift.py)).
+  ([monitoring/live_drift.py](../src/sepsis_warning/monitoring/live_drift.py)).
 - **Remaining exposure:** no live feed exists; the variable and unit mapping
   document for a hospital integration (design page) is not written.
 
@@ -242,7 +247,7 @@ before the deck freeze, and before submission (6 Dec 2026).
   committed notebooks have no saved outputs; committed figures and CSVs are
   aggregates; monitoring and M01 outputs are aggregate-only (tested); the
   prediction log stores a hashed stay ID and no measurement values
-  ([telemetry.py](../src/sepsis_warning/telemetry.py)); the DVC remote is a
+  ([monitoring/telemetry.py](../src/sepsis_warning/monitoring/telemetry.py)); the DVC remote is a
   private SharePoint site with no other members
   ([data-versioning.md](data-versioning.md)).
 - **Remaining exposure:** `.gitignore` does not stop cloud sync of a checkout
@@ -272,7 +277,7 @@ before the deck freeze, and before submission (6 Dec 2026).
 - **In place:** subgroup utility and false-alert burden by recorded sex and
   age band (<45, 45-64, 65-79, 80+) in the slow monitoring checks, with groups
   under 10 septic stays marked insufficient
-  ([monitoring.py](../src/sepsis_warning/monitoring.py)).
+  ([monitoring/offline.py](../src/sepsis_warning/monitoring/offline.py)).
 - **Remaining exposure:** no fairness report exists for any real model (K06 is
   in progress on `main`, "In review" only in the open PR #80); other
   attributes cannot be assessed with this data.
@@ -289,7 +294,7 @@ before the deck freeze, and before submission (6 Dec 2026).
 - **Remaining exposure:** the 0.2 budget is a demonstration value, not set by
   clinicians; the budget can be exceeded at B; when the API is unavailable the
   reference client falls back to the SIRS rule
-  ([client.py](../src/sepsis_warning/client.py)), which on validation raises
+  ([serving/client.py](../src/sepsis_warning/serving/client.py)), which on validation raises
   about ten times the budget, so an outage would flood alerts unless the ward
   side suppresses fallback alerts.
 
@@ -326,8 +331,8 @@ before the deck freeze, and before submission (6 Dec 2026).
   (or an explicit hash) before opening the file, and `replay`, `serve`,
   `evaluate` and `monitor-replay` all use it; registry versions carry the
   bundle hash; the service refuses a bundle built with another scikit-learn
-  major.minor ([manifest.py](../src/sepsis_warning/manifest.py),
-  [scoring.py](../src/sepsis_warning/scoring.py)).
+  major.minor ([lifecycle/manifest.py](../src/sepsis_warning/lifecycle/manifest.py),
+  [models/scoring.py](../src/sepsis_warning/models/scoring.py)).
 - **Remaining exposure:** a bundle without `manifest.json` (from before PR #77)
   still loads without a check unless a hash is given.
 
@@ -384,7 +389,7 @@ before the deck freeze, and before submission (6 Dec 2026).
   named owners and a runbook ([monitoring-plan.md](monitoring-plan.md)).
 - **Remaining exposure:**
   - The live drift job (`monitor-live`,
-    [live_drift.py](../src/sepsis_warning/live_drift.py)) uses its own fixed
+    [monitoring/live_drift.py](../src/sepsis_warning/monitoring/live_drift.py)) uses its own fixed
     thresholds (score PSI 0.10/0.25, alert-rate ratio 0.5-2x and 0.25-4x,
     missingness 0.10/0.20) instead of the frozen thresholds in
     `monitoring_reference.json`, and the monitoring plan does not describe it.
@@ -438,7 +443,7 @@ before the deck freeze, and before submission (6 Dec 2026).
 - **In place:** the [clinical-use plan](clinical-use-design-and-validation-plan.md)
   sets release gates; replay, monitoring and API outputs carry research-only
   wording; `GET /model` serves a validation-only selection card and never test
-  results ([model_card.py](../src/sepsis_warning/model_card.py)).
+  results ([reporting/model_card.py](../src/sepsis_warning/reporting/model_card.py)).
 - **Remaining exposure:** the written model card (M04) does not exist yet;
   cover-slide wording (R04).
 

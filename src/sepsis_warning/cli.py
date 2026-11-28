@@ -353,7 +353,7 @@ def main():
                 print(f"  skipped {item['title']}: {item['reason']}")
             print(f"Open {(args.output / 'FIGURES.md').resolve()}", flush=True)
         elif args.command == "evaluate":
-            from .evaluation import run_frozen_evaluation
+            from .evaluation.frozen import run_frozen_evaluation
 
             if args.model_uri:
                 require_mlflow()

@@ -1,28 +1,32 @@
 # Workflows: what each option does
 
-Twelve workflows, one page. **Automatic** ones start by themselves; every other workflow is started by hand
+Thirteen workflows, one page. The display-name prefixes group them by lifecycle. **Automatic** ones start by themselves; every other workflow is started by hand
 (**Actions → the workflow → Run workflow**), and the automatic ones also have a Run workflow button. For the click order see
 [RUN-ORDER.md](RUN-ORDER.md); for what CI runs see [cicd.md](cicd.md).
 
-Every manual workflow takes **environment** (`dev`, `staging`, `prod`; staging and prod wait for their reviewers) and **region**
-(`environment default`, `ap-southeast-1`, `ap-southeast-2`). They are left out of the tables below.
+Every AWS manual workflow takes **environment** (`dev`, `staging`, `prod`; staging and prod wait for their reviewers) and
+**region** (`environment default`, `ap-southeast-1`, `ap-southeast-2`). The `tests` workflow has only its `run_everything`
+switch; `images` defaults to `dev` and the environment's region on push.
+AWS workflows serialize by environment, so two operations in the same environment do not overlap even when they select
+different regions.
 
 ## 1. The workflows at a glance
 
-| Workflow | Starts | Needs AWS | Changes AWS? | Use it to |
-|---|---|---|---|---|
-| **tests** | automatically on pull requests and pushes, weekly; also by hand | no | no | Lint, type-check, test, scan; only what the change needs |
-| **images** | automatically on a push to main that touches `Dockerfile`, `requirements/`, `src/`, `pyproject.toml`; also by hand | writes images | images only | Build the images ahead of a deploy |
-| **deploy** | by hand | yes | **yes** | Create or update the stack, serve a model, start training |
-| **pipeline** | by hand | yes | starts, stops a training run | Train on real data; check or stop a run |
-| **promote** | by hand | yes | model alias and tags | Record the review of a model version |
-| **approve** | by hand | yes | releases the pipeline | Approve or reject the waiting model |
-| **power** | by hand | yes | starts and stops services | See, start or stop what bills; open browser access |
-| **demo** | by hand | yes | writes a page to S3 | Replay stays through the live API |
-| **monitor** | by hand | yes | writes reports to S3 | Build the Evidently reference, make the drift report |
-| **verify** | by hand | read-only | no | Check every deployed component |
-| **collect-results** | by hand, once, at the very end | read-only | no (opens a pull request) | Pull the aggregate results from S3 into the repo for the report |
-| **teardown** | by hand | yes | **deletes** | Plan or perform a removal |
+| Group | Workflow | Starts | Needs AWS | Changes AWS? | Use it to |
+|---|---|---|---|---|---|
+| **1 CI** | **tests** | pull request, push to main, weekly; also by hand | no | no | Lint, type-check, test, scan; only what the change needs |
+| **1 CI** | **images** | push to main for image inputs; also by hand | yes | images only | Build the images ahead of a deploy |
+| **2 Env** | **deploy** | by hand | yes | **yes** | Create or update the stack, serve a model, start training |
+| **2 Env** | **verify** | by hand | yes | read-only | Check every deployed component |
+| **2 Env** | **power** | by hand | yes | starts and stops services | See, start or stop what bills; open browser access |
+| **2 Env** | **teardown** | by hand | yes | **deletes** | Plan or perform a removal |
+| **3 Model** | **pipeline** | by hand | yes | starts, stops a training run | Train on real data; check or stop a run |
+| **3 Model** | **promote** | by hand | yes | model alias and tags | Record the review of a model version |
+| **3 Model** | **approve** | by hand | yes | releases the pipeline | Approve or reject the waiting model |
+| **3 Model** | **collect-results** | by hand, once, at the very end | yes | no (opens a pull request) | Pull the aggregate results from S3 into the repo for the report |
+| **4 Ops** | **demo** | by hand | yes | writes a page to S3 | Replay stays through the live API |
+| **4 Ops** | **monitor** | by hand | yes | writes reports to S3 | Build the Evidently reference, make the drift report |
+| **4 Ops** | **performance** | by hand | yes | API requests and logs | Bounded Locust load against the deployed API using temporary Hospital B payloads |
 
 ## 2. deploy: option → what happens
 
@@ -92,6 +96,9 @@ stopped tasks. A run that finishes green records its state in S3.
 | | `force` | Stop only: also while a pipeline step runs (otherwise refused) |
 | **monitor** | `action = reference` | Once per model: builds the Evidently reference (hospital A validation) for the serving bundle |
 | | `action = report` | Compares the last `days` of the prediction log with the reference. Writes `report.html` and `metrics.json` to `reports/monitoring/<time>/`, updates the Evidently UI, publishes CloudWatch metrics. Below 200 rows it publishes no drift metrics |
+| **performance** | `sample_limit` | Downloads this many public records per hospital; up to 50 anonymized Hospital B stays are used for requests |
+| | `users`, `spawn_rate`, `duration` | Locust load; capped at 10 users, 2 new users/s and 120 seconds. Requests are signed with the workflow's OIDC role |
+| | result artifact | Aggregate request statistics and model provenance only. Temporary source data and payloads are not uploaded |
 | **verify** | `expect_model` off | Checks every component; no scoring function is a warning |
 | | `expect_model` ticked | Also requires the scoring function and a signed `/health` answer. Run it after serving a model |
 

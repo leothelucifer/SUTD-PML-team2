@@ -1,6 +1,7 @@
-"""Training and other CLI workflows extracted without changing behavior."""
+"""Training and other CLI workflows extracted without changing behavior.
 
-"""Run the sketch end to end, or score an individual patient history."""
+Run the sketch end to end, or score an individual patient history.
+"""
 
 import hashlib
 import importlib.metadata
@@ -414,8 +415,8 @@ def run_validate(args):
     print(f"\nReview table: {path.resolve()}", flush=True)
 
 def run_ward(args):
-    from ..reporting.ward import build_payload, check_split, choose_stays, score_locally, score_via_api, write_ward
     """Write the ICU ward replay page for a saved model (see ward.py)."""
+    from ..reporting.ward import build_payload, check_split, choose_stays, score_locally, score_via_api, write_ward
     check_split(args.split, args.after_freeze)
     if args.output.exists():
         raise ValueError(f"{args.output} already exists; choose a new output file")

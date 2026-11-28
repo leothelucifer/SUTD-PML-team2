@@ -1,7 +1,7 @@
 {
   "_about": "One source of truth for 'what does this change need?'. Used by CI (scripts/ci_changes.py) to pick the checks and by the deploy planner (scripts/deploy_plan.py) to pick the AWS stages. Files are matched in order and the first rule wins; patterns are fnmatch globs where * also matches /. A file that matches nothing is category 'other' and runs the unit tests (the safe default).",
   "rules": [
-    {"category": "workflows", "patterns": [".github/*"]},
+    {"category": "workflows", "patterns": [".github/*", ".github/actions/**"]},
     {"category": "ci", "patterns": ["ci/*", "scripts/ci_changes.py", "scripts/deploy_plan.py"]},
     {"category": "image", "patterns": ["Dockerfile", ".dockerignore", "scripts/docker_smoke_test.sh"]},
     {"category": "dependencies", "patterns": ["requirements/*", "requirements.txt", "pyproject.toml", "uv.lock", "scripts/lock_requirements.sh"]},

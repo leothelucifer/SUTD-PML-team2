@@ -1,6 +1,6 @@
 """Frozen evaluation public API."""
 
-__all__ = ["run_frozen_evaluation", "AlreadyEvaluated", "EVALUATED_TAG"]
+__all__ = ["run_frozen_evaluation", "AlreadyEvaluated", "EVALUATED_TAG"]  # pylint: disable=undefined-all-variable
 
 
 def __getattr__(name):

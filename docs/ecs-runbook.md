@@ -31,7 +31,7 @@ SageMaker MLflow App again), `EnableEvidently`.
 
 1. **Deploy** workflow, mode "stack and images only" (or `auto`, which does the same on a new account). It runs the stack update twice on purpose: the second run creates
    the MLflow and Evidently services once their image exists.
-2. Check the quotas with **verify** (Fargate vCPU; see [ecs-training.md](ecs-training.md)).
+2. Check the quotas with **verify** (Fargate vCPU; the deploy workflow reports the required capacity).
 3. The PhysioNet data is copied once with `aws_deploy.sh fetch-data` (the **pipeline** workflow does it when you pick
    `data_source = physionet`). A marker (`raw/physionet/_SUCCESS`) records the finished copy, and the prepared data
    carries its own marker with SHA-256 hashes, so reruns do nothing. Real data cannot be overwritten by a rehearsal.

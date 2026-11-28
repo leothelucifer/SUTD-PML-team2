@@ -9,7 +9,7 @@ SageMaker AI training job (spot, on demand) -> serverless SageMaker MLflow App (
 ```
 
 `ServingMode=fargate` selects the deck's always-on private design instead
-(slide 18 and `docs/design/sepsis-warning-pipeline.html`):
+(slide 18 and the [current code map](../../docs/agent-repository-guide.md)):
 
 ```text
 VPC (or, later, the hospital VPN)

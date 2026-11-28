@@ -8,8 +8,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from sepsis_warning.adapters.aws import sagemaker_train
 from sepsis_warning.lifecycle import registry, tracking
-    from sepsis_warning.adapters.aws import sagemaker_train
 
 
 class ProjectServerTests(unittest.TestCase):

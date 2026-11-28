@@ -39,7 +39,6 @@ class ArchitectureTests(unittest.TestCase):
                     continue
                 if any(start <= node.lineno <= end for start, end in function_ranges):
                     continue
-                module = node.module if isinstance(node, ast.ImportFrom) else None
                 if isinstance(node, ast.Import):
                     modules = [alias.name for alias in node.names]
                 elif isinstance(node, ast.ImportFrom) and node.module:

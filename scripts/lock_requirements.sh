@@ -37,3 +37,6 @@ lock lambda   "serve lambda"
 lock training "tracking aws sagemaker checks" "mlflow==$MLFLOW_VERSION"
 lock tools    "tools" "mlflow==$MLFLOW_VERSION"
 lock ci       "serve test tracking aws lambda checks"
+uv pip compile requirements/performance.in -c requirements/ci.txt --generate-hashes \
+  --python-version 3.12 --python-platform x86_64-manylinux_2_28 --no-header -q -o requirements/performance.txt
+echo "requirements/performance.txt: $(grep -c '==' requirements/performance.txt) packages"
