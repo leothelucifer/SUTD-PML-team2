@@ -7,7 +7,24 @@ Two rules:
   **images** workflow is the exception: it prebuilds and pushes commit-tagged images after qualifying pushes to `main`.
   Approval of a model stays a human step.
 
-Every automatic workflow also has a **Run workflow** button, so you can start it yourself.
+## Start here
+
+| I want to… | Start with… | Changes AWS? |
+|---|---|---|
+| Check a change or understand a failed PR | **tests** runs automatically; `ci-ok` is the required check | No |
+| Create or update an environment, or deploy a model | **deploy** → Run workflow; use `dry_run` first if unsure | Yes |
+| Start or inspect a training run | **pipeline** → Run workflow; a green start run does not mean training finished | Yes |
+| Review and release a trained model | **promote**, then **approve** | Yes |
+| Check a deployment or manage running services | **verify** or **power** | verify: no; power: yes |
+| Remove an environment | **teardown**; start with `plan only` | Yes; destructive options need confirmation |
+| Run a demo, monitor drift, or measure API performance | **demo**, **monitor**, or **performance** | Yes |
+| Collect aggregate experiment results | **collect-results**; use `dry_run` first | Opens a pull request |
+| See the full first-time AWS sequence | [AWS run order](RUN-ORDER.md) | — |
+| Look up every workflow's inputs and effects | [Workflow reference](WORKFLOWS.md) | — |
+
+Every workflow can be started from **Actions → workflow → Run workflow**.
+Automatic workflows also start on their listed events. Staging and production
+AWS runs wait for their GitHub environment reviewers.
 
 ## Workflow organization
 
@@ -16,14 +33,35 @@ load workflow files from subfolders. Their `name:` prefixes group them in the
 Actions sidebar: `1 CI`, `2 Env`, `3 Model`, and `4 Ops`; filenames and run
 history stay unchanged.
 
-The local composites in `.github/actions/` hold the repeated setup:
+### Where to make a change
 
-- `aws-target` resolves the GitHub environment's region and role, then configures
-  short-lived AWS credentials through OIDC.
-- `python-tools` selects Python 3.12 and installs the selected hash-locked
-  requirements file plus the local package.
+| Concern | Source of truth | Update it when… |
+|---|---|---|
+| Workflow entry points, triggers, permissions, and job order | `.github/workflows/<name>.yml` | Adding or changing an Actions operation |
+| Shared AWS target resolution and OIDC credentials | `.github/actions/aws-target/action.yml`, `scripts/resolve_aws_target.py` | Changing environment/region/role setup |
+| Shared locked Python setup | `.github/actions/python-tools/action.yml` | Changing Python or common dependency installation |
+| Which checks and deploy stages a file change needs | `ci/change_rules.json` | Changing change classification or its CI/deploy impact |
+| Rule evaluation and deploy planning | `scripts/ci_changes.py`, `scripts/deploy_plan.py` | Changing classification or plan behavior |
+| Workflow contracts, change classification, and deploy-plan behavior | `tests/test_cicd.py`, `tests/test_ci_changes.py`, `tests/test_deploy_plan.py` | Changing triggers, shared setup, file impacts, or deploy planning |
+| Newcomer instructions and workflow inputs | This guide, [workflow reference](WORKFLOWS.md), and [run order](RUN-ORDER.md) | Changing what a person selects or what a run does |
 
-If either shared action changes, run the workflow lint and focused helper tests.
+Keep GitHub workflow files flat; GitHub only discovers workflow files in
+`.github/workflows/`. Prefer a local composite action for repeated *steps*,
+but keep distinct operations as separate workflows so each has a clear manual
+button, permissions, and run history. The `ci/change_rules.json` file is the
+single mapping used by both CI and the deploy planner: update its categories
+and test both sides whenever a file's impact changes.
+
+For a workflow/action or rule change, run the focused contract tests and the
+same workflow syntax check used in CI:
+
+```bash
+python -m unittest discover -s tests -p 'test_*ci*.py' -v
+python -m unittest discover -s tests -p 'test_deploy_plan.py' -v
+docker run --rm -v "$PWD:/repo" -w /repo \
+  rhysd/actionlint:1.7.7@sha256:887a259a5a534f3c4f36cb02dca341673c6089431057242cdc931e9f133147e9 -color
+```
+
 `.github/CODEOWNERS` requests owner review for workflows, actions, CI rules,
 infrastructure, AWS scripts, and dependency locks. To make that review
 mandatory, enable **Require review from Code Owners** for `main`.

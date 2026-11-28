@@ -39,7 +39,7 @@ not evidence of model performance.
 | Track experiments and review models | [MLflow and registry](docs/mlflow.md) |
 | Run the scoring API or local Docker stack | [Serving](docs/serving.md), [local production-like stack](docs/local-production.md) |
 | Review monitoring and runbooks | [Monitoring plan](docs/monitoring-plan.md), [runbooks](docs/runbooks/README.md) |
-| Understand CI/CD and AWS operations | [CI/CD](docs/cicd.md), [workflow reference](docs/WORKFLOWS.md), [AWS run order](docs/RUN-ORDER.md) |
+| Understand CI/CD or operate AWS workflows | [Start with the CI/CD guide](docs/cicd.md) |
 | Set up AWS or inspect infrastructure | [Deploy to an AWS account](docs/deploy-to-any-account.md), [CloudFormation](infra/cloudformation/README.md) |
 | Browse all documentation | [Documentation index](docs/README.md) |
 
