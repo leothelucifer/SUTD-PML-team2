@@ -26,7 +26,7 @@ from sepsis_warning.evaluation import (
     refuse_repeat,
     run_frozen_evaluation,
 )
-from sepsis_warning.manifest import (
+from sepsis_warning.lifecycle.manifest import (
     MANIFEST_FILE,
     ManifestMismatch,
     check_runtime,
@@ -34,9 +34,9 @@ from sepsis_warning.manifest import (
     package_versions,
     recorded_sha256,
 )
-from sepsis_warning.model_source import load_serving_model
-from sepsis_warning.scoring import file_sha256, load_bundle
-from sepsis_warning.service import ModelMismatch, ScoringService
+from sepsis_warning.lifecycle.model_source import load_serving_model
+from sepsis_warning.models.scoring import file_sha256, load_bundle
+from sepsis_warning.serving.service import ModelMismatch, ScoringService
 
 ROOT = Path(__file__).resolve().parents[1]
 HAVE_PANDERA = importlib.util.find_spec("pandera") is not None
@@ -130,7 +130,7 @@ class ManifestTests(TrainedRun):
             check_runtime(dict(manifest, format=99))
 
     def test_numpy_models_are_hashed_and_checked_against_numpy_not_scikit_learn(self):
-        from sepsis_warning.manifest import model_code_sha256
+        from sepsis_warning.lifecycle.manifest import model_code_sha256
 
         manifest = json.loads((self.run_dir / MANIFEST_FILE).read_text())
         self.assertEqual(manifest["model_family"], "scikit-learn")       # the default candidate set
@@ -216,8 +216,8 @@ class FrozenEvaluationTests(TrainedRun):
         from mlflow.tracking import MlflowClient
 
         from sepsis_warning.evaluation import EVALUATED_TAG, EVALUATION_EXPERIMENT
-        from sepsis_warning.registry import MODEL_NAME, register_bundle
-        from sepsis_warning.tracking import SELECTION_EXPERIMENT, log_run
+        from sepsis_warning.lifecycle.registry import MODEL_NAME, register_bundle
+        from sepsis_warning.lifecycle.tracking import SELECTION_EXPERIMENT, log_run
 
         store = f"sqlite:///{self.root / 'store' / 'mlflow.db'}"
         version = register_bundle(self.run_dir, store, log_run(self.run_dir, store))

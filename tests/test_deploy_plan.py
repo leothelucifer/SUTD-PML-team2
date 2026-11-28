@@ -37,7 +37,7 @@ class AutoModeTests(unittest.TestCase):
         self.assertEqual(flags(result), set())
 
     def test_serving_code_rebuilds_and_serves_without_touching_the_stack_or_training(self):
-        result = decide(["src/sepsis_warning/api.py"])
+        result = decide(["src/sepsis_warning/serving/api.py"])
         self.assertEqual(flags(result), {"serve", "images", "validate", "verify", "any"})
 
     def test_training_code_starts_a_retrain(self):
@@ -47,7 +47,7 @@ class AutoModeTests(unittest.TestCase):
         self.assertFalse(result["flags"]["stack"])
 
     def test_feature_code_retrains_and_serves(self):
-        result = decide(["src/sepsis_warning/features.py"])
+        result = decide(["src/sepsis_warning/features/core.py"])
         self.assertTrue(result["flags"]["retrain"])
         self.assertTrue(result["flags"]["serve"])
 
@@ -98,7 +98,7 @@ class FreshEnvironmentTests(unittest.TestCase):
 
 class OverrideTests(unittest.TestCase):
     def test_stack_only_runs_only_the_stack(self):
-        result = decide(["src/sepsis_warning/features.py"], mode="stack and images only")
+        result = decide(["src/sepsis_warning/features/core.py"], mode="stack and images only")
         self.assertEqual({s for s in dp.STAGES if result["flags"][s]}, {"stack"})
 
     def test_full_deploy_runs_stack_and_serve_but_retrains_only_without_a_model(self):
@@ -135,7 +135,7 @@ class OverrideTests(unittest.TestCase):
 class OutputTests(unittest.TestCase):
     def test_a_dry_run_executes_nothing_but_says_what_it_would_do(self):
         import tempfile
-        result = decide(["src/sepsis_warning/api.py"])
+        result = decide(["src/sepsis_warning/serving/api.py"])
         with tempfile.TemporaryDirectory() as temp:
             out, summary = Path(temp) / "out", Path(temp) / "summary"
             dp.write_outputs(result, True, str(out), str(summary))
@@ -148,7 +148,7 @@ class OutputTests(unittest.TestCase):
         import tempfile
         with tempfile.TemporaryDirectory() as temp:
             out = Path(temp) / "out"
-            dp.write_outputs(decide(["src/sepsis_warning/api.py"]), False, str(out), None)
+            dp.write_outputs(decide(["src/sepsis_warning/serving/api.py"]), False, str(out), None)
             lines = out.read_text().splitlines()
             self.assertIn("serve=true", lines)
             self.assertIn("stack=false", lines)

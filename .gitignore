@@ -25,6 +25,7 @@ htmlcov/
 /data/
 /artifacts/
 /benchmarks/
+/reorg-baseline/
 # Guard against raw patient records or models saved outside those directories.
 *.psv
 *.part

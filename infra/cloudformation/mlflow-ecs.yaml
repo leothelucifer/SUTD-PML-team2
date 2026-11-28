@@ -270,7 +270,7 @@ Resources:
           PortMappings:
             - ContainerPort: 5000
           Command:
-            - sepsis_warning.mlflow_server
+            - sepsis_warning.lifecycle.mlflow_server
           Environment:
             - Name: DB_HOST
               Value: !GetAtt Database.Endpoint.Address

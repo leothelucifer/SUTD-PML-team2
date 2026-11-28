@@ -17,8 +17,8 @@ class ApiTests(unittest.TestCase):
         from fastapi.testclient import TestClient
         from test_service import make_bundle, request_hours
 
-        from sepsis_warning.api import create_app
-        from sepsis_warning.service import ScoringService
+        from sepsis_warning.serving.api import create_app
+        from sepsis_warning.serving.service import ScoringService
 
         cls.temp = tempfile.TemporaryDirectory()
         root = Path(cls.temp.name)
@@ -58,7 +58,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.client.post("/score", json={"patient_id": "s", "hours": "x"}).status_code, 422)
 
     def test_model_mismatch_is_409(self):
-        from sepsis_warning.service import ModelMismatch
+        from sepsis_warning.serving.service import ModelMismatch
 
         original = self.service.score
 
@@ -117,10 +117,10 @@ class ModelCardTests(unittest.TestCase):
 
         from fastapi.testclient import TestClient
 
-        from sepsis_warning.api import create_app
         from sepsis_warning.cli import run_experiment
         from sepsis_warning.model_card import card_from_run_dir
-        from sepsis_warning.service import ScoringService
+        from sepsis_warning.serving.api import create_app
+        from sepsis_warning.serving.service import ScoringService
 
         cls.temp = tempfile.TemporaryDirectory()
         root = Path(cls.temp.name)

@@ -15,10 +15,11 @@ import numpy as np
 os.environ.setdefault("MLFLOW_DISABLE_AGENT_HINT", "1")
 os.environ.setdefault("MLFLOW_DISABLE_TELEMETRY", "true")
 
-from sepsis_warning import cli, tuning
+from sepsis_warning import cli
 from sepsis_warning.data import generate_synthetic, load_patients, split_patients
 from sepsis_warning.features import feature_table
-from sepsis_warning.modeling import candidate_models, load_model_config
+from sepsis_warning.models.factory import candidate_models, load_model_config
+from sepsis_warning.training import tuning
 
 HAVE_MLFLOW = importlib.util.find_spec("mlflow") is not None
 
@@ -168,7 +169,7 @@ class SearchTests(unittest.TestCase):
     def test_every_trial_is_logged_to_mlflow_without_validation_or_test_metrics(self):
         from mlflow.tracking import MlflowClient
 
-        from sepsis_warning.tracking import TUNING_EXPERIMENT, log_tuning
+        from sepsis_warning.lifecycle.tracking import TUNING_EXPERIMENT, log_tuning
 
         output = self.root / "logged"
         tuning.write_outputs(output, self.results, self.summary, self.tuned, models_config_sha256="a" * 64,
@@ -187,7 +188,7 @@ class SearchTests(unittest.TestCase):
             for word in ("validation", "calibration", "internal_test", "external_test"):
                 self.assertNotIn(word, keys)
         names = {a.path for a in client.list_artifacts(parent)}
-        self.assertEqual(names, set(__import__("sepsis_warning.tracking", fromlist=["x"]).TUNING_ARTIFACTS))
+        self.assertEqual(names, set(__import__("sepsis_warning.lifecycle.tracking", fromlist=["x"]).TUNING_ARTIFACTS))
 
 
 if __name__ == "__main__":

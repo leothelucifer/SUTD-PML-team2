@@ -3,7 +3,7 @@
     python scripts/causal_features.py
 
 No patient files are read. Training and replay call the same functions in
-sepsis_warning.features and sepsis_warning.policy. This script does not keep
+sepsis_warning.features and sepsis_warning.models.policy. This script does not keep
 a second copy of the rolling features or the utility formula.
 """
 
@@ -20,7 +20,7 @@ from sepsis_warning.features import (
     features_for_windows,
     fit_training_fallback,
 )
-from sepsis_warning.policy import benchmark_utility, utility_components
+from sepsis_warning.models.policy import benchmark_utility, utility_components
 
 WINDOWS = (3, 6, 12)
 

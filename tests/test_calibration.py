@@ -9,9 +9,9 @@ from pathlib import Path
 from sepsis_warning.cli import run_experiment
 from sepsis_warning.data import generate_synthetic, load_patients, split_patients
 from sepsis_warning.features import META, feature_table
-from sepsis_warning.logistic import NumpyLogisticRegression
-from sepsis_warning.modeling import candidate_models, fit_calibrated, load_model_config
-from sepsis_warning.policy import calibration_curve_bins, calibration_diagnostics
+from sepsis_warning.models.factory import candidate_models, fit_calibrated, load_model_config
+from sepsis_warning.models.numpy.logistic import NumpyLogisticRegression
+from sepsis_warning.models.policy import calibration_curve_bins, calibration_diagnostics
 
 
 class CalibrationCurveTests(unittest.TestCase):

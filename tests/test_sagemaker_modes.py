@@ -11,7 +11,7 @@ from unittest import mock
 os.environ.setdefault("MLFLOW_DISABLE_AGENT_HINT", "1")
 os.environ.setdefault("MLFLOW_DISABLE_TELEMETRY", "true")
 
-from sepsis_warning import sagemaker_train
+from sepsis_warning.adapters.aws import sagemaker_train
 
 
 class FakeS3:

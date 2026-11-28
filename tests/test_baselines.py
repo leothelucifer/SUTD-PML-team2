@@ -5,7 +5,8 @@ import unittest
 import numpy as np
 import pandas as pd
 
-from sepsis_warning.baselines import (
+from sepsis_warning.data import DYNAMIC, STATIC, Patient
+from sepsis_warning.evaluation.baselines import (
     BASELINE_THRESHOLD,
     auroc,
     average_precision,
@@ -14,8 +15,7 @@ from sepsis_warning.baselines import (
     sirs_count,
     sirs_threshold_sweep,
 )
-from sepsis_warning.data import DYNAMIC, STATIC, Patient
-from sepsis_warning.policy import apply_policy
+from sepsis_warning.models.policy import apply_policy
 
 
 def make_patient(hours, label_from=None, **values):

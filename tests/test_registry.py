@@ -20,8 +20,8 @@ except ImportError:
     mlflow = None
 
 from sepsis_warning.data import generate_synthetic, load_patients
-from sepsis_warning.scoring import file_sha256
-from sepsis_warning.service import ScoringService
+from sepsis_warning.models.scoring import file_sha256
+from sepsis_warning.serving.service import ScoringService
 
 
 @unittest.skipIf(mlflow is None, "MLflow is an optional install (tracking extra)")
@@ -29,8 +29,8 @@ class Registry(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         from sepsis_warning.cli import run_experiment
-        from sepsis_warning.registry import register_bundle
-        from sepsis_warning.tracking import log_run
+        from sepsis_warning.lifecycle.registry import register_bundle
+        from sepsis_warning.lifecycle.tracking import log_run
 
         cls.temp = tempfile.TemporaryDirectory()
         cls.root = Path(cls.temp.name)
@@ -74,7 +74,7 @@ class Registry(unittest.TestCase):
         self.assertIn("selection_metrics.json", names)
 
     def test_registered_version_records_the_bundle_hash_and_is_the_candidate(self):
-        from sepsis_warning.registry import MODEL_NAME
+        from sepsis_warning.lifecycle.registry import MODEL_NAME
 
         version = self.client.get_model_version(MODEL_NAME, self.version)
         self.assertEqual(version.tags["bundle_sha256"], file_sha256(self.run_dir / "model.joblib"))
@@ -84,7 +84,7 @@ class Registry(unittest.TestCase):
         self.assertEqual(int(self.client.get_model_version_by_alias(MODEL_NAME, "candidate").version), latest)
 
     def test_mlflow_pyfunc_scores_like_the_api(self):
-        from sepsis_warning.registry import INPUT_COLUMNS, MODEL_NAME
+        from sepsis_warning.lifecycle.registry import INPUT_COLUMNS, MODEL_NAME
 
         model = mlflow.pyfunc.load_model(f"models:/{MODEL_NAME}@candidate")
         stay = load_patients(self.data)[0].frame.iloc[:12]
@@ -100,7 +100,7 @@ class Registry(unittest.TestCase):
             self.assertEqual(got["alert_event"], want["alert_event"])
 
     def test_promote_needs_a_reviewer_and_records_the_previous_version(self):
-        from sepsis_warning.registry import MODEL_NAME, promote, register_bundle
+        from sepsis_warning.lifecycle.registry import MODEL_NAME, promote, register_bundle
 
         with self.assertRaises(ValueError):
             promote(self.uri, self.version, reviewed_by=" ")
@@ -116,8 +116,8 @@ class Registry(unittest.TestCase):
             promote(self.uri, second_version, reviewed_by="Mashie")
 
     def test_resolve_checks_the_hash_before_serving(self):
-        from sepsis_warning.registry import MODEL_NAME, resolve_model
-        from sepsis_warning.service import ModelMismatch
+        from sepsis_warning.lifecycle.registry import MODEL_NAME, resolve_model
+        from sepsis_warning.serving.service import ModelMismatch
 
         path, expected, _tags = resolve_model(f"models:/{MODEL_NAME}/{self.version}", self.uri, self.root / "dl")
         self.assertEqual(file_sha256(path), expected)
@@ -135,7 +135,7 @@ class Registry(unittest.TestCase):
             resolve_model("runs:/abc/model", self.uri)
 
     def test_missing_production_alias_has_actionable_error(self):
-        from sepsis_warning.registry import resolve_model
+        from sepsis_warning.lifecycle.registry import resolve_model
 
         with self.assertRaisesRegex(ValueError, "does not exist.*MLflow.*stack and images only"):
             resolve_model("models:/sepsis-warning@production", self.uri)

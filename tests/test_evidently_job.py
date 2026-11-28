@@ -11,8 +11,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from sepsis_warning import evidently_frames as frames
-from sepsis_warning import evidently_job as job
+from sepsis_warning.monitoring import evidently_frames as frames
+from sepsis_warning.monitoring import evidently_job as job
 
 HAVE_EVIDENTLY = importlib.util.find_spec("evidently") is not None
 HAVE_PARQUET = importlib.util.find_spec("pyarrow") is not None

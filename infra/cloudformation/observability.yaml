@@ -201,7 +201,7 @@ Resources:
         ImageUri: !Ref LambdaImageUri
       ImageConfig:
         Command:
-          - sepsis_warning.drift_handler.handler
+          - sepsis_warning.adapters.aws.drift_handler.handler
       Role: !GetAtt DriftRole.Arn
       MemorySize: 1024
       Timeout: 300

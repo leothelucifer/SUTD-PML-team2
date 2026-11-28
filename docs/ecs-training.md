@@ -9,7 +9,7 @@ MLflow, promotion, approval and monitoring are unchanged.
 |---|---|---|
 | Where a step runs | SageMaker AI training job | ECS Fargate task (same training image) |
 | Quota that must be above 0 | SageMaker training instance (on demand and spot) | Fargate vCPU (on demand, and spot if used) |
-| Entry point | `sepsis_warning.sagemaker_train` | `sepsis_warning.ecs_job`, which stages the S3 channels and then calls the same entry point |
+| Entry point | `sepsis_warning.adapters.aws.sagemaker_train` | `sepsis_warning.adapters.aws.ecs_job`, which stages the S3 channels and then calls the same entry point |
 | Pipeline template | `pipeline.yaml` | `pipeline-ecs.yaml` (same state names) |
 | Extra infrastructure | none | `ecs-platform.yaml`: a small VPC with public subnets, a cluster, task roles, a log group |
 | Cost while idle | none | none (no NAT gateway, endpoints, load balancer or database) |

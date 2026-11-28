@@ -11,9 +11,9 @@ import pandas as pd
 
 from sepsis_warning.data import DYNAMIC, STATIC, Patient, generate_synthetic, load_patients
 from sepsis_warning.features import META, feature_table
-from sepsis_warning.modeling import candidate_models
-from sepsis_warning.scoring import file_sha256, score_patients
-from sepsis_warning.service import InvalidInput, ModelMismatch, ScoringService
+from sepsis_warning.models.factory import candidate_models
+from sepsis_warning.models.scoring import file_sha256, score_patients
+from sepsis_warning.serving.service import InvalidInput, ModelMismatch, ScoringService
 
 
 def make_bundle(patients):

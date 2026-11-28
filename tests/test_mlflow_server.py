@@ -4,7 +4,7 @@ import os
 import unittest
 from unittest import mock
 
-from sepsis_warning import mlflow_server
+from sepsis_warning.lifecycle import mlflow_server
 
 ENV = {"DB_HOST": "db.example.internal", "DB_NAME": "mlflow", "DB_USER": "mlflow",
        "DB_PASSWORD": "p@ss/word:with?odd#chars", "ARTIFACTS_DESTINATION": "s3://bucket/mlflow-artifacts"}

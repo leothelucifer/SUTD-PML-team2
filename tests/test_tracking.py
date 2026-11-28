@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
-from sepsis_warning.tracking import (
+from sepsis_warning.lifecycle.tracking import (
     LOGGABLE_ARTIFACTS,
     check_tracking_uri,
     dvc_evidence,

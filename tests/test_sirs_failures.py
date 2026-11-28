@@ -5,8 +5,8 @@ import unittest
 import numpy as np
 import pandas as pd
 
-from sepsis_warning.baselines import SIRS_COLUMNS
 from sepsis_warning.data import Patient
+from sepsis_warning.evaluation.baselines import SIRS_COLUMNS
 from sepsis_warning.sirs_failures import (
     MIN_CELL,
     by_hour_of_stay,

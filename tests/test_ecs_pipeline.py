@@ -71,7 +71,7 @@ class EcsPipelineTests(unittest.TestCase):
     def test_steps_run_the_ecs_entry_point_with_the_same_modes_and_channels(self):
         states = machine()["States"]
         container = machine()["States"]["RegisterTaskDefinition"]["Parameters"]["ContainerDefinitions"][0]
-        self.assertEqual(container["EntryPoint"], ["python", "-m", "sepsis_warning.ecs_job"])
+        self.assertEqual(container["EntryPoint"], ["python", "-m", "sepsis_warning.adapters.aws.ecs_job"])
         self.assertEqual(container["LogConfiguration"]["LogDriver"], "awslogs")
         self.assertEqual(env_of(states["PrepareData"])["HP_mode"], "prepare")
         self.assertNotIn("CH_data", env_of(states["PrepareData"]))               # it makes the data
@@ -237,7 +237,7 @@ class MlflowOnEcsTests(unittest.TestCase):
         self.assertEqual([s["Name"] for s in definition["Secrets"]], ["DB_PASSWORD"])
         names = {e["Name"] for e in definition["Environment"]}
         self.assertNotIn("DB_PASSWORD", names)
-        self.assertEqual(definition["Command"], ["sepsis_warning.mlflow_server"])
+        self.assertEqual(definition["Command"], ["sepsis_warning.lifecycle.mlflow_server"])
 
     def test_root_wires_the_flags_and_the_rules(self):
         root = load("root.yaml")

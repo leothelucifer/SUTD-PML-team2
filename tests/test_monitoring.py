@@ -14,10 +14,12 @@ import joblib
 import numpy as np
 import pandas as pd
 
-from sepsis_warning import hospital_comparison
 from sepsis_warning.data import generate_synthetic, load_patients, split_patients
+from sepsis_warning.evaluation import hospital_comparison
 from sepsis_warning.features import META, feature_table
-from sepsis_warning.modeling import candidate_models, fit_calibrated
+from sepsis_warning.models.factory import candidate_models, fit_calibrated
+from sepsis_warning.models.policy import apply_policy, tune_threshold
+from sepsis_warning.models.scoring import file_sha256, load_bundle, score_patients
 from sepsis_warning.monitoring import (
     AGE_BINS,
     AGE_LABELS,
@@ -37,8 +39,6 @@ from sepsis_warning.monitoring import (
     run_monitoring,
     subgroup_rows,
 )
-from sepsis_warning.policy import apply_policy, tune_threshold
-from sepsis_warning.scoring import file_sha256, load_bundle, score_patients
 
 # Small windows so the synthetic fixture yields several fast and slow windows.
 CONFIG = MonitoringConfig(

@@ -12,13 +12,6 @@ from pathlib import Path
 
 import numpy as np
 
-from sepsis_warning.alert_store import (
-    DynamoAlertStore,
-    InMemoryAlertStore,
-    LedgerConflict,
-    ledger_events,
-    stay_key,
-)
 from sepsis_warning.client import (
     ScoringClient,
     ScoringRejected,
@@ -26,7 +19,15 @@ from sepsis_warning.client import (
     sirs_fallback,
 )
 from sepsis_warning.data import DYNAMIC, generate_synthetic, load_patients
-from sepsis_warning.service import (
+from sepsis_warning.monitoring.telemetry import Telemetry
+from sepsis_warning.serving.alert_store import (
+    DynamoAlertStore,
+    InMemoryAlertStore,
+    LedgerConflict,
+    ledger_events,
+    stay_key,
+)
+from sepsis_warning.serving.service import (
     MAX_BODY_BYTES,
     MAX_TOTAL_HOURS,
     InvalidInput,
@@ -34,7 +35,6 @@ from sepsis_warning.service import (
     TooLarge,
     risk_tier,
 )
-from sepsis_warning.telemetry import Telemetry
 
 HAVE_API = all(importlib.util.find_spec(name) for name in ("fastapi", "httpx"))
 
@@ -339,7 +339,7 @@ class ApiHardeningTests(unittest.TestCase):
     def setUpClass(cls):
         from fastapi.testclient import TestClient
 
-        from sepsis_warning.api import create_app
+        from sepsis_warning.serving.api import create_app
 
         cls.service, cls.patients, cls.temp = make_service(model_version="3")
         cls.stream = io.StringIO()
@@ -441,8 +441,8 @@ class ThreadingTests(unittest.TestCase):
         self.addCleanup(temp.cleanup)
         self.assertFalse(hasattr(service, "_predict_lock"))
         from sepsis_warning.features import META, feature_table
-        from sepsis_warning.modeling import candidate_models, fit_calibrated
-        from sepsis_warning.service import _single_thread
+        from sepsis_warning.models.factory import candidate_models, fit_calibrated
+        from sepsis_warning.serving.service import _single_thread
 
         patients = load_patients(Path(temp.name))
         table = feature_table(patients[:40], 6)

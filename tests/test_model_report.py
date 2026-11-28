@@ -11,10 +11,12 @@ from unittest import mock
 import numpy as np
 import pandas as pd
 
-from sepsis_warning import cli, model_report, policy
+from sepsis_warning import cli
 from sepsis_warning.data import generate_synthetic
 from sepsis_warning.evaluation import run_frozen_evaluation
 from sepsis_warning.importance import PATTERN, STATIC_FAMILY, VALUES, feature_groups, grouped_permutation_importance
+from sepsis_warning.models import policy
+from sepsis_warning.reporting import model_report
 
 
 def synthetic_run(folder: Path, stays: int = 40, hours: int = 20, attributes: bool = False) -> Path:

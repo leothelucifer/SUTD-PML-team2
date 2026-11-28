@@ -12,7 +12,7 @@ os.environ.setdefault("MLFLOW_DISABLE_AGENT_HINT", "1")
 os.environ.setdefault("MLFLOW_DISABLE_TELEMETRY", "true")
 
 from sepsis_warning.data import generate_synthetic
-from sepsis_warning.gates import (
+from sepsis_warning.lifecycle.gates import (
     MIN_UTILITY_GAIN,
     GateFailure,
     evaluate_gates,
@@ -75,8 +75,8 @@ class PromotionAndPublishTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         from sepsis_warning.cli import run_experiment
-        from sepsis_warning.registry import register_bundle
-        from sepsis_warning.tracking import log_run
+        from sepsis_warning.lifecycle.registry import register_bundle
+        from sepsis_warning.lifecycle.tracking import log_run
 
         cls.temp = tempfile.TemporaryDirectory()
         cls.root = Path(cls.temp.name)
@@ -101,14 +101,14 @@ class PromotionAndPublishTests(unittest.TestCase):
         return MlflowClient(tracking_uri=self.uri, registry_uri=self.uri)
 
     def test_training_records_the_sirs_reference_and_who_registered(self):
-        from sepsis_warning.registry import MODEL_NAME
+        from sepsis_warning.lifecycle.registry import MODEL_NAME
 
         selection = json.loads((self.run_dir / "selection_metrics.json").read_text())
         self.assertIn("normalized_hourly_utility", selection["reference_baselines"]["sirs"])
         self.assertTrue(self.client().get_model_version(MODEL_NAME, self.version).tags["registered_by"].startswith("local:"))
 
     def test_promotion_runs_the_gates_and_records_the_approver(self):
-        from sepsis_warning.registry import MODEL_NAME, promote, register_bundle
+        from sepsis_warning.lifecycle.registry import MODEL_NAME, promote, register_bundle
 
         version = register_bundle(self.run_dir, self.uri)          # no selection run: summary still attached
         change = promote(self.uri, version, "Reviewer", alias="staging")
@@ -121,7 +121,7 @@ class PromotionAndPublishTests(unittest.TestCase):
         self.assertNotIn("strict_reviewed_by", self.client().get_model_version(MODEL_NAME, self.version).tags)
 
     def test_on_aws_the_registrant_cannot_approve(self):
-        from sepsis_warning.registry import MODEL_NAME, promote
+        from sepsis_warning.lifecycle.registry import MODEL_NAME, promote
 
         trainer = "arn:aws:sts::123456789012:assumed-role/sepsis-training/job-1"
         self.client().set_model_version_tag(MODEL_NAME, self.version, "registered_by", trainer)
@@ -137,12 +137,12 @@ class PromotionAndPublishTests(unittest.TestCase):
         from test_aws import FakeS3
 
         from sepsis_warning.evaluation import EVALUATED_TAG
-        from sepsis_warning.model_source import (
+        from sepsis_warning.lifecycle.model_source import (
             PublishRefused,
             fetch_model,
             publish_model,
         )
-        from sepsis_warning.registry import MODEL_NAME
+        from sepsis_warning.lifecycle.registry import MODEL_NAME
 
         s3 = FakeS3(self.root / "s3")
         uri = f"models:/{MODEL_NAME}/{self.version}"
@@ -163,7 +163,7 @@ class PromotionAndPublishTests(unittest.TestCase):
             client.set_model_version_tag(MODEL_NAME, self.version, EVALUATED_TAG, "2026-11-15T00:00:00+00:00")
             # Evaluated but never promoted: a real-data version still cannot be published, and the check
             # that runs before the one-time evaluation refuses it too.
-            from sepsis_warning.model_source import check_promoted
+            from sepsis_warning.lifecycle.model_source import check_promoted
 
             with self.assertRaisesRegex(PublishRefused, "not promoted"):
                 check_promoted(uri, self.uri)
@@ -196,10 +196,10 @@ class CheckPromotedInputTests(unittest.TestCase):
     def test_a_model_uri_with_neither_alias_nor_version_is_refused_with_a_clear_message(self):
         from unittest import mock
 
-        from sepsis_warning.model_source import check_promoted
+        from sepsis_warning.lifecycle.model_source import check_promoted
 
-        with mock.patch("sepsis_warning.registry.parse_model_uri", return_value=("sepsis-warning", None, None)), \
-                mock.patch("sepsis_warning.registry._client", return_value=mock.Mock()):
+        with mock.patch("sepsis_warning.lifecycle.registry.parse_model_uri", return_value=("sepsis-warning", None, None)), \
+                mock.patch("sepsis_warning.lifecycle.registry._client", return_value=mock.Mock()):
             with self.assertRaisesRegex(ValueError, "neither an alias nor a version"):
                 check_promoted("models:/sepsis-warning", "http://tracking")
 

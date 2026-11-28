@@ -37,8 +37,8 @@ class ContractTests(unittest.TestCase):
         from fastapi.testclient import TestClient
         from test_service import make_bundle
 
-        from sepsis_warning.api import create_app
-        from sepsis_warning.service import ScoringService
+        from sepsis_warning.serving.api import create_app
+        from sepsis_warning.serving.service import ScoringService
 
         with tempfile.TemporaryDirectory() as temp:
             generate_synthetic(Path(temp), source_size=60, external_size=20)
@@ -65,8 +65,8 @@ class ContractTests(unittest.TestCase):
         from fastapi.testclient import TestClient
         from test_service import make_bundle
 
-        from sepsis_warning.api import create_app
-        from sepsis_warning.service import ScoringService
+        from sepsis_warning.serving.api import create_app
+        from sepsis_warning.serving.service import ScoringService
 
         with tempfile.TemporaryDirectory() as temp:
             generate_synthetic(Path(temp), source_size=60, external_size=20)

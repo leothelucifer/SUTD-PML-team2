@@ -206,7 +206,7 @@ Resources:
           PortMappings:
             - ContainerPort: 8000
           Command:
-            - sepsis_warning.evidently_job
+            - sepsis_warning.monitoring.evidently_job
             - ui
           Environment:
             - Name: ARTIFACT_BUCKET
@@ -273,7 +273,7 @@ Resources:
           Image: !Ref ToolsImageUri
           Essential: true
           Command:
-            - sepsis_warning.evidently_job
+            - sepsis_warning.monitoring.evidently_job
             - report
           Environment:
             - Name: ARTIFACT_BUCKET
