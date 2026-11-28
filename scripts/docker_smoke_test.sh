@@ -43,7 +43,8 @@ echo "4/6 Train a synthetic demo model inside the image (software fixture only)"
 chmod 777 "$WORK"
 docker run --rm -v "$WORK:/work" --entrypoint python "$IMAGE" \
   -m sepsis_warning demo --data /work/synthetic --output /work/demo >/dev/null
-[ -f "$WORK/demo/model.joblib" ] || fail "demo model was not written"
+docker run --rm -v "$WORK:/work" --entrypoint sh "$IMAGE" \
+  -c 'test -f /work/demo/model.joblib' || fail "demo model was not written"
 
 echo "5/6 Start the API on 127.0.0.1:$PORT and wait for /health"
 docker run -d --name "$NAME" -p "127.0.0.1:$PORT:8000" -v "$WORK/demo:/models:ro" "$IMAGE" >/dev/null

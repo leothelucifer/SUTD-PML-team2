@@ -1,5 +1,9 @@
 # IAM review: does every role have what its code needs?
 
+> Point-in-time policy review. The "not exercised" section identifies flows
+> that still need validation in the target AWS account; a successful deploy
+> does not exercise every role or service path.
+
 Method: each role's policy in `infra/cloudformation/` was read statement by statement and compared with what the code that runs as that
 role calls (S3 prefixes, KMS, DynamoDB, CloudWatch, ECS, SNS). `tests/test_iam_grants.py` now keeps the result honest: it spells out what
 each role needs and fails when a template drops it, and ties two values to constants in the code (the metrics namespace, the prefix the

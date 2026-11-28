@@ -29,8 +29,8 @@ stage() {  # resolve a registry URI, copy its bundle, write the env file
   ALB_PORT="$ALB_PORT" "$PYTHON" - "$uri" "$MLFLOW_URI" "$STATE" "$ENV_FILE" <<'PY'
 import json, os, shutil, sys, tempfile
 from pathlib import Path
-from sepsis_warning.registry import resolve_model
-from sepsis_warning.scoring import file_sha256
+from sepsis_warning.lifecycle.registry import resolve_model
+from sepsis_warning.models.scoring import file_sha256
 uri, tracking, state, env_file = sys.argv[1], sys.argv[2], Path(sys.argv[3]), Path(sys.argv[4])
 download = Path(tempfile.mkdtemp(dir=state))
 path, sha, tags = resolve_model(uri, tracking, download)

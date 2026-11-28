@@ -3,7 +3,7 @@
 import unittest
 from pathlib import Path
 
-import yaml
+from workflow_helpers import load_workflow, workflow_steps
 
 PATH = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "deploy.yml"
 
@@ -11,8 +11,8 @@ PATH = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "deploy.y
 class DeployWorkflowTests(unittest.TestCase):
     def setUp(self):
         self.text = PATH.read_text(encoding="utf-8")
-        self.workflow = yaml.safe_load(self.text)
-        self.inputs = self.workflow[True]["workflow_dispatch"]["inputs"]
+        self.workflow = load_workflow("deploy.yml")
+        self.inputs = self.workflow["on"]["workflow_dispatch"]["inputs"]
 
     def test_environment_and_region_are_chosen_at_start(self):
         self.assertEqual(self.inputs["environment"]["options"], ["dev", "staging", "prod"])
@@ -59,19 +59,32 @@ class DeployWorkflowTests(unittest.TestCase):
         self.assertEqual(self.workflow["permissions"]["id-token"], "write")
         self.assertNotIn("secrets.AWS", self.text)
         self.assertNotIn("aws-access-key-id", self.text)
-        self.assertIn("steps.target.outputs.role", self.text)
+        self.assertIn("./.github/actions/aws-target", self.text)
+        expanded = workflow_steps("deploy.yml", "deploy")
+        credentials = next(step for step in expanded if step.get("uses", "").startswith("aws-actions/configure-aws-credentials@"))
+        self.assertEqual(credentials["with"]["role-to-assume"], "${{ steps.resolve.outputs.role }}")
 
     def test_role_name_matches_the_bootstrap_template(self):
         template = (PATH.parents[2] / "infra" / "bootstrap" / "github-oidc.yaml").read_text(encoding="utf-8")
         for environment in ("dev", "staging", "prod"):
             self.assertIn(f"github-deploy-{environment}-${{AWS::Region}}", template)
-        self.assertIn("role/github-deploy-${ENVIRONMENT}-${region}", self.text)
+        resolver = (PATH.parents[2] / "scripts" / "resolve_aws_target.py").read_text(encoding="utf-8")
+        self.assertIn('role = f"arn:aws:iam::{account_id}:role/github-deploy-{environment}-{region}"', resolver)
+        self.assertIn("./.github/actions/aws-target", self.text)
 
     def test_explicit_role_takes_precedence_over_account_role(self):
-        explicit = self.text.index('if [ -n "$ROLE_ARN_VAR" ]; then')
-        account = self.text.index('elif [ -n "$ACCOUNT_ID" ]; then')
+        action = (PATH.parents[2] / ".github" / "actions" / "aws-target" / "action.yml").read_text(encoding="utf-8")
+        resolver = (PATH.parents[2] / "scripts" / "resolve_aws_target.py").read_text(encoding="utf-8")
+        self.assertIn("role-arn: ${{ vars.AWS_DEPLOY_ROLE_ARN }}", self.text)
+        self.assertIn("account-id: ${{ vars.AWS_ACCOUNT_ID }}", self.text)
+        self.assertIn("ROLE_ARN_VAR: ${{ inputs.role-arn }}", action)
+        target = next(step for step in workflow_steps("deploy.yml", "deploy")
+                      if step.get("_composite_action") == "./.github/actions/aws-target"
+                      and step.get("id") == "resolve")
+        self.assertEqual(target["env"]["ROLE_ARN_VAR"], "${{ vars.AWS_DEPLOY_ROLE_ARN }}")
+        explicit = resolver.index("if role_arn:")
+        account = resolver.index("elif account_id")
         self.assertLess(explicit, account)
-        self.assertIn('role="$ROLE_ARN_VAR"', self.text)
 
     def test_trust_policy_accepts_the_id_based_subject(self):
         template = (PATH.parents[2] / "infra" / "bootstrap" / "github-oidc.yaml").read_text(encoding="utf-8")
@@ -87,7 +100,12 @@ class DeployWorkflowTests(unittest.TestCase):
 
         for name in ("deploy.yml", "pipeline.yml", "verify.yml", "teardown.yml"):
             workflow = PATH.parents[2] / ".github" / "workflows" / name
-            for line in workflow.read_text(encoding="utf-8").splitlines():
+            lines = [
+                line
+                for step in workflow_steps(name)
+                for line in step.get("run", "").splitlines()
+            ]
+            for line in lines:
                 if "pip install" not in line or line.strip().startswith("#"):
                     continue
                 locked = "--require-hashes" in line

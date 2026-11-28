@@ -9,12 +9,12 @@ from unittest import mock
 
 import pandas as pd
 
-from sepsis_warning import evidently_frames as frames
-from sepsis_warning import sagemaker_train
+from sepsis_warning.adapters.aws import sagemaker_train
 from sepsis_warning.cli import run_experiment
 from sepsis_warning.data import generate_synthetic
+from sepsis_warning.models.scoring import file_sha256
+from sepsis_warning.monitoring import evidently_frames as frames
 from sepsis_warning.prepare import prepare_parquet
-from sepsis_warning.scoring import file_sha256
 from sepsis_warning.splits import write_splits
 
 
@@ -50,7 +50,7 @@ class MonitorReferenceTests(unittest.TestCase):
         self.addCleanup(lambda: __import__("shutil").rmtree(root, ignore_errors=True))
         params = {"mlflow_tracking_uri": "http://mlflow.x.local:5000", "publish_bucket": "bkt", **overrides}
         args = Namespace(data=self.parquet, splits=self.splits)
-        with mock.patch("sepsis_warning.registry.resolve_model", return_value=(self.model, file_sha256(self.model), {})):
+        with mock.patch("sepsis_warning.lifecycle.registry.resolve_model", return_value=(self.model, file_sha256(self.model), {})):
             uris = sagemaker_train.monitor_reference(root, params, args, client=s3)
         return uris, s3
 

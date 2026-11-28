@@ -57,12 +57,12 @@ RUN --mount=type=secret,id=extra_ca,required=false \
 ENV MLFLOW_DISABLE_TELEMETRY=true \
     MLFLOW_DISABLE_AGENT_HINT=1 \
     GIT_PYTHON_REFRESH=quiet
-ENTRYPOINT ["python", "-m", "sepsis_warning.sagemaker_train"]
+ENTRYPOINT ["python", "-m", "sepsis_warning.adapters.aws.sagemaker_train"]
 
 # Hosted tools on ECS Fargate: the MLflow tracking server and the Evidently monitoring job and UI.
 # One image, three entry points chosen by the task's command:
-#   python -m sepsis_warning.mlflow_server                (default)  MLflow on PostgreSQL + S3
-#   python -m sepsis_warning.evidently_job ...                       scheduled monitoring report
+#   python -m sepsis_warning.lifecycle.mlflow_server                (default)  MLflow on PostgreSQL + S3
+#   python -m sepsis_warning.monitoring.evidently_job ...                       scheduled monitoring report
 #   evidently ui --workspace ... --host 0.0.0.0 --port 8000          live Evidently UI
 FROM base AS tools
 COPY requirements/tools.txt ./requirements/tools.txt
@@ -81,7 +81,7 @@ USER 10001:10001
 WORKDIR /home/tools
 EXPOSE 5000 8000
 ENTRYPOINT ["python", "-m"]
-CMD ["sepsis_warning.mlflow_server"]
+CMD ["sepsis_warning.lifecycle.mlflow_server"]
 
 # AWS Lambda (container image). awslambdaric talks to the Lambda runtime API;
 # the handler downloads the pinned bundle from S3 into /tmp on first use.
@@ -96,7 +96,7 @@ RUN --mount=type=secret,id=extra_ca,required=false \
     if [ -f /run/secrets/extra_ca ]; then export PIP_CERT=/run/secrets/extra_ca; fi; \
     python -m pip install --no-deps . && rm -rf /app/src /app/requirements
 ENTRYPOINT ["python", "-m", "awslambdaric"]
-CMD ["sepsis_warning.lambda_app.handler"]
+CMD ["sepsis_warning.adapters.aws.lambda_app.handler"]
 
 # Default: the scoring API for ECS Fargate or a laptop.
 FROM base AS scoring

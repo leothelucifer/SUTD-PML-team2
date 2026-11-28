@@ -22,8 +22,8 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler as SklearnScaler
 
-from sepsis_warning import logistic
-from sepsis_warning.logistic import (
+from sepsis_warning.models.numpy import logistic
+from sepsis_warning.models.numpy.logistic import (
     MedianImputer,
     NumpyLogisticRegression,
     PlattCalibrator,

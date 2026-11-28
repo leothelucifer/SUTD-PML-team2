@@ -15,7 +15,7 @@ from sepsis_warning.cross_source import (
     timing_limitations,
 )
 from sepsis_warning.data import generate_synthetic
-from sepsis_warning.policy import apply_policy
+from sepsis_warning.models.policy import apply_policy
 
 
 def stays_table(n_stays: int, septic_every: int, seed: int) -> pd.DataFrame:
@@ -77,7 +77,7 @@ class CrossSourceTests(unittest.TestCase):
 
 class FreezeGateTests(unittest.TestCase):
     def test_test_splits_need_the_freeze_flag(self):
-        from sepsis_warning.ward import check_split
+        from sepsis_warning.reporting.ward import check_split
 
         for split in ("internal_test", "external_test"):
             with self.assertRaisesRegex(ValueError, "after the model is frozen"):

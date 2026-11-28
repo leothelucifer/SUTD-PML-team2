@@ -16,11 +16,11 @@ import numpy as np
 import pandas as pd
 from sklearn.ensemble import HistGradientBoostingClassifier
 
-from sepsis_warning import gradient_boosting
-from sepsis_warning.baselines import auroc
-from sepsis_warning.gradient_boosting import NumpyGradientBoosting
-from sepsis_warning.histogram_trees import FeatureBinner
-from sepsis_warning.logistic import calibrate_frozen, sigmoid
+from sepsis_warning.evaluation.baselines import auroc
+from sepsis_warning.models.numpy import gradient_boosting
+from sepsis_warning.models.numpy.gradient_boosting import NumpyGradientBoosting
+from sepsis_warning.models.numpy.histogram_trees import FeatureBinner
+from sepsis_warning.models.numpy.logistic import calibrate_frozen, sigmoid
 
 
 def synthetic(n, seed, features=10):

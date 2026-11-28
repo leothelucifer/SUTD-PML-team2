@@ -1,0 +1,46 @@
+name: Resolve AWS target and assume role
+description: Resolve the selected region and role, then exchange the OIDC token for AWS credentials
+inputs:
+  environment:
+    description: GitHub deployment environment
+    required: true
+  region:
+    description: Selected region or environment default
+    required: true
+  default-region:
+    description: AWS_REGION configured on the GitHub environment
+    required: false
+    default: ""
+  account-id:
+    description: AWS_ACCOUNT_ID configured on the GitHub environment
+    required: false
+    default: ""
+  role-arn:
+    description: AWS_DEPLOY_ROLE_ARN configured on the GitHub environment
+    required: false
+    default: ""
+outputs:
+  region:
+    description: Resolved AWS region
+    value: ${{ steps.resolve.outputs.region }}
+  role:
+    description: Resolved role ARN
+    value: ${{ steps.resolve.outputs.role }}
+runs:
+  using: composite
+  steps:
+    - name: Resolve region and role
+      id: resolve
+      shell: bash
+      env:
+        ENVIRONMENT: ${{ inputs.environment }}
+        REGION_INPUT: ${{ inputs.region }}
+        DEFAULT_REGION: ${{ inputs.default-region }}
+        ACCOUNT_ID: ${{ inputs.account-id }}
+        ROLE_ARN_VAR: ${{ inputs.role-arn }}
+      run: python3 scripts/resolve_aws_target.py
+    - name: Assume the OIDC role
+      uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+      with:
+        role-to-assume: ${{ steps.resolve.outputs.role }}
+        aws-region: ${{ steps.resolve.outputs.region }}

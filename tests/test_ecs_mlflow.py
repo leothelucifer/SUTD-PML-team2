@@ -8,7 +8,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from sepsis_warning import registry, sagemaker_train, tracking
+from sepsis_warning.adapters.aws import sagemaker_train
+from sepsis_warning.lifecycle import registry, tracking
 
 
 class ProjectServerTests(unittest.TestCase):
@@ -50,7 +51,7 @@ class PromoteModeTests(unittest.TestCase):
         change = {"name": "sepsis-warning", "alias": "production", "version": "3", "previous": None,
                   "reviewed_by": "Reviewer", "approved_by": "arn:aws:sts::1:assumed-role/approver/x", "promoted_at": "t", "gates": []}
         with tempfile.TemporaryDirectory() as temp, \
-                mock.patch("sepsis_warning.registry.promote", return_value=change) as promote:
+                mock.patch("sepsis_warning.lifecycle.registry.promote", return_value=change) as promote:
             sagemaker_train.promote_model(Path(temp), {"mlflow_tracking_uri": "http://mlflow.x.local:5000",
                                                        "model_version": "3", "reviewed_by": "Reviewer",
                                                        "require_real_data": "true"})

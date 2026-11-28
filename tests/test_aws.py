@@ -18,14 +18,14 @@ os.environ.setdefault("MLFLOW_DISABLE_AGENT_HINT", "1")
 os.environ.setdefault("MLFLOW_DISABLE_TELEMETRY", "true")
 
 from sepsis_warning.data import generate_synthetic
-from sepsis_warning.model_source import (
+from sepsis_warning.lifecycle.model_source import (
     ModelHashMismatch,
     fetch_model,
     load_serving_model,
     parse_s3_uri,
 )
-from sepsis_warning.scoring import file_sha256
-from sepsis_warning.tracking import check_tracking_uri, is_mlflow_app
+from sepsis_warning.lifecycle.tracking import check_tracking_uri, is_mlflow_app
+from sepsis_warning.models.scoring import file_sha256
 
 HAVE = {name: importlib.util.find_spec(name) is not None for name in ("mangum", "fastapi", "mlflow")}
 APP_ARN = "arn:aws:sagemaker:ap-southeast-1:123456789012:mlflow-app/app-ABC123"
@@ -150,7 +150,7 @@ class LambdaTests(unittest.TestCase):
         cls.temp.cleanup()
 
     def setUp(self):
-        from sepsis_warning import lambda_app
+        from sepsis_warning.adapters.aws import lambda_app
 
         self.lambda_app = lambda_app
         lambda_app._adapter = lambda_app._failed_at = None
@@ -188,7 +188,7 @@ class LambdaTests(unittest.TestCase):
             self.assertEqual(self.lambda_app.handler(self.event("POST", "/score", labelled), None)["statusCode"], 422)
 
     def test_a_wrong_pinned_hash_stops_the_function(self):
-        from sepsis_warning.service import ModelMismatch
+        from sepsis_warning.serving.service import ModelMismatch
 
         env = {"MODEL_PATH": str(self.run_dir / "model.joblib"), "MODEL_SHA256": "0" * 64}
         with mock.patch.dict(os.environ, env, clear=False):
@@ -229,13 +229,13 @@ class SageMakerEntryTests(unittest.TestCase):
         (self.root / "input" / "config" / "hyperparameters.json").write_text(json.dumps(params))
 
     def run_entry(self):
-        from sepsis_warning import sagemaker_train
+        from sepsis_warning.adapters.aws import sagemaker_train
 
         with mock.patch.dict(os.environ, {"SM_ROOT": str(self.root)}):
             return sagemaker_train.main(["train"])
 
     def test_hyperparameters_arrive_as_strings(self):
-        from sepsis_warning.sagemaker_train import build_args
+        from sepsis_warning.adapters.aws.sagemaker_train import build_args
 
         self.write_params(seed="7", window="6", budget="0.2", cooldown="6", register_model="true")
         args = build_args(self.root)
@@ -258,7 +258,8 @@ class SageMakerEntryTests(unittest.TestCase):
         self.assertIn("no combined.parquet", (self.root / "output" / "failure").read_text())
 
     def test_pipeline_step_evaluates_once_then_publishes(self):
-        from sepsis_warning import evaluation, model_source
+        from sepsis_warning import evaluation
+        from sepsis_warning.lifecycle import model_source
 
         self.write_params(mode="evaluate_publish", mlflow_tracking_uri="sqlite:///x.db", publish_bucket="bucket",
                           model_uri="models:/sepsis-warning/4")
@@ -280,7 +281,8 @@ class SageMakerEntryTests(unittest.TestCase):
         self.assertFalse((self.root / "model" / "model.joblib").exists())   # this mode never trains
 
     def test_evaluation_keeps_patient_level_files_out_of_the_model_archive(self):
-        from sepsis_warning import evaluation, model_source
+        from sepsis_warning import evaluation
+        from sepsis_warning.lifecycle import model_source
 
         self.write_params(mode="evaluate_publish", mlflow_tracking_uri="sqlite:///x.db", publish_bucket="bucket")
 
@@ -302,7 +304,8 @@ class SageMakerEntryTests(unittest.TestCase):
         self.assertNotIn("replay.html", kept)
 
     def test_an_unpromoted_model_is_refused_before_the_test_split_is_scored(self):
-        from sepsis_warning import evaluation, model_source
+        from sepsis_warning import evaluation
+        from sepsis_warning.lifecycle import model_source
 
         self.write_params(mode="evaluate_publish", mlflow_tracking_uri="sqlite:///x.db", publish_bucket="bucket")
         refusal = model_source.PublishRefused("version 4 was not promoted to @production")
@@ -315,7 +318,7 @@ class SageMakerEntryTests(unittest.TestCase):
         self.assertIn("not promoted", (self.root / "output" / "failure").read_text())
 
     def test_require_gates_stops_registration_of_a_failing_model(self):
-        from sepsis_warning.sagemaker_train import build_args
+        from sepsis_warning.adapters.aws.sagemaker_train import build_args
 
         self.write_params(require_gates="true", require_real_data="true", register_model="true",
                           mlflow_tracking_uri="sqlite:///x.db")

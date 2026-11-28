@@ -24,8 +24,8 @@ from sepsis_warning.features import (
     ordered_stay,
     select_saved_features,
 )
-from sepsis_warning.modeling import candidate_models
-from sepsis_warning.policy import (
+from sepsis_warning.models.factory import candidate_models
+from sepsis_warning.models.policy import (
     UTILITY_BENCHMARK_HOURS,
     UTILITY_BENCHMARK_PATIENTS,
     alert_events,

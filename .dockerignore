@@ -7,3 +7,4 @@
 !README.md
 !src/sepsis_warning/
 src/sepsis_warning/__pycache__/
+**/__pycache__/

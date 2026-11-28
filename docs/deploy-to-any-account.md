@@ -137,8 +137,8 @@ approval email needs the `ALERT_EMAIL` subscription to be confirmed. From a shel
 
 If AWS does not raise the SageMaker training quota (a new or free-plan account often cannot get it), set
 `TrainingBackend=ecs` (already the default in `infra/params/dev.json`) and run the **deploy** workflow again.
-The pipeline then runs each step as an ECS Fargate task. See [ecs-training.md](ecs-training.md) for the quota
-to check, the cost and the security notes, and [ecs-runbook.md](ecs-runbook.md) for the whole ECS demo (MLflow and
+The pipeline then runs each step as an ECS Fargate task. See [ecs-runbook.md](ecs-runbook.md) for the current quota,
+cost and security notes, and the whole ECS demo (MLflow and
 Evidently on ECS, the power workflow that stops what bills, approval from GitHub, the predict demo).
 
 ### Only if you choose `TrainingBackend=sagemaker`: SageMaker quotas

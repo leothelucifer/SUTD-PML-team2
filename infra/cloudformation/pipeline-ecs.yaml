@@ -131,7 +131,7 @@ Resources:
           "require_real_data": "true|false", "prepare": "true|false", "data_source": "synthetic|physionet",
           "limit": "0", "trials": "6", "force": "false"}. Extra keys (instance_type) are ignored. Each data source has its own folder
           (data/synthetic, data/physionet, data/physionet-web), so a rehearsal can never touch the real data. Each step is an ECS task that runs
-          the image's sepsis_warning.ecs_job entry point; its output goes to s3://<bucket>/training-output/<execution>/<step>/.
+          the image's sepsis_warning.adapters.aws.ecs_job entry point; its output goes to s3://<bucket>/training-output/<execution>/<step>/.
         StartAt: RegisterTaskDefinition
         States:
           # The image tag changes with every commit and ECS cannot override an image at run time, so each
@@ -160,7 +160,7 @@ Resources:
                   EntryPoint:
                     - python
                     - -m
-                    - sepsis_warning.ecs_job
+                    - sepsis_warning.adapters.aws.ecs_job
                   LogConfiguration:
                     LogDriver: awslogs
                     Options:

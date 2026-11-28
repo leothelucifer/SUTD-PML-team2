@@ -2,7 +2,7 @@
 
 - Purpose, architecture, implemented capabilities, and research limitations: [README.md](README.md).
 - Code map, module ownership, data contracts, CLI commands, and test guidance: [docs/agent-repository-guide.md](docs/agent-repository-guide.md).
-- Real-data testing workflow and staged PhysioNet evaluation: [docs/testing/real-data.md](docs/testing/real-data.md). Step-by-step run from data to report and AWS: [docs/testing/end-to-end-guide.md](docs/testing/end-to-end-guide.md).
+- Real-data download, preparation, training, and frozen evaluation: [docs/testing/real-data.md](docs/testing/real-data.md). AWS setup and deployment: [docs/deploy-to-any-account.md](docs/deploy-to-any-account.md).
 - Installation, data download/preparation, notebook setup, experiments, and replay: [README.md](README.md).
 - Task ownership and slide assignments: [TEAM-TASKS.md](TEAM-TASKS.md). Summary of each member's contribution: [contributions.md](contributions.md). No `CONTRIBUTING.md` or documented branching/commit conventions exist; confirm workflow with the team.
 
@@ -49,9 +49,3 @@
 - Do not silently suppress convergence warnings, schema errors, or invalid metrics. Surface failures and investigate them.
 - Do not load untrusted Joblib/pickle models; deserialization can execute code.
 - Do not claim clinically validated risk, real-time readiness, or diagnostic/treatment benefit. Scores target the supplied benchmark label; inferred onset and hourly availability have retrospective limitations. Resolve the documented license-notice discrepancy before dataset redistribution.
-
-## Ownership / Contact
-
-- **Task owners:** Edwin, Jawad, Kaiyuan, Josh, leo, and Mashie; responsibilities are recorded in [TEAM-TASKS.md](TEAM-TASKS.md).
-- **Repository maintainer:** 
-- **Contact:** 

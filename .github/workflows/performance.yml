@@ -1,0 +1,180 @@
+name: 4 Ops · performance
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Deployed environment to measure
+        type: choice
+        options: [dev, staging, prod]
+        default: dev
+      region:
+        description: AWS region of the deployment
+        type: choice
+        options: [environment default, ap-southeast-1, ap-southeast-2]
+        default: environment default
+      sample_limit:
+        description: Number of public dataset records downloaded per hospital
+        type: number
+        default: 500
+      users:
+        description: Concurrent Locust users (capped at 10)
+        type: number
+        default: 5
+      spawn_rate:
+        description: Users started per second (capped at 2)
+        type: number
+        default: 1
+      duration:
+        description: Test duration in seconds (capped at 120)
+        type: number
+        default: 60
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: aws-ops-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  locust:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/aws-target
+        id: target
+        with:
+          environment: ${{ inputs.environment }}
+          region: ${{ inputs.region }}
+          default-region: ${{ vars.AWS_REGION }}
+          account-id: ${{ vars.AWS_ACCOUNT_ID }}
+          role-arn: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+
+      - uses: ./.github/actions/python-tools
+        with:
+          requirements-file: requirements/performance.txt
+
+      - name: Validate bounded load
+        env:
+          SAMPLE_LIMIT: ${{ inputs.sample_limit }}
+          USERS: ${{ inputs.users }}
+          SPAWN_RATE: ${{ inputs.spawn_rate }}
+          DURATION: ${{ inputs.duration }}
+        run: |
+          python - <<'PY'
+          import os
+          sample_limit = int(os.environ["SAMPLE_LIMIT"])
+          users = int(os.environ["USERS"])
+          spawn_rate = float(os.environ["SPAWN_RATE"])
+          duration = int(os.environ["DURATION"])
+          if not 100 <= sample_limit <= 2000:
+              raise SystemExit("sample_limit must be between 100 and 2000")
+          if not 1 <= users <= 10:
+              raise SystemExit("users must be between 1 and 10")
+          if not 0 < spawn_rate <= 2:
+              raise SystemExit("spawn_rate must be greater than 0 and at most 2")
+          if not 10 <= duration <= 120:
+              raise SystemExit("duration must be between 10 and 120 seconds")
+          PY
+
+      - name: Download and prepare temporary Hospital B payloads
+        env:
+          SAMPLE_LIMIT: ${{ inputs.sample_limit }}
+        run: |
+          set -euo pipefail
+          python scripts/download_data.py --limit "$SAMPLE_LIMIT" --seed 42 --output "$RUNNER_TEMP/physionet"
+          python scripts/prepare_locust_payloads.py \
+            --data-root "$RUNNER_TEMP/physionet" \
+            --output "$RUNNER_TEMP/hospital-b.jsonl" \
+            --limit 50 --seed 42
+
+      - name: Resolve API URL and verify deployed model
+        id: api
+        env:
+          AWS_REGION: ${{ steps.target.outputs.region }}
+          ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          set -euo pipefail
+          stack="sepsis-${ENVIRONMENT}"
+          api_url="$(aws cloudformation describe-stacks \
+            --stack-name "$stack" \
+            --region "$AWS_REGION" \
+            --query "Stacks[0].Outputs[?OutputKey=='ApiBaseUrl'].OutputValue | [0]" \
+            --output text)"
+          serving_mode="$(aws cloudformation describe-stacks \
+            --stack-name "$stack" \
+            --region "$AWS_REGION" \
+            --query "Stacks[0].Outputs[?OutputKey=='ServingMode'].OutputValue | [0]" \
+            --output text)"
+          if [ "$serving_mode" != "lambda" ]; then
+            echo "Locust runs from the GitHub runner and requires the IAM-authenticated Lambda API; ServingMode is '$serving_mode'." >&2
+            exit 1
+          fi
+          if [ -z "$api_url" ] || [ "$api_url" = "None" ]; then
+            echo "No ApiBaseUrl output found in stack $stack" >&2
+            exit 1
+          fi
+          printf 'url=%s\n' "$api_url" >> "$GITHUB_OUTPUT"
+          python scripts/call_scoring_url.py --url "$api_url" --region "$AWS_REGION" GET /health \
+            > "$RUNNER_TEMP/api-health.json"
+          python - "$RUNNER_TEMP/api-health.json" <<'PY'
+          import json, sys
+          health = json.load(open(sys.argv[1], encoding="utf-8"))
+          if health.get("synthetic_model") is not False:
+              raise SystemExit("Refusing to load-test an API without a deployed non-synthetic model")
+          if not health.get("bundle_sha256"):
+              raise SystemExit("The deployed API health response has no model bundle hash")
+          print(f"Verified model {health.get('model_name')} version {health.get('model_version')}")
+          PY
+
+      - name: Run bounded Locust test
+        env:
+          AWS_REGION: ${{ steps.target.outputs.region }}
+          LOCUST_PAYLOADS: ${{ runner.temp }}/hospital-b.jsonl
+          LOCUST_USERS: ${{ inputs.users }}
+          LOCUST_SPAWN_RATE: ${{ inputs.spawn_rate }}
+          LOCUST_DURATION: ${{ inputs.duration }}
+          API_URL: ${{ steps.api.outputs.url }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          RUN_ID: ${{ github.run_id }}
+          OUTPUT_DIR: ${{ runner.temp }}/locust-results
+        run: |
+          set -euo pipefail
+          mkdir -p "$OUTPUT_DIR"
+          locust -f scripts/locustfile.py --headless \
+            --host "$API_URL" \
+            --users "$LOCUST_USERS" \
+            --spawn-rate "$LOCUST_SPAWN_RATE" \
+            --run-time "${LOCUST_DURATION}s" \
+            --csv "$RUNNER_TEMP/locust" \
+            --exit-code-on-error 1
+          python scripts/summarize_locust.py \
+            --stats "$RUNNER_TEMP/locust_stats.csv" \
+            --manifest "$RUNNER_TEMP/hospital-b.manifest.json" \
+            --health "$RUNNER_TEMP/api-health.json" \
+            --output-dir "$OUTPUT_DIR" \
+            --run-id "$RUN_ID" \
+            --environment "$ENVIRONMENT" \
+            --region "$AWS_REGION" \
+            --users "$LOCUST_USERS" \
+            --spawn-rate "$LOCUST_SPAWN_RATE" \
+            --duration "${LOCUST_DURATION}s"
+          cat "$OUTPUT_DIR/summary.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always() && steps.api.outcome == 'success'
+        with:
+          name: locust-results-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/locust-results/summary.json
+            ${{ runner.temp }}/locust-results/summary.md
+            ${{ runner.temp }}/locust_stats.csv
+          if-no-files-found: error
+          retention-days: 30

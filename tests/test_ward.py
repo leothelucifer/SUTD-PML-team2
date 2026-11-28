@@ -14,12 +14,12 @@ from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import make_pipeline
 
-from sepsis_warning import ward
 from sepsis_warning.cli import run_ward
 from sepsis_warning.data import generate_synthetic, load_patients, split_patients
 from sepsis_warning.features import META, feature_table
-from sepsis_warning.scoring import score_patients
-from sepsis_warning.service import ScoringService
+from sepsis_warning.models.scoring import score_patients
+from sepsis_warning.reporting import ward
+from sepsis_warning.serving.service import ScoringService
 
 
 def page_payload(path: Path) -> dict:

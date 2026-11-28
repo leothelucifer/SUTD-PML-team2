@@ -1,7 +1,7 @@
 # Run order: what to click, in which order
 
 Everything is started from **GitHub → Actions → the workflow → Run workflow**. Waiting is most of the time (about 3.5 hours for a
-first real run). The one rule: **deploy → pipeline → promote → approve → deploy → demo → collect-results → stop**.
+first real run). The one rule: **deploy → pipeline → promote → approve → deploy → demo → monitor → performance → collect-results → teardown**.
 
 ## 0. Once per AWS account and region (not in GitHub)
 
@@ -22,8 +22,9 @@ first real run). The one rule: **deploy → pipeline → promote → approve →
 | 5 | **approve** | `decision = approve` | Runs the one frozen evaluation and publishes the model | **pipeline** `status` says `SUCCEEDED` |
 | 6 | **deploy** | `mode = auto`, `retrain = no` | Serves the model, smoke test, verify, records the state | Green |
 | 7 | **demo**, then **monitor** | `mode = ward`, `split = validation`; then `mode = traffic`, `stays = 300`; then **monitor** `reference`, then `report` | The ward page shows alerts; the traffic run gives the 200 or more requests the drift report needs | The Evidently UI shows the project |
-| 8 | **collect-results** | `dry_run` first, then unticked | Pulls the aggregate results from S3 and opens a pull request for the report | The pull request exists; merge it after looking at the figures |
-| 9 | **power** | `action = stop` | Stops everything that bills | `status` shows only storage |
+| 8 | **performance** | `sample_limit = 500`, `users = 5`, `spawn_rate = 1`, `duration = 60` | Bounded signed Locust requests using temporary Hospital B payloads | Aggregate report artifact is committed |
+| 9 | **collect-results** | `dry_run` first, then unticked | Pulls aggregate model and monitoring results from S3 and opens a pull request | The pull request exists; review the figures |
+| 10 | **teardown** | `scope = plan only`, then `everything` with `confirm = sepsis-dev` | Removes the environment and its retained AWS resources after results are secured | The teardown workflow confirms removal |
 
 Between steps: **pipeline** `action = status` shows the step and what is running. **power** `action = status` prints the browser
 URLs; they change every time a service restarts.

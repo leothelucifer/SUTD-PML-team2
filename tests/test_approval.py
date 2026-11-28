@@ -142,7 +142,7 @@ class RunTaskTests(unittest.TestCase):
         register = next(kw for kind, kw in ecs.calls if kind == "register")
         self.assertEqual(register["taskRoleArn"], "arn:approver")            # not the training task role
         self.assertEqual(register["containerDefinitions"][0]["image"], "1.dkr.ecr.r.amazonaws.com/train:training-abc")
-        self.assertEqual(register["containerDefinitions"][0]["entryPoint"], ["python", "-m", "sepsis_warning.ecs_job"])
+        self.assertEqual(register["containerDefinitions"][0]["entryPoint"], ["python", "-m", "sepsis_warning.adapters.aws.ecs_job"])
         run = next(kw for kind, kw in ecs.calls if kind == "run")
         self.assertEqual(run["networkConfiguration"]["awsvpcConfiguration"]["subnets"], ["subnet-a", "subnet-b"])
         env = {e["name"]: e["value"] for e in run["overrides"]["containerOverrides"][0]["environment"]}

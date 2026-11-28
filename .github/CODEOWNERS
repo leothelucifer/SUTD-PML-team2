@@ -1,0 +1,6 @@
+# Repository owner for deployment, CI, and infrastructure changes.
+/.github/ @leothelucifer
+/ci/ @leothelucifer
+/infra/ @leothelucifer
+/scripts/aws_*.sh @leothelucifer
+/requirements/ @leothelucifer

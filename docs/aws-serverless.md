@@ -3,7 +3,7 @@
 > **Not the design that is deployed.** This page describes the first, SageMaker-based design, which is still in the templates
 > behind `TrainingBackend=sagemaker` and `EnableSageMaker`. All environments use ECS Fargate for training and MLflow and
 > Evidently on ECS. For the current design read [RUN-ORDER.md](RUN-ORDER.md), [ecs-runbook.md](ecs-runbook.md) and
-> [ecs-training.md](ecs-training.md). The Lambda scoring part below is still accurate.
+> [ecs-runbook.md](ecs-runbook.md). The Lambda scoring part below is still accurate.
 
 The default AWS design runs only when it is used. Nothing in the default stack
 bills by the hour: no load balancer, NAT gateway, VPC endpoint, notebook,
@@ -85,8 +85,9 @@ of the SQLite URI once the stack exists.
 
 ## Pipeline, releases, environments and monitoring
 
-Added in phases 3 and 4 of [mlops-audit.md](mlops-audit.md). Like the rest, these
-are linted and unit-tested but **not yet run in an AWS account**.
+This optional SageMaker path is retained for compatibility. The current AWS
+deployment is documented in the [ECS runbook](ecs-runbook.md); do not use this
+page as its deployment procedure.
 
 | Piece | Template or file | What it does |
 |---|---|---|

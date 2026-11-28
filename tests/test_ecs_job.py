@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from sepsis_warning import ecs_job
+from sepsis_warning.adapters.aws import ecs_job
 
 
 class FakeS3:
@@ -76,7 +76,7 @@ class EcsJobTests(unittest.TestCase):
             (root / "model" / "model.joblib").write_text("bundle")
             return 0
 
-        with mock.patch("sepsis_warning.sagemaker_train.main", fake_main):
+        with mock.patch("sepsis_warning.adapters.aws.sagemaker_train.main", fake_main):
             code = ecs_job.run(self.environ, self.s3, workdir=self.work)
         self.assertEqual(code, 0)
         self.assertIn("training-output/sepsis-train-exec-1/model/model.joblib", self.s3.keys("bucket"))
@@ -88,7 +88,7 @@ class EcsJobTests(unittest.TestCase):
             (root / "output" / "failure").write_text("ValueError: gates not met")
             return 1
 
-        with mock.patch("sepsis_warning.sagemaker_train.main", failing_main):
+        with mock.patch("sepsis_warning.adapters.aws.sagemaker_train.main", failing_main):
             code = ecs_job.run(self.environ, self.s3, workdir=self.work)
         self.assertEqual(code, 1)
         failure = self.s3.root / "bucket" / "training-output" / "sepsis-train-exec-1" / "output" / "failure"
@@ -97,7 +97,7 @@ class EcsJobTests(unittest.TestCase):
     def test_a_missing_channel_is_a_reported_failure_not_a_crash(self):
         environ = dict(self.environ, CH_data="s3://bucket/data/missing/")
         ran = []
-        with mock.patch("sepsis_warning.sagemaker_train.main", lambda argv=None: ran.append(1) or 0):
+        with mock.patch("sepsis_warning.adapters.aws.sagemaker_train.main", lambda argv=None: ran.append(1) or 0):
             # an empty channel is staged as an empty folder; the entry point's own check then fails the step
             code = ecs_job.run(environ, self.s3, workdir=self.work)
         self.assertEqual(code, 0)

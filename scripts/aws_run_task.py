@@ -4,7 +4,7 @@
     python scripts/aws_run_task.py --stack sepsis-dev --region ap-southeast-2 --role approver \\
         --image-tag training-<commit> --env HP_mode=promote --env HP_model_version=3 --env HP_reviewed_by=alice
 
-The step runs the training image's ``sepsis_warning.ecs_job`` entry point inside the project's VPC, so it can
+The step runs the training image's ``sepsis_warning.adapters.aws.ecs_job`` entry point inside the project's VPC, so it can
 reach the private MLflow server. ``--role approver`` runs it as the approver task role, which is a different
 principal from the training task role: the one that registered a model version cannot also promote it.
 
@@ -49,7 +49,7 @@ def register(ecs, family: str, image: str, execution_role: str, task_role: str, 
         runtimePlatform={"cpuArchitecture": "X86_64", "operatingSystemFamily": "LINUX"},
         containerDefinitions=[{
             "name": "step", "image": image, "essential": True,
-            "entryPoint": ["python", "-m", "sepsis_warning.ecs_job"],
+            "entryPoint": ["python", "-m", "sepsis_warning.adapters.aws.ecs_job"],
             "logConfiguration": {"logDriver": "awslogs", "options": {
                 "awslogs-group": log_group, "awslogs-region": region, "awslogs-stream-prefix": family}},
         }])

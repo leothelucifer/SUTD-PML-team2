@@ -7,8 +7,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from sepsis_warning.baselines import sirs_count
 from sepsis_warning.data import DYNAMIC, STATIC
+from sepsis_warning.evaluation.baselines import sirs_count
 from sepsis_warning.hospital_comparison import (
     add_sirs,
     missingness,

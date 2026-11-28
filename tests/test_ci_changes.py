@@ -40,13 +40,15 @@ class ClassifyTests(unittest.TestCase):
         examples = {
             "docs/ecs-runbook.md": "docs", "README.md": "docs",
             "tests/test_api.py": "tests",
-            "src/sepsis_warning/service.py": "serving", "src/sepsis_warning/lambda_app.py": "serving",
-            "src/sepsis_warning/features.py": "features",
+            "src/sepsis_warning/serving/service.py": "serving", "src/sepsis_warning/adapters/aws/lambda_app.py": "serving",
+            "src/sepsis_warning/features/core.py": "features",
             "src/sepsis_warning/tuning.py": "training", "src/sepsis_warning/sagemaker_train.py": "training",
-            "src/sepsis_warning/mlflow_server.py": "tools", "src/sepsis_warning/evidently_job.py": "tools",
+            "src/sepsis_warning/lifecycle/mlflow_server.py": "tools", "src/sepsis_warning/monitoring/evidently_job.py": "tools",
             "infra/cloudformation/mlflow-ecs.yaml": "infra", "scripts/aws_deploy.sh": "infra",
             "Dockerfile": "image", "requirements/tools.txt": "dependencies", "pyproject.toml": "dependencies",
-            ".github/workflows/deploy.yml": "workflows", "ci/change_rules.json": "ci",
+            ".github/workflows/deploy.yml": "workflows",
+            ".github/actions/aws-target/action.yml": "workflows",
+            "ci/change_rules.json": "ci",
             "something/unknown.bin": "other",
         }
         for path, expected in examples.items():
@@ -59,7 +61,7 @@ class PlanTests(unittest.TestCase):
         self.assertEqual((result["ci"], result["deploy"]), ([], []))
 
     def test_serving_code_needs_tests_docker_and_a_serve(self):
-        result = cc.plan(["src/sepsis_warning/api.py"], RULES)
+        result = cc.plan(["src/sepsis_warning/serving/api.py"], RULES)
         self.assertEqual(result["ci"], ["unit", "docker"])
         self.assertEqual(result["deploy"], ["serve"])
 
@@ -68,7 +70,7 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(result["deploy"], ["retrain"])
 
     def test_features_change_both_the_model_and_the_service(self):
-        self.assertEqual(cc.plan(["src/sepsis_warning/features.py"], RULES)["deploy"], ["retrain", "serve"])
+        self.assertEqual(cc.plan(["src/sepsis_warning/features/core.py"], RULES)["deploy"], ["retrain", "serve"])
 
     def test_infra_needs_the_template_checks_and_a_stack_update(self):
         result = cc.plan(["infra/cloudformation/root.yaml"], RULES)
@@ -84,7 +86,7 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(cc.plan([".github/workflows/tests.yml"], RULES)["ci"], ["workflows"])
 
     def test_several_files_combine_in_a_fixed_order(self):
-        result = cc.plan(["tests/t.py", "infra/x.yaml", "src/sepsis_warning/api.py"], RULES)
+        result = cc.plan(["tests/t.py", "infra/x.yaml", "src/sepsis_warning/serving/api.py"], RULES)
         self.assertEqual(result["ci"], ["unit", "docker", "cloudformation"])
         self.assertEqual(result["deploy"], ["stack", "serve"])
 
@@ -134,7 +136,7 @@ class OutputTests(unittest.TestCase):
         import tempfile
         with tempfile.TemporaryDirectory() as temp:
             out, summary = Path(temp) / "out", Path(temp) / "summary"
-            cc.write_outputs(cc.plan(["src/sepsis_warning/api.py"], RULES), RULES, str(out), str(summary))
+            cc.write_outputs(cc.plan(["src/sepsis_warning/serving/api.py"], RULES), RULES, str(out), str(summary))
             lines = out.read_text().splitlines()
             self.assertIn("ci_unit=true", lines)
             self.assertIn("ci_cloudformation=false", lines)

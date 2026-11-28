@@ -10,14 +10,14 @@ from sklearn.metrics import roc_auc_score
 
 from sepsis_warning.data import generate_synthetic, load_patients, split_patients
 from sepsis_warning.features import META, feature_table
-from sepsis_warning.modeling import (
+from sepsis_warning.models.factory import (
     candidate_models,
     complexity_ranks,
     fit_calibrated,
     is_numpy_model,
     load_model_config,
 )
-from sepsis_warning.policy import (
+from sepsis_warning.models.policy import (
     apply_policy,
     normalized_utility,
     select_candidate,

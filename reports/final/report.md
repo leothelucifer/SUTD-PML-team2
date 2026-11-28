@@ -65,7 +65,7 @@ length, age and gender, missingness, vital signs), `docs/hospital-a-vs-b.md`.
 - Calibration and threshold: Platt scaling on a separate calibration split (3,051 stays) takes the Brier score from
   0.1371 (class-weighted, uncalibrated) to 0.0201, below the constant-prior 0.0213. The threshold is the lowest one on
   the validation split (3,051 stays) that keeps false alerts at or below 0.2 per non-septic patient-day. TODO (Kaiyuan): check wording.
-- Engineering (MLflow registry, gates, API, drift monitoring, AWS): one paragraph plus `docs/mlops-audit.md`.
+- Engineering (MLflow registry, gates, API, drift monitoring, AWS): summarize the current implementation and link to the [documentation index](../../docs/README.md).
 
 ### Reproduce
 

@@ -3,10 +3,30 @@
 Two rules:
 
 * **Checks and builds run by themselves**, and only what the change needs.
-* **Anything that changes AWS is started by hand.** There is one such button, **deploy**, and it chooses its own stages from
-  what changed. The approval of a model stays a human step.
+* **Stack and model changes are started by hand.** The **deploy** workflow chooses its stages from what changed. The
+  **images** workflow is the exception: it prebuilds and pushes commit-tagged images after qualifying pushes to `main`.
+  Approval of a model stays a human step.
 
 Every automatic workflow also has a **Run workflow** button, so you can start it yourself.
+
+## Workflow organization
+
+Workflow files stay directly in `.github/workflows/` because GitHub does not
+load workflow files from subfolders. Their `name:` prefixes group them in the
+Actions sidebar: `1 CI`, `2 Env`, `3 Model`, and `4 Ops`; filenames and run
+history stay unchanged.
+
+The local composites in `.github/actions/` hold the repeated setup:
+
+- `aws-target` resolves the GitHub environment's region and role, then configures
+  short-lived AWS credentials through OIDC.
+- `python-tools` selects Python 3.12 and installs the selected hash-locked
+  requirements file plus the local package.
+
+If either shared action changes, run the workflow lint and focused helper tests.
+`.github/CODEOWNERS` requests owner review for workflows, actions, CI rules,
+infrastructure, AWS scripts, and dependency locks. To make that review
+mandatory, enable **Require review from Code Owners** for `main`.
 
 ## Automatic
 
@@ -89,7 +109,7 @@ The plan is printed in the run summary with the reason for each stage. A run tha
 
 * **promote** and **approve**: a different person reviews and approves each model. This is the governance control; the workflow
   that starts training cannot approve its own model.
-* **power**, **demo**, **monitor**, **pipeline**, **teardown**, **verify**: they act on running resources or cost money. They work as before.
+* **power**, **demo**, **monitor**, **performance**, **pipeline**, **teardown**, **verify**: they act on running resources or cost money. They work as before.
 
 ## Good to know
 
@@ -97,3 +117,5 @@ The plan is printed in the run summary with the reason for each stage. A run tha
 * A retrain records the commit when it **starts**. If the run fails, start it again with `retrain` = yes.
 * The images workflow skips quietly when there is no stack, and can be turned off with the repository variable `AUTO_PREBUILD` = `false`.
 * Pull requests from forks never get AWS access: CI runs without any secrets.
+* AWS workflows serialize by environment, including runs targeting different regions. This prevents a region alias such as
+  `environment default` from bypassing the deployment lock.

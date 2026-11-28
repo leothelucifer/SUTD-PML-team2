@@ -6,7 +6,7 @@
 | `source/deck.json`, `source/slides/*.html` | Editable slide source (one HTML file per slide, in order given by `deck.json`). |
 | `assets/` | Images used by the slides: AWS Architecture Icons and three aggregate figures from the hospital comparison (PR #48). `blob-map.json` maps the asset ids in the slide HTML to these files. |
 | `tools/render_slides.js`, `tools/build_pptx.py` | Rebuild the PowerPoint from the source. |
-| `../design/sepsis-warning-pipeline.html` | Design page: data split, training, model selection, alert policy, ICU call contract, AWS deployment and MLOps loop. Open it in a browser. |
+| `source/slides/architecture.html` | Editable architecture slide source. |
 
 ## Rebuild the PowerPoint after editing a slide
 

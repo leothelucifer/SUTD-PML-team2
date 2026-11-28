@@ -18,15 +18,15 @@ from sepsis_warning.data import (
     load_patients,
     split_patients,
 )
-from sepsis_warning.live_drift import (
+from sepsis_warning.monitoring import REFERENCE_FILE, MonitoringConfig, setup_monitoring
+from sepsis_warning.monitoring.live_drift import (
     emf_record,
     live_checks,
     read_prediction_log,
     run_live_drift,
 )
-from sepsis_warning.monitoring import REFERENCE_FILE, MonitoringConfig, setup_monitoring
-from sepsis_warning.service import ScoringService
-from sepsis_warning.telemetry import Telemetry
+from sepsis_warning.monitoring.telemetry import Telemetry
+from sepsis_warning.serving.service import ScoringService
 
 
 def records(frame):
@@ -139,7 +139,7 @@ class LiveDriftTests(unittest.TestCase):
         self.assertEqual(len(frame), 5)
 
     def test_scheduled_job_reads_the_day_and_stores_the_result(self):
-        from sepsis_warning.drift_handler import handler
+        from sepsis_warning.adapters.aws.drift_handler import handler
 
         objects = {"prediction-log/2026/11/14/09/part-1": gzip.compress(self.normal.read_bytes()),
                    "prediction-log/2026/11/13/09/other-day": self.shifted.read_bytes(),

@@ -7,8 +7,8 @@ stages:
     deps:
       - data/physionet/training_setA
       - data/physionet/training_setB
-      - src/sepsis_warning/prepare.py
-      - src/sepsis_warning/data.py
+      - src/sepsis_warning/data/prepare.py
+      - src/sepsis_warning/data/records.py
     outs:
       - data/physionet/combined.parquet
       - data/physionet/combined.parquet.summary.json
@@ -16,8 +16,8 @@ stages:
     cmd: python -m sepsis_warning split --data data/physionet/combined.parquet --output data/physionet/splits.csv
     deps:
       - data/physionet/combined.parquet
-      - src/sepsis_warning/splits.py
-      - src/sepsis_warning/data.py
+      - src/sepsis_warning/data/splits.py
+      - src/sepsis_warning/data/records.py
     outs:
       - data/physionet/splits.csv
       - data/physionet/splits.csv.summary.json

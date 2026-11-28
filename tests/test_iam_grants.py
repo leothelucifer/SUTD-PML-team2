@@ -105,7 +105,7 @@ class EvidentlyRolesTests(unittest.TestCase):
         self.assertTrue(allows(*role, "s3:ListBucket"))
 
     def test_the_metrics_namespace_in_the_policy_is_the_one_the_code_publishes_to(self):
-        from sepsis_warning import evidently_job
+        from sepsis_warning.monitoring import evidently_job
         grant = next(g for g in grants("evidently-ecs.yaml", "ReportTaskRole") if "cloudwatch:PutMetricData" in g["actions"])
         self.assertEqual(grant["condition"]["StringEquals"]["cloudwatch:namespace"], evidently_job.NAMESPACE)
 

@@ -177,10 +177,10 @@ def traffic(session, stack: str, region: str, *, split: str, stays: int, seed: i
             s3.download_file(bucket, f"data/{data_folder}/{name}", str(temp / name))
         from argparse import Namespace
 
-        from sepsis_warning import cli
-        from sepsis_warning.ward import _post_json
+        from sepsis_warning.data.cohorts import load_cohorts
+        from sepsis_warning.reporting.ward import _post_json
 
-        cohorts, _ = cli.load_cohorts(Namespace(data=temp / "combined.parquet", splits=temp / "splits.csv", seed=seed))
+        cohorts, _ = load_cohorts(Namespace(data=temp / "combined.parquet", splits=temp / "splits.csv", seed=seed))
         chosen = pick_traffic(cohorts[split], stays, max_hours, seed)
         out(f"Sending {len(chosen)} stays of {split} to /score on {workers} threads ...")
         base = api.rstrip("/")

@@ -82,28 +82,23 @@ scores = model.predict(hourly_rows)   # columns: stay_id, ICULOS and the model i
 
 - A bundle is a Joblib file, which can run code when loaded. It is loaded only
   after its SHA-256 matches the `bundle_sha256` recorded at registration.
-- Accepted stores are local SQLite or files, a localhost server, and the
-  team's own SageMaker AI MLflow App (below). Any other hosted server needs
-  team approval first.
+- Local runs use SQLite. The current AWS setup uses an ECS-hosted MLflow
+  service with PostgreSQL; do not expose a tracking server or database publicly.
 - The scoring images do not include MLflow. In AWS, `publish` copies the
   registered bundle to S3 and the service loads it with its pinned hash.
 
-## On AWS: the serverless SageMaker MLflow App
+## On AWS: ECS-backed MLflow
 
-`infra/cloudformation/mlops.yaml` creates a SageMaker AI **MLflow App**:
-serverless MLflow with no hourly server and no additional charge beyond S3
-storage. Its ARN is the tracking URI, so the commands above work unchanged:
+The current deployment runs MLflow on ECS backed by PostgreSQL. The
+**power** workflow starts and stops the MLflow service and database; this
+avoids paying for them while idle. See the [ECS runbook](ecs-runbook.md) for
+the current components and the [workflow reference](WORKFLOWS.md) for the
+controls. AWS workflows configure the tracking URI; use the local SQLite
+examples above only for local experiments.
 
-```bash
-pip install -e ".[tracking,sagemaker]"     # sagemaker-mlflow signs requests with your AWS credentials
-ARN=$(aws cloudformation describe-stacks --stack-name sepsis-research \
-      --query "Stacks[0].Outputs[?OutputKey=='MlflowAppArn'].OutputValue" --output text)
-python -m sepsis_warning promote --version 3 --reviewed-by "Kaiyuan" --mlflow-uri "$ARN"
-python -m sepsis_warning publish --mlflow-uri "$ARN" --bucket <ArtifactBucketName>
-aws sagemaker create-presigned-mlflow-app-url --arn "$ARN"   # link to the MLflow UI
-```
+## Optional legacy backend
 
-SageMaker training jobs (`scripts/sagemaker_train.py`) log the selection run
-and register `@candidate` there directly. The same rules apply: validation
-metrics only, no patient-level files, and `@production` moves only through a
-named review. See [aws-serverless.md](aws-serverless.md).
+The repository retains an optional SageMaker MLflow integration. It is not
+the default deployment. See the [legacy SageMaker design](aws-serverless.md)
+and [`adapters/aws/sagemaker_train.py`](../src/sepsis_warning/adapters/aws/sagemaker_train.py)
+before enabling that backend.

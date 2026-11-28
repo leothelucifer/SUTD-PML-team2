@@ -1,8 +1,8 @@
 # Two-speed monitoring plan (M02)
 
 **Status:** In review. **Owner:** Mashie. **Date:** 2026-11-08.
-**Code:** [src/sepsis_warning/monitoring.py](../src/sepsis_warning/monitoring.py),
-[src/sepsis_warning/scoring.py](../src/sepsis_warning/scoring.py).
+**Code:** [`monitoring/offline.py`](../src/sepsis_warning/monitoring/offline.py),
+[`models/scoring.py`](../src/sepsis_warning/models/scoring.py).
 **Tests:** [tests/test_monitoring.py](../tests/test_monitoring.py).
 
 This plan defines how the frozen early-warning model would be watched once it
@@ -114,7 +114,7 @@ chosen window size. Both are fixed before any held-out replay.
 | `calibration` | O/E x1.25 | O/E x1.5 | Calibration-in-the-large. |
 | `discrimination` | AUROC -0.03 | AUROC -0.05 | |
 | `utility` | -0.05 | -0.10 | Normalized utility. |
-| `early_detection` | -0.10 | -0.20 | About 230 eligible septic stays give roughly +/-6.5 points of noise ([design page](design/sepsis-warning-pipeline.html)). |
+| `early_detection` | -0.10 | -0.20 | About 230 eligible septic stays give roughly +/-6.5 points of noise. |
 | `alert_burden` | x1.5 | x2 | False alerts per non-septic patient-day; the validation budget is 0.2. |
 | `subgroup_gap` | 0.10 | 0.20 | Utility units, absolute. |
 | `schema` | 1 error | 1 error | Fixed; any error alarms immediately. |

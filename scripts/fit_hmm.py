@@ -4,7 +4,7 @@
 
 Writes artifacts/hmm/hmm_model.json. Calibration, validation and test stays are
 never read for fitting. Features for any stay come from
-sepsis_warning.hmm.hmm_state_features, which only uses the forward filter.
+sepsis_warning.features.hmm.hmm_state_features, which only uses the forward filter.
 Use --limit 500 for a quick first run.
 """
 
@@ -14,8 +14,8 @@ from pathlib import Path
 
 import numpy as np
 
-from sepsis_warning.hmm import VITALS, fit_hmm, save_hmm, vital_observations
-from sepsis_warning.splits import load_split_patients
+from sepsis_warning.data.splits import load_split_patients
+from sepsis_warning.features.hmm import VITALS, fit_hmm, save_hmm, vital_observations
 
 
 def main():

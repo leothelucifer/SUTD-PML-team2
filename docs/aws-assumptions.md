@@ -1,5 +1,8 @@
 # AWS assumptions and where each was checked
 
+> Verification snapshot from 2026-11-26. Recheck account-specific settings
+> and the current templates before deployment.
+
 Everything in the ECS, RDS and Step Functions work that depends on how AWS behaves was checked against AWS's own documentation
 (read on 2026-11-26 through the sandbox proxy) or against AWS's API models. Two kinds of check are automated in
 `tests/test_aws_api_shapes.py`: every parameter name in the state machines and every call the scripts make must exist in the

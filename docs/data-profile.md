@@ -1,8 +1,8 @@
 # Understanding the PhysioNet Challenge 2019 data
 
-This document describes the local sample currently used by the project and the
-meaning of its columns. It is an exploratory profile, not a clinical
-interpretation or a claim about the full PhysioNet cohort.
+This document records a seeded 500-record-per-source sample and explains its
+columns. The counts are a dated exploratory snapshot, not the current full
+cohort or a clinical interpretation.
 
 ## Source and local sample
 
